@@ -16,7 +16,7 @@ param tenantId string
 param managedIdentityPrincipalId string
 
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
-  name: '${namePrefix}-kv'
+  name: '${namePrefix}-vault'
   location: location
   tags: tags
   properties: {

@@ -56,16 +56,10 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-03-01-pr
   }
 }
 
-// Set Entra admin
-resource entraAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-03-01-preview' = {
-  parent: postgresServer
-  name: managedIdentityObjectId
-  properties: {
-    principalName: managedIdentityName
-    principalType: 'ServicePrincipal'
-    tenantId: tenantId
-  }
-}
+// NOTE: Entra admin is configured post-deployment via Azure CLI
+// because of a timing issue where the server isn't fully accessible
+// during the ARM deployment. See infra/README.md for the CLI command.
+// resource entraAdmin removed — handled post-deploy
 
 // Allow Azure services firewall rule
 resource firewallRuleAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-03-01-preview' = if (allowPublicAccess) {
