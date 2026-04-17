@@ -18,6 +18,24 @@
 
 **Key files:** `docs/architecture.md`, `docs/api-contracts.md`, `docs/project-structure.md`, `src/transpose/services/`, `src/transpose/pipeline/`
 
+## Session 2026-04-17: Full Pipeline Implementation
+
+**Delivered:** All 7 pipeline stages (Ingest, OCR, Chunk, Translate, Glossary, Assemble, Export), service wrappers (BlobClient, OcrClient, LlmClient, Database), ServiceContext dependency injection pattern, pipeline runner orchestrator with distributed locking, CLI interface. **2,921 lines of Python code, ruff clean, all async patterns, fully idempotent stages.**
+
+Key accomplishments:
+- Implemented ServiceContext as centralized service container for all stages
+- Full CRUD database layer with parameterized queries (secure, reusable)
+- Digital-first OCR: PyMuPDF + Document Intelligence fallback
+- Paragraph-boundary chunking with chapter detection and overlap
+- LLM translation with seed glossary injection + JSON mode for cultural terms
+- Glossary aggregation with term normalization and occurrence filtering
+- HTML document assembly with TOC generation
+- Parallel ePub/PDF export from single HTML source
+- Pipeline runner with distributed Redis locking + error handling + metrics
+- CLI with book upload, pipeline trigger, status tracking
+
+All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-runs skip completed work).
+
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->

@@ -2,6 +2,39 @@
 
 ## Active Decisions
 
+### Decision: Implementation Patterns — Chani's Core Implementation
+**Author:** Chani  
+**Date:** 2026-04-17  
+**Status:** Active  
+
+Centralized service container (ServiceContext) passed to all pipeline stages. Comprehensive CRUD methods in Database class for data access. Multi-part LLM prompts with seed glossary injection + JSON mode for structured output. Digital-first OCR strategy: PyMuPDF first, fall back to Document Intelligence. Paragraph-boundary chunking with structural detection. Sequential translation with previous-context passing for consistency. Glossary aggregation with term normalization and occurrence counting. HTML-based document assembly with chapter grouping. Parallel ePub/PDF export from same HTML source.
+
+**Key implementation patterns:** ServiceContext owns service lifecycle, all stages receive ctx parameter, parameterized SQL queries, tenacity retry logic, JSON serialization for complex fields.
+
+---
+
+### Decision: Infrastructure — Phase 1 Complete
+**Author:** Idaho  
+**Date:** 2026-04-17  
+**Status:** Active  
+
+Complete Azure infrastructure provisioned via Bicep with Managed Identity authentication (zero secrets in code). SKU/tier choices: PostgreSQL Burstable B1ms, Redis Basic C0, Storage Standard_LRS, Container Apps 1 core/2Gi with 0-3 replicas. Phase 1 prioritizes developer velocity with public access enabled; Phase 2 adds VNet/Private Endpoints. Entra-only PostgreSQL authentication. Redis password in Key Vault. Application Insights + Log Analytics for observability. Docker multi-stage build with WeasyPrint dependencies, non-root user.
+
+**Key decisions:** Modular Bicep organization, lazy service initialization in ServiceContext, output chaining between modules, production hardening checklist included.
+
+---
+
+### Decision: Test Strategy for Transpose Pipeline
+**Author:** Thufir  
+**Date:** 2026-04-17  
+**Status:** Active  
+
+Comprehensive test suite: 147 total tests (10 existing + 137 new). Unit tests mock service layer (Database, Cache, BlobClient, OcrClient, LlmClient) via fakeredis and AsyncMock. Integration tests validate pipeline flow end-to-end with mocked SDKs. Contract-based testing validates API contracts from `docs/api-contracts.md`, not implementation details. Cultural term preservation (P0): 16 parametrized tests for Hindi/Punjabi cultural terms (dharma, karma, atman, moksha, sangat, langar, etc.). Fixtures provide realistic test data (real UUIDs, actual cultural text, proper token counts).
+
+**Test organization:** 15 test files across `tests/unit/` (11 files, 120 tests) and `tests/integration/` (2 files, 21 tests), plus 2 preserved test files. All passing. All ruff clean.
+
+---
+
 ### Decision: Pipeline Architecture
 **Author:** Stilgar  
 **Date:** 2026-04-17  
