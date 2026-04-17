@@ -12,10 +12,6 @@ param tags object = {}
 @description('Tenant ID for Key Vault')
 param tenantId string
 
-@description('Redis access key to store')
-@secure()
-param redisAccessKey string
-
 @description('Principal ID of the managed identity that needs access')
 param managedIdentityPrincipalId string
 
@@ -40,15 +36,6 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-// Store Redis access key as secret
-resource redisPasswordSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: keyVault
-  name: 'redis-password'
-  properties: {
-    value: redisAccessKey
-  }
-}
-
 // Grant managed identity Key Vault Secrets User role
 resource secretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(keyVault.id, managedIdentityPrincipalId, 'Key Vault Secrets User')
@@ -63,4 +50,3 @@ resource secretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022
 output keyVaultId string = keyVault.id
 output keyVaultName string = keyVault.name
 output keyVaultUri string = keyVault.properties.vaultUri
-output redisPasswordSecretUri string = redisPasswordSecret.properties.secretUri

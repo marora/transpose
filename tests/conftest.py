@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
-from fakeredis import FakeAsyncRedis
 
 from transpose.config.seed_glossary import SEED_TERMS
 from transpose.models.book import Book
@@ -87,14 +86,6 @@ def seed_glossary_dict() -> dict[str, tuple[str, str]]:
 
 
 @pytest.fixture
-async def fake_redis() -> FakeAsyncRedis:
-    """Fake Redis instance for testing."""
-    redis = FakeAsyncRedis(decode_responses=True)
-    yield redis
-    await redis.aclose()
-
-
-@pytest.fixture
 def mock_database() -> AsyncMock:
     """Mock Database service."""
     db = AsyncMock(spec=["execute", "fetch_one", "fetch_all", "close"])
@@ -105,16 +96,15 @@ def mock_database() -> AsyncMock:
 
 
 @pytest.fixture
-def mock_cache(fake_redis: FakeAsyncRedis) -> AsyncMock:
-    """Mock Cache service using fakeredis."""
-    cache = AsyncMock()
-    cache.redis = fake_redis
-    cache.set_pipeline_status = AsyncMock()
-    cache.get_pipeline_status = AsyncMock()
-    cache.update_progress = AsyncMock()
-    cache.acquire_lock = AsyncMock(return_value=True)
-    cache.release_lock = AsyncMock()
-    return cache
+def mock_state() -> AsyncMock:
+    """Mock PipelineState service."""
+    state = AsyncMock()
+    state.set_pipeline_status = AsyncMock()
+    state.get_pipeline_status = AsyncMock()
+    state.set_progress = AsyncMock()
+    state.acquire_lock = AsyncMock(return_value=True)
+    state.release_lock = AsyncMock()
+    return state
 
 
 @pytest.fixture
@@ -196,16 +186,16 @@ def mock_llm_client() -> AsyncMock:
 @pytest.fixture
 def mock_service_context(
     mock_database: AsyncMock,
-    mock_cache: AsyncMock,
+    mock_state: AsyncMock,
     mock_blob_client: AsyncMock,
     mock_ocr_client: AsyncMock,
     mock_llm_client: AsyncMock,
 ) -> MagicMock:
     """Complete mock ServiceContext with all dependencies."""
     context = MagicMock()
-    context.database = mock_database
-    context.cache = mock_cache
-    context.blob_client = mock_blob_client
-    context.ocr_client = mock_ocr_client
-    context.llm_client = mock_llm_client
+    context.db = mock_database
+    context.state = mock_state
+    context.blob = mock_blob_client
+    context.ocr = mock_ocr_client
+    context.llm = mock_llm_client
     return context

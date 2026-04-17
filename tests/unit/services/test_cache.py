@@ -1,4 +1,4 @@
-"""Tests for the Cache service."""
+"""Tests for the PipelineState service."""
 
 from __future__ import annotations
 
@@ -7,95 +7,131 @@ from uuid import uuid4
 
 import pytest
 
+from transpose.services.cache import PipelineState
 
-class TestCacheOperations:
-    """Test Redis cache operations."""
+
+class TestPipelineStateOperations:
+    """Test PostgreSQL-backed pipeline state operations."""
 
     @pytest.mark.asyncio
-    async def test_set_pipeline_status(
-        self,
-        mock_cache: AsyncMock,
-        fake_redis,
-    ) -> None:
+    async def test_set_pipeline_status(self) -> None:
         """Test setting pipeline status."""
-        book_id = uuid4()
-        status = "ocr_complete"
+        book_id = str(uuid4())
+        stage = "ocr"
 
-        await fake_redis.set(f"pipeline:status:{book_id}", status)
-        result = await fake_redis.get(f"pipeline:status:{book_id}")
+        # Mock database
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock()
 
-        assert result == status
+        state = PipelineState(mock_db)
+        await state.set_pipeline_status(book_id, stage)
+
+        # Verify UPSERT query was called
+        mock_db.execute.assert_called_once()
+        call_args = mock_db.execute.call_args
+        assert "INSERT INTO pipeline_state" in call_args[0][0]
+        assert book_id in call_args[0]
+        assert stage in call_args[0]
 
     @pytest.mark.asyncio
-    async def test_get_pipeline_status(
-        self,
-        mock_cache: AsyncMock,
-        fake_redis,
-    ) -> None:
+    async def test_get_pipeline_status(self) -> None:
         """Test getting pipeline status."""
-        book_id = uuid4()
-        await fake_redis.set(f"pipeline:status:{book_id}", "translated")
+        book_id = str(uuid4())
+        expected_stage = "translate"
 
-        result = await fake_redis.get(f"pipeline:status:{book_id}")
-        assert result == "translated"
+        # Mock database
+        mock_db = AsyncMock()
+        mock_db.fetch_one = AsyncMock(return_value={"stage": expected_stage})
 
-    @pytest.mark.asyncio
-    async def test_update_progress(
-        self,
-        mock_cache: AsyncMock,
-        fake_redis,
-    ) -> None:
-        """Test updating progress tracking."""
-        book_id = uuid4()
-        key = f"pipeline:progress:{book_id}"
+        state = PipelineState(mock_db)
+        result = await state.get_pipeline_status(book_id)
 
-        await fake_redis.set(key, "50")
-        progress = await fake_redis.get(key)
-
-        assert progress == "50"
-
-
-class TestCacheLocking:
-    """Test distributed locking."""
+        assert result == expected_stage
+        mock_db.fetch_one.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_acquire_lock(
-        self,
-        fake_redis,
-    ) -> None:
-        """Test acquiring a distributed lock."""
-        lock_key = "pipeline:lock:test"
+    async def test_get_pipeline_status_not_found(self) -> None:
+        """Test getting pipeline status when book doesn't exist."""
+        book_id = str(uuid4())
 
-        # Acquire lock
-        result = await fake_redis.set(lock_key, "locked", ex=300, nx=True)
-        assert result is True
+        # Mock database returning None
+        mock_db = AsyncMock()
+        mock_db.fetch_one = AsyncMock(return_value=None)
 
-    @pytest.mark.asyncio
-    async def test_lock_contention(
-        self,
-        fake_redis,
-    ) -> None:
-        """Test that lock cannot be acquired if already held."""
-        lock_key = "pipeline:lock:test"
+        state = PipelineState(mock_db)
+        result = await state.get_pipeline_status(book_id)
 
-        # First acquire
-        await fake_redis.set(lock_key, "locked", ex=300, nx=True)
-
-        # Second acquire should fail
-        result = await fake_redis.set(lock_key, "locked", ex=300, nx=True)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_release_lock(
-        self,
-        fake_redis,
-    ) -> None:
+    async def test_set_progress(self) -> None:
+        """Test updating progress tracking."""
+        book_id = str(uuid4())
+        stage = "translate"
+        completed = 50
+        total = 100
+
+        # Mock database
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock()
+
+        state = PipelineState(mock_db)
+        await state.set_progress(book_id, stage, completed, total)
+
+        # Verify UPDATE query was called
+        mock_db.execute.assert_called_once()
+        call_args = mock_db.execute.call_args
+        assert "UPDATE pipeline_state" in call_args[0][0]
+        assert book_id in call_args[0]
+
+
+class TestPipelineStateLocking:
+    """Test distributed locking with PostgreSQL advisory locks."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_lock(self) -> None:
+        """Test acquiring a distributed lock."""
+        book_id = str(uuid4())
+
+        # Mock database returning True (lock acquired)
+        mock_db = AsyncMock()
+        mock_db.fetch_one = AsyncMock(return_value={"pg_try_advisory_lock": True})
+
+        state = PipelineState(mock_db)
+        acquired = await state.acquire_lock(book_id)
+
+        assert acquired is True
+        mock_db.fetch_one.assert_called_once()
+        call_args = mock_db.fetch_one.call_args
+        assert "pg_try_advisory_lock" in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_lock_contention(self) -> None:
+        """Test that lock cannot be acquired if already held."""
+        book_id = str(uuid4())
+
+        # Mock database returning False (lock already held)
+        mock_db = AsyncMock()
+        mock_db.fetch_one = AsyncMock(return_value={"pg_try_advisory_lock": False})
+
+        state = PipelineState(mock_db)
+        acquired = await state.acquire_lock(book_id)
+
+        assert acquired is False
+
+    @pytest.mark.asyncio
+    async def test_release_lock(self) -> None:
         """Test releasing a lock."""
-        lock_key = "pipeline:lock:test"
+        book_id = str(uuid4())
 
-        await fake_redis.set(lock_key, "locked", ex=300, nx=True)
-        await fake_redis.delete(lock_key)
+        # Mock database
+        mock_db = AsyncMock()
+        mock_db.execute = AsyncMock()
 
-        # Should be able to acquire again
-        result = await fake_redis.set(lock_key, "locked", ex=300, nx=True)
-        assert result is True
+        state = PipelineState(mock_db)
+        await state.release_lock(book_id)
+
+        # Verify pg_advisory_unlock was called
+        mock_db.execute.assert_called_once()
+        call_args = mock_db.execute.call_args
+        assert "pg_advisory_unlock" in call_args[0][0]

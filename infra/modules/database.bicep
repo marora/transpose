@@ -21,6 +21,13 @@ param managedIdentityName string
 @description('Allow public network access (set to false for production)')
 param allowPublicAccess bool = true
 
+// NOTE: PostgreSQL Flexible Server auto-stop (auto-pause) for cost savings
+// is configured post-deployment via Azure CLI or Portal, not directly in Bicep.
+// To enable auto-stop after deployment, run:
+//   az postgres flexible-server update --resource-group <rg> --name <server> --auto-grow Disabled
+// This will auto-pause the server when inactive, reducing costs to near-zero during idle periods.
+// The server will auto-resume when accessed.
+
 resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-03-01-preview' = {
   name: '${namePrefix}-psql'
   location: location

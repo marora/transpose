@@ -19,9 +19,6 @@ class Settings(BaseSettings):
     postgres_user: str = "transpose"
     postgres_password: str = ""  # Empty when using Managed Identity / Entra auth
 
-    # Redis
-    redis_url: str = "redis://localhost:6379/0"
-
     # Azure AI Document Intelligence
     doc_intelligence_endpoint: str = ""
 

@@ -171,31 +171,31 @@ class TestPipelineDistributedLock:
     @pytest.mark.asyncio
     async def test_lock_acquisition(
         self,
-        mock_cache: AsyncMock,
+        mock_state: AsyncMock,
     ) -> None:
         """Test that pipeline acquires distributed lock."""
         book_id = uuid4()
         lock_key = f"pipeline:lock:{book_id}"
 
-        mock_cache.acquire_lock = AsyncMock(return_value=True)
+        mock_state.acquire_lock = AsyncMock(return_value=True)
 
-        acquired = await mock_cache.acquire_lock(lock_key, timeout=300)
+        acquired = await mock_state.acquire_lock(lock_key, timeout=300)
 
         assert acquired is True
-        mock_cache.acquire_lock.assert_called_once_with(lock_key, timeout=300)
+        mock_state.acquire_lock.assert_called_once_with(lock_key, timeout=300)
 
     @pytest.mark.asyncio
     async def test_lock_already_held(
         self,
-        mock_cache: AsyncMock,
+        mock_state: AsyncMock,
     ) -> None:
         """Test behavior when lock is already held."""
         book_id = uuid4()
         lock_key = f"pipeline:lock:{book_id}"
 
-        mock_cache.acquire_lock = AsyncMock(return_value=False)
+        mock_state.acquire_lock = AsyncMock(return_value=False)
 
-        acquired = await mock_cache.acquire_lock(lock_key, timeout=300)
+        acquired = await mock_state.acquire_lock(lock_key, timeout=300)
 
         assert acquired is False
 

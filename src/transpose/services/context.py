@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from transpose.config.settings import Settings, get_settings
 from transpose.services.blob_client import BlobClient
-from transpose.services.cache import Cache
+from transpose.services.cache import PipelineState
 from transpose.services.database import Database
 from transpose.services.llm_client import LlmClient
 from transpose.services.ocr_client import OcrClient
@@ -15,7 +15,7 @@ class ServiceContext:
 
     Initializes and holds references to:
     - Database (PostgreSQL)
-    - Cache (Redis)
+    - PipelineState (PostgreSQL-backed state tracking)
     - BlobClient (Azure Blob Storage)
     - OcrClient (Azure AI Document Intelligence)
     - LlmClient (Azure OpenAI)
@@ -29,7 +29,7 @@ class ServiceContext:
 
         # Initialize service clients
         self.db = Database(self._build_dsn())
-        self.cache = Cache(self.settings.redis_url)
+        self.state = PipelineState(self.db)
         self.blob = BlobClient(self.settings.blob_storage_account_url)
         self.ocr = OcrClient(self.settings.doc_intelligence_endpoint)
         self.llm = LlmClient(
@@ -60,12 +60,10 @@ class ServiceContext:
     async def connect(self) -> None:
         """Initialize all service connections."""
         await self.db.connect()
-        await self.cache.connect()
 
     async def close(self) -> None:
         """Close all service connections."""
         await self.db.close()
-        await self.cache.close()
         await self.blob.close()
         await self.ocr.close()
         await self.llm.close()

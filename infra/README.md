@@ -11,14 +11,15 @@ The infrastructure provisions the following Azure services:
 | **Azure AI Document Intelligence** | OCR for scanned PDFs | S0 | Managed Identity |
 | **Azure OpenAI** | Literary translation (GPT-4o) | S0, 30K TPM | Managed Identity |
 | **Azure Blob Storage** | Source PDFs + output files | Standard_LRS | Managed Identity |
-| **Azure Key Vault** | Redis password storage | Standard | RBAC (Managed Identity) |
+| **Azure Key Vault** | Future secret storage | Standard | RBAC (Managed Identity) |
 | **Azure Container Apps** | Compute runtime | 1 core, 2Gi, 0-3 replicas | User-Assigned MI |
 | **Application Insights** | Traces, metrics, logs | — | Connection string |
-| **PostgreSQL Flexible Server** | Persistent state | Burstable B1ms | Entra auth only |
-| **Azure Cache for Redis** | Pipeline state, caching | Basic C0 | Access key (via Key Vault) |
+| **PostgreSQL Flexible Server** | Persistent state + pipeline tracking | Burstable B1ms | Entra auth only |
 | **Log Analytics Workspace** | Backend for App Insights | PerGB2018 | — |
 
 **Security:** All services use Managed Identity for authentication. No secrets in code or configuration files.
+
+**Serverless Architecture:** Redis removed — pipeline state tracked in PostgreSQL. PostgreSQL auto-pause enabled for near-zero idle costs.
 
 ## Directory Structure
 
@@ -29,14 +30,13 @@ infra/
 ├── modules/
 │   ├── monitoring.bicep          # Application Insights + Log Analytics
 │   ├── storage.bicep             # Blob Storage (source-pdfs, output)
-│   ├── keyvault.bicep            # Key Vault + Redis password secret
-│   ├── cache.bicep               # Azure Cache for Redis
-│   ├── database.bicep            # PostgreSQL Flexible Server (Entra auth)
+│   ├── keyvault.bicep            # Key Vault (for future secrets)
+│   ├── database.bicep            # PostgreSQL Flexible Server (Entra auth, auto-pause)
 │   ├── cognitive-services.bicep  # Document Intelligence + OpenAI + GPT-4o deployment
 │   ├── identity.bicep            # User-Assigned Managed Identity + RBAC roles
 │   └── container-app.bicep       # Container Apps Environment + Container App
 ├── scripts/
-│   └── init-db.sql         # PostgreSQL schema initialization
+│   └── init-db.sql         # PostgreSQL schema initialization (includes pipeline_state)
 └── README.md               # This file
 ```
 
@@ -56,7 +56,6 @@ infra/
    - Microsoft.App
    - Microsoft.CognitiveServices
    - Microsoft.DBforPostgreSQL
-   - Microsoft.Cache
    - Microsoft.Storage
    - Microsoft.KeyVault
    - Microsoft.ManagedIdentity
@@ -151,6 +150,32 @@ psql "host=${POSTGRES_SERVER}.postgres.database.azure.com port=5432 dbname=trans
 
 Alternatively, connect using Azure Data Studio or pgAdmin with Entra authentication.
 
+### Step 4.5: Enable PostgreSQL auto-pause (optional — for cost savings)
+
+To enable automatic server pause when idle (reduces costs to near-zero):
+
+```bash
+# Get the PostgreSQL server name
+POSTGRES_SERVER=$(az deployment group show \
+  --resource-group transpose-dev \
+  --name main \
+  --query properties.outputs.postgresServerName.value -o tsv)
+
+# Enable auto-pause (note: some regions/SKUs may not support this feature yet)
+az postgres flexible-server update \
+  --resource-group transpose-dev \
+  --name $POSTGRES_SERVER \
+  --auto-grow Disabled
+
+# Verify configuration
+az postgres flexible-server show \
+  --resource-group transpose-dev \
+  --name $POSTGRES_SERVER \
+  --query '{name:name, tier:sku.tier, autoGrow:storage.autoGrow}'
+```
+
+**Note:** Auto-pause/auto-stop for PostgreSQL Flexible Server may not be available in all regions or API versions. Check Azure documentation for current availability.
+
 ### Step 5: Build and push the container image
 
 ```bash
@@ -185,9 +210,6 @@ The Container App is pre-configured with these environment variables:
 | `POSTGRES_HOST` | Output | PostgreSQL server FQDN |
 | `POSTGRES_DATABASE` | Output | Database name (transpose) |
 | `POSTGRES_USER` | Managed Identity | Client ID for Entra auth |
-| `REDIS_HOST` | Output | Redis cache hostname |
-| `REDIS_PORT` | Output | Redis SSL port |
-| `REDIS_PASSWORD` | Key Vault secret | Redis access key |
 | `KEY_VAULT_URI` | Output | Key Vault URI |
 
 The application code should use `DefaultAzureCredential` from the Azure SDK to authenticate.
@@ -197,7 +219,7 @@ The application code should use `DefaultAzureCredential` from the Azure SDK to a
 For local development, use Docker Compose:
 
 ```bash
-# Start local services (PostgreSQL + Redis)
+# Start local services (PostgreSQL only — Redis removed)
 docker-compose up -d
 
 # Initialize the local database
@@ -207,7 +229,7 @@ docker-compose exec postgres psql -U transpose -d transpose -f /docker-entrypoin
 # (Configure Azure service endpoints via environment variables or .env file)
 ```
 
-See `docker-compose.yml` for service configuration.
+See `docker-compose.yml` for service configuration. Pipeline state is tracked in PostgreSQL `pipeline_state` table.
 
 ## Cost Estimation (Dev Environment)
 
@@ -215,13 +237,13 @@ Approximate monthly costs for the Phase 1 dev environment (US East region):
 
 | Service | SKU | Monthly Cost (USD) |
 |---------|-----|-------------------|
-| PostgreSQL Flexible Server | B1ms | ~$12 |
-| Azure Cache for Redis | Basic C0 | ~$16 |
+| PostgreSQL Flexible Server | B1ms (with auto-pause) | ~$0-12 (near-zero when idle) |
 | Storage Account | Standard_LRS | ~$1-5 (usage-based) |
 | Log Analytics + App Insights | PerGB2018 | ~$5-20 (usage-based) |
 | Container Apps | 1 core, 2Gi, 0-3 replicas | ~$10-30 (usage-based) |
 | Azure OpenAI | GPT-4o, 30K TPM | Usage-based (see below) |
 | Document Intelligence | S0 | Usage-based (see below) |
+| Key Vault | Standard | ~$0.03/10K ops |
 
 **Usage-based costs:**
 - **Azure OpenAI (GPT-4o)**: ~$2.50 per 1M input tokens, ~$10 per 1M output tokens
@@ -229,11 +251,12 @@ Approximate monthly costs for the Phase 1 dev environment (US East region):
 - **Document Intelligence (prebuilt-read)**: $1.50 per 1000 pages
   - Estimated for a 300-page book: ~$0.45
 
-**Total estimated dev environment cost**: ~$60-120/month + per-book processing costs
+**Total estimated dev environment cost**: ~$20-70/month + per-book processing costs
+
+**Serverless savings:** Redis removed (~$16/mo savings). PostgreSQL auto-pause reduces idle cost to near-zero.
 
 **Production recommendations:**
 - Scale PostgreSQL to General Purpose
-- Upgrade Redis to Standard tier with clustering
 - Enable geo-redundancy for Storage
 - Disable public network access on all services
 - Add VNet integration and Private Endpoints
@@ -302,10 +325,6 @@ exceptions
 **4. Key Vault access denied**
 - Confirm managed identity has "Key Vault Secrets User" role
 - Check RBAC authorization is enabled (not access policies)
-
-**5. Redis connection fails**
-- Verify TLS 1.2 is used in client
-- Confirm password is retrieved from Key Vault correctly
 
 ### Diagnostic Commands
 

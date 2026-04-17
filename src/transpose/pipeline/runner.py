@@ -95,7 +95,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             )
 
             book_id = ingest_output.book_id
-            await ctx.cache.set_pipeline_status(str(book_id), "ingest")
+            await ctx.state.set_pipeline_status(str(book_id), "ingest")
 
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "ingest", "book_id": str(book_id)})
@@ -120,7 +120,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
             ocr_output = await ocr.run(ocr.OcrInput(book_id=book_id), ctx)
 
-            await ctx.cache.set_pipeline_status(str(book_id), "ocr")
+            await ctx.state.set_pipeline_status(str(book_id), "ocr")
 
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "ocr", "book_id": str(book_id)})
@@ -139,7 +139,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
             chunk_output = await chunk.run(chunk.ChunkInput(book_id=book_id), ctx)
 
-            await ctx.cache.set_pipeline_status(str(book_id), "chunk")
+            await ctx.state.set_pipeline_status(str(book_id), "chunk")
 
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "chunk", "book_id": str(book_id)})
@@ -157,7 +157,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 ctx,
             )
 
-            await ctx.cache.set_pipeline_status(str(book_id), "translate")
+            await ctx.state.set_pipeline_status(str(book_id), "translate")
 
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "translate", "book_id": str(book_id)})
@@ -182,7 +182,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 ctx,
             )
 
-            await ctx.cache.set_pipeline_status(str(book_id), "glossary")
+            await ctx.state.set_pipeline_status(str(book_id), "glossary")
 
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "glossary", "book_id": str(book_id)})
@@ -205,7 +205,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 ctx,
             )
 
-            await ctx.cache.set_pipeline_status(str(book_id), "assemble")
+            await ctx.state.set_pipeline_status(str(book_id), "assemble")
 
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "assemble", "book_id": str(book_id)})
@@ -223,7 +223,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 ctx,
             )
 
-            await ctx.cache.set_pipeline_status(str(book_id), "export")
+            await ctx.state.set_pipeline_status(str(book_id), "export")
 
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "export", "book_id": str(book_id)})
@@ -242,7 +242,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
         # Release lock
         if book_id:
-            await ctx.cache.release_lock(str(book_id))
+            await ctx.state.release_lock(str(book_id))
 
         final_status = BookStatus.EXPORTED
 
@@ -262,7 +262,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             from transpose.models.enums import BookStatus
 
             await ctx.db.update_book_status(book_id, BookStatus.FAILED)
-            await ctx.cache.release_lock(str(book_id))
+            await ctx.state.release_lock(str(book_id))
 
             # Record error metric
             pipeline_errors.add(

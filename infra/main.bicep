@@ -58,16 +58,9 @@ module storage './modules/storage.bicep' = {
 }
 
 // ============================================================================
-// MODULE 3: Cache (Azure Cache for Redis)
+// MODULE 3: Cache (Removed — using PostgreSQL for pipeline state)
 // ============================================================================
-module cache './modules/cache.bicep' = {
-  name: 'cache-deployment'
-  params: {
-    namePrefix: namePrefix
-    location: location
-    tags: tags
-  }
-}
+// Redis removed per serverless-first directive
 
 // ============================================================================
 // MODULE 4: Cognitive Services (Document Intelligence + OpenAI)
@@ -98,7 +91,7 @@ module identity './modules/identity.bicep' = {
 }
 
 // ============================================================================
-// MODULE 6: Key Vault (for Redis password)
+// MODULE 6: Key Vault (for future secrets if needed)
 // ============================================================================
 module keyVault './modules/keyvault.bicep' = {
   name: 'keyvault-deployment'
@@ -107,7 +100,6 @@ module keyVault './modules/keyvault.bicep' = {
     location: location
     tags: tags
     tenantId: tenantId
-    redisAccessKey: cache.outputs.redisAccessKey
     managedIdentityPrincipalId: identity.outputs.managedIdentityPrincipalId
   }
 }
@@ -148,10 +140,7 @@ module containerApp './modules/container-app.bicep' = {
     storageAccountName: storage.outputs.storageAccountName
     postgresFqdn: database.outputs.postgresFqdn
     postgresDatabaseName: database.outputs.postgresDatabaseName
-    redisHostName: cache.outputs.redisHostName
-    redisSslPort: cache.outputs.redisSslPort
     keyVaultUri: keyVault.outputs.keyVaultUri
-    redisPasswordSecretUri: keyVault.outputs.redisPasswordSecretUri
     containerImage: containerImage
     containerRegistryServer: containerRegistryServer
   }
@@ -186,10 +175,6 @@ output gpt4oDeploymentName string = cognitiveServices.outputs.gpt4oDeploymentNam
 output postgresServerName string = database.outputs.postgresServerName
 output postgresFqdn string = database.outputs.postgresFqdn
 output postgresDatabaseName string = database.outputs.postgresDatabaseName
-
-// Cache
-output redisCacheName string = cache.outputs.redisCacheName
-output redisHostName string = cache.outputs.redisHostName
 
 // Key Vault
 output keyVaultName string = keyVault.outputs.keyVaultName

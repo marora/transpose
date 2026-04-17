@@ -98,6 +98,20 @@ CREATE TABLE IF NOT EXISTS manuscripts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Pipeline state table (replaces Redis pipeline state)
+CREATE TABLE IF NOT EXISTS pipeline_state (
+    book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    stage TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    progress_completed INTEGER NOT NULL DEFAULT 0,
+    progress_total INTEGER NOT NULL DEFAULT 0,
+    locked_at TIMESTAMPTZ,
+    lock_expires_at TIMESTAMPTZ,
+    error_message TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (book_id)
+);
+
 -- ============================================================================
 -- Indexes for Query Performance
 -- ============================================================================
@@ -109,6 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_cultural_terms_book_id ON cultural_terms(book_id)
 CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
 CREATE INDEX IF NOT EXISTS idx_chunks_sequence ON chunks(book_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_pages_page_number ON pages(book_id, page_number);
+CREATE INDEX IF NOT EXISTS idx_pipeline_state_status ON pipeline_state(status);
 
 -- ============================================================================
 -- Triggers for updated_at timestamp
@@ -127,6 +142,12 @@ CREATE TRIGGER update_books_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+-- Add updated_at trigger for pipeline_state
+CREATE TRIGGER update_pipeline_state_updated_at
+    BEFORE UPDATE ON pipeline_state
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 -- ============================================================================
 -- Comments for documentation
 -- ============================================================================
@@ -138,6 +159,7 @@ COMMENT ON TABLE translations IS 'Translated chunks with LLM metadata and token 
 COMMENT ON TABLE cultural_terms IS 'Preserved culturally significant terms with definitions';
 COMMENT ON TABLE glossaries IS 'Aggregated glossary per book version';
 COMMENT ON TABLE manuscripts IS 'Assembled translated documents ready for export';
+COMMENT ON TABLE pipeline_state IS 'Pipeline execution state — replaces Redis for status tracking and locking';
 
 -- ============================================================================
 -- Verification Query

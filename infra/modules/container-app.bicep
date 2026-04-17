@@ -43,17 +43,8 @@ param postgresFqdn string
 @description('PostgreSQL Database Name')
 param postgresDatabaseName string
 
-@description('Redis Host Name')
-param redisHostName string
-
-@description('Redis SSL Port')
-param redisSslPort int
-
 @description('Key Vault URI')
 param keyVaultUri string
-
-@description('Redis Password Secret URI from Key Vault')
-param redisPasswordSecretUri string
 
 @description('Container image (defaults to placeholder)')
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -115,11 +106,6 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
           name: 'appinsights-connection-string'
           value: appInsightsConnectionString
         }
-        {
-          name: 'redis-password'
-          keyVaultUrl: redisPasswordSecretUri
-          identity: managedIdentityId
-        }
       ]
     }
     template: {
@@ -171,18 +157,6 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'POSTGRES_USER'
               value: managedIdentityClientId
-            }
-            {
-              name: 'REDIS_HOST'
-              value: redisHostName
-            }
-            {
-              name: 'REDIS_PORT'
-              value: string(redisSslPort)
-            }
-            {
-              name: 'REDIS_PASSWORD'
-              secretRef: 'redis-password'
             }
             {
               name: 'KEY_VAULT_URI'
