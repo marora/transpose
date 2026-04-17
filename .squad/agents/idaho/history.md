@@ -43,3 +43,19 @@ All resources provisioned with Managed Identity — zero secrets in code or envi
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+
+### Session 2026-04-17: ACR + First Real Deployment
+
+**Delivered:** Full deployment pipeline from code to running Container App.
+
+- **ACR created:** `transposedevacr.azurecr.io` (Basic SKU, swedencentral). Name `transposedevacr` was available.
+- **AcrPull role** assigned to `transpose-dev-identity` managed identity — no admin credentials needed.
+- **Dockerfile fix:** `libgdk-pixbuf2.0-0` → `libgdk-pixbuf-2.0-0` on python:3.12-slim (Debian Bookworm). Also fixed `FROM ... as` → `FROM ... AS` for BuildKit compliance.
+- **Image `transpose:v1`** built locally and pushed to ACR. Multi-stage build with WeasyPrint deps.
+- **Container App updated:** `transpose-dev-app` now runs real code (not hello-world). All env vars configured including PostgreSQL, OpenAI, Doc Intelligence, Storage, Key Vault, App Insights connection string.
+- **External ingress enabled** for testing. FQDN: `transpose-dev-app.yellowcoast-177ceb3f.swedencentral.azurecontainerapps.io`
+- **Health endpoint verified:** `GET /health` returns `{"status": "ok", "service": "transpose"}`
+- **ACR Bicep module** added at `infra/modules/acr.bicep` with AcrPull role assignment built in.
+- **Note:** PostgreSQL password is set as plain env var for now. Should move to Key Vault reference in Phase 2.
+- **Note:** Created minimal `src/transpose/api.py` with aiohttp for health/root endpoints. Chani will enhance with pipeline trigger endpoints.
+
