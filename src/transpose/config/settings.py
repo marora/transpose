@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     Example: TRANSPOSE_POSTGRES_HOST=localhost
     """
 
-    model_config = {"env_prefix": "TRANSPOSE_"}
+    model_config = {"env_prefix": "TRANSPOSE_", "env_file": ".env", "env_file_encoding": "utf-8"}
 
     # PostgreSQL
     postgres_host: str = "localhost"

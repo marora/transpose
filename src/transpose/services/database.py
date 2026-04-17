@@ -25,9 +25,12 @@ class Database:
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
 
-    async def connect(self) -> None:
+    async def connect(self, ssl: str | None = None) -> None:
         """Initialize the connection pool."""
-        self._pool = await asyncpg.create_pool(dsn=self._dsn, min_size=2, max_size=10)
+        kwargs: dict = {"dsn": self._dsn, "min_size": 2, "max_size": 10}
+        if ssl:
+            kwargs["ssl"] = ssl
+        self._pool = await asyncpg.create_pool(**kwargs)
 
     async def close(self) -> None:
         """Close the connection pool."""
@@ -40,6 +43,16 @@ class Database:
         if self._pool is None:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._pool
+
+    async def execute(self, query: str, *args) -> str:
+        """Execute a query and return the status string."""
+        async with self.pool.acquire() as conn:
+            return await conn.execute(query, *args)
+
+    async def fetch_one(self, query: str, *args) -> asyncpg.Record | None:
+        """Execute a query and return a single row."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(query, *args)
 
     # --- Book CRUD ---
 

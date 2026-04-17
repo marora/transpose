@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+# TLS workaround: prevent CRL lookup hang with Azure PostgreSQL on WSL2.
+# Must be set before any database driver is imported.
+import os
+
+os.environ.setdefault("PGSSLCRL", "")
+os.environ.setdefault("PGSSLCRLDIR", "")
+
 import asyncio
 import logging
 
@@ -111,8 +118,6 @@ def status(book_id: str) -> None:
 
 async def _check_status(book_id: str) -> None:
     """Async status checker."""
-    import json
-
     from transpose.services import ServiceContext
 
     ctx = ServiceContext()
@@ -128,12 +133,8 @@ async def _check_status(book_id: str) -> None:
             click.echo(f"Book not found: {book_id}")
             return
 
-        # Get pipeline status from cache
-        pipeline_status = await ctx.cache.get_pipeline_status(book_id)
-
-        # Get progress
-        progress_data = await ctx.cache.client.get(f"pipeline:{book_id}:progress")
-        progress = json.loads(progress_data) if progress_data else None
+        # Get pipeline status from state
+        pipeline_status = await ctx.state.get_pipeline_status(book_id)
 
         # Display status
         click.echo(f"\nBook: {book.title}")
@@ -144,12 +145,6 @@ async def _check_status(book_id: str) -> None:
 
         if pipeline_status:
             click.echo(f"Current stage: {pipeline_status}")
-
-        if progress:
-            click.echo(
-                f"Progress: {progress['completed']}/{progress['total']} "
-                f"({progress['stage']})"
-            )
 
         # Get manuscript if available
         if book.status in ["assembled", "exported"]:

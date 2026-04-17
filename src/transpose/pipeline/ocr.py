@@ -123,8 +123,8 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
     # Update book status
     await ctx.db.update_book_status(input.book_id, BookStatus.OCR_COMPLETE)
 
-    # Update progress in cache
-    await ctx.cache.set_progress(
+    # Update progress in state
+    await ctx.state.set_progress(
         str(input.book_id),
         "ocr",
         len(existing_pages) + len(page_results),

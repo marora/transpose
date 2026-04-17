@@ -40,7 +40,6 @@ class ServiceContext:
 
     def _build_dsn(self) -> str:
         """Build PostgreSQL connection string."""
-        # If password is provided, use password auth
         if self.settings.postgres_password:
             return (
                 f"postgresql://{self.settings.postgres_user}:"
@@ -48,18 +47,21 @@ class ServiceContext:
                 f"{self.settings.postgres_host}:{self.settings.postgres_port}/"
                 f"{self.settings.postgres_db}"
             )
-        # Otherwise use Managed Identity / Entra auth
-        # asyncpg doesn't support Entra auth directly, so we rely on pg_hba.conf
-        # or connection-time token injection (not implemented here)
         return (
             f"postgresql://{self.settings.postgres_user}@"
             f"{self.settings.postgres_host}:{self.settings.postgres_port}/"
             f"{self.settings.postgres_db}"
         )
 
+    @property
+    def _requires_ssl(self) -> bool:
+        """Azure PostgreSQL always requires SSL."""
+        return self.settings.postgres_host.endswith(".database.azure.com")
+
     async def connect(self) -> None:
         """Initialize all service connections."""
-        await self.db.connect()
+        ssl_mode = "require" if self._requires_ssl else None
+        await self.db.connect(ssl=ssl_mode)
 
     async def close(self) -> None:
         """Close all service connections."""

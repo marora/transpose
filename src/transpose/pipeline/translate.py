@@ -180,7 +180,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
         previous_translation = response
 
         # Update progress
-        await ctx.cache.set_progress(
+        await ctx.state.set_progress(
             str(input.book_id),
             "translate",
             i + 1,
