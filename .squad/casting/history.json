@@ -1,0 +1,11 @@
+{
+  "assignments": [
+    {
+      "assignment_id": "transpose-init-2026-04-17",
+      "universe": "Dune",
+      "timestamp": "2026-04-17T15:41:00Z",
+      "agents": ["Stilgar", "Chani", "Idaho", "Thufir"],
+      "reason": "Initial team cast for Transpose project"
+    }
+  ]
+}
