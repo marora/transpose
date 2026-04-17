@@ -1,0 +1,58 @@
+"""Application settings — loaded from environment variables."""
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Transpose pipeline configuration.
+
+    All values are read from environment variables with the TRANSPOSE_ prefix.
+    Example: TRANSPOSE_POSTGRES_HOST=localhost
+    """
+
+    model_config = {"env_prefix": "TRANSPOSE_"}
+
+    # PostgreSQL
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "transpose"
+    postgres_user: str = "transpose"
+    postgres_password: str = ""  # Empty when using Managed Identity / Entra auth
+
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Azure AI Document Intelligence
+    doc_intelligence_endpoint: str = ""
+
+    # Azure OpenAI
+    openai_endpoint: str = ""
+    openai_deployment: str = "gpt-4o"
+    openai_api_version: str = "2024-10-21"
+
+    # Azure Blob Storage
+    blob_storage_account_url: str = ""
+    blob_container_source: str = "source-pdfs"
+    blob_container_output: str = "output"
+
+    # Azure Key Vault
+    keyvault_url: str = ""
+
+    # Application Insights
+    applicationinsights_connection_string: str = ""
+
+    # Pipeline tuning
+    ocr_concurrency: int = 5
+    translate_concurrency: int = 5
+    chunk_target_tokens: int = 1500
+    chunk_overlap_tokens: int = 150
+    low_confidence_threshold: float = 0.7
+
+    # Retry policy
+    max_retries: int = 3
+    retry_base_delay: float = 1.0
+
+
+def get_settings() -> Settings:
+    """Load settings from environment."""
+    return Settings()

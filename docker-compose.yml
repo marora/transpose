@@ -1,0 +1,86 @@
+# docker-compose.yml - Local development environment for Transpose
+
+version: '3.9'
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: transpose-postgres
+    environment:
+      POSTGRES_USER: transpose
+      POSTGRES_PASSWORD: transpose_dev_password
+      POSTGRES_DB: transpose
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transpose"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis cache
+  redis:
+    image: redis:7-alpine
+    container_name: transpose-redis
+    command: redis-server --requirepass transpose_redis_password
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Transpose application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: transpose-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database configuration
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DATABASE: transpose
+      POSTGRES_USER: transpose
+      POSTGRES_PASSWORD: transpose_dev_password
+      
+      # Redis configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: transpose_redis_password
+      
+      # Azure services (configure with your local emulators or dev accounts)
+      # Uncomment and configure when needed:
+      # DOCUMENT_INTELLIGENCE_ENDPOINT: https://your-account.cognitiveservices.azure.com/
+      # OPENAI_ENDPOINT: https://your-account.openai.azure.com/
+      # OPENAI_DEPLOYMENT_NAME: gpt-4o
+      # STORAGE_ACCOUNT_NAME: your-storage-account
+      # AZURE_CLIENT_ID: your-managed-identity-client-id
+      
+      # Observability (optional for local dev)
+      # APPLICATIONINSIGHTS_CONNECTION_STRING: your-connection-string
+      
+      # Python configuration
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./src:/app/src:ro
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    command: ["tail", "-f", "/dev/null"]  # Keep container running for exec commands
+
+volumes:
+  postgres_data:
+  redis_data:

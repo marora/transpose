@@ -1,0 +1,204 @@
+// main.bicep - Transpose Azure Infrastructure Orchestrator
+// Provisions all Azure resources needed for the Transpose literary translation pipeline
+
+targetScope = 'resourceGroup'
+
+@description('Environment name (e.g., dev, staging, prod)')
+@minLength(3)
+@maxLength(10)
+param environmentName string = 'dev'
+
+@description('Azure region for all resources')
+param location string = resourceGroup().location
+
+@description('Resource tags')
+param tags object = {
+  environment: environmentName
+  project: 'transpose'
+  managedBy: 'bicep'
+}
+
+@description('Allow public network access to PostgreSQL (disable for production)')
+param allowPublicPostgresAccess bool = true
+
+@description('Container image for the application')
+param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+@description('Container registry server (leave empty for public registries)')
+param containerRegistryServer string = ''
+
+// Naming convention: transpose-{env}-{service}
+var namePrefix = 'transpose-${environmentName}'
+
+// Get tenant ID
+var tenantId = tenant().tenantId
+
+// ============================================================================
+// MODULE 1: Monitoring (Log Analytics + Application Insights)
+// ============================================================================
+module monitoring './modules/monitoring.bicep' = {
+  name: 'monitoring-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+  }
+}
+
+// ============================================================================
+// MODULE 2: Storage (Blob Storage for PDFs and outputs)
+// ============================================================================
+module storage './modules/storage.bicep' = {
+  name: 'storage-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+  }
+}
+
+// ============================================================================
+// MODULE 3: Cache (Azure Cache for Redis)
+// ============================================================================
+module cache './modules/cache.bicep' = {
+  name: 'cache-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+  }
+}
+
+// ============================================================================
+// MODULE 4: Cognitive Services (Document Intelligence + OpenAI)
+// ============================================================================
+module cognitiveServices './modules/cognitive-services.bicep' = {
+  name: 'cognitive-services-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+  }
+}
+
+// ============================================================================
+// MODULE 5: Identity (User-Assigned Managed Identity + RBAC)
+// ============================================================================
+module identity './modules/identity.bicep' = {
+  name: 'identity-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+    storageAccountId: storage.outputs.storageAccountId
+    documentIntelligenceId: cognitiveServices.outputs.documentIntelligenceId
+    openAIId: cognitiveServices.outputs.openAIId
+    appInsightsId: monitoring.outputs.appInsightsId
+  }
+}
+
+// ============================================================================
+// MODULE 6: Key Vault (for Redis password)
+// ============================================================================
+module keyVault './modules/keyvault.bicep' = {
+  name: 'keyvault-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+    tenantId: tenantId
+    redisAccessKey: cache.outputs.redisAccessKey
+    managedIdentityPrincipalId: identity.outputs.managedIdentityPrincipalId
+  }
+}
+
+// ============================================================================
+// MODULE 7: Database (PostgreSQL with Entra authentication)
+// ============================================================================
+module database './modules/database.bicep' = {
+  name: 'database-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+    tenantId: tenantId
+    managedIdentityObjectId: identity.outputs.managedIdentityObjectId
+    managedIdentityName: identity.outputs.managedIdentityName
+    allowPublicAccess: allowPublicPostgresAccess
+  }
+}
+
+// ============================================================================
+// MODULE 8: Container App (Compute runtime)
+// ============================================================================
+module containerApp './modules/container-app.bicep' = {
+  name: 'container-app-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+    logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
+    managedIdentityId: identity.outputs.managedIdentityId
+    managedIdentityClientId: identity.outputs.managedIdentityClientId
+    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    documentIntelligenceEndpoint: cognitiveServices.outputs.documentIntelligenceEndpoint
+    openAIEndpoint: cognitiveServices.outputs.openAIEndpoint
+    openAIDeploymentName: cognitiveServices.outputs.gpt4oDeploymentName
+    storageAccountBlobEndpoint: storage.outputs.blobEndpoint
+    storageAccountName: storage.outputs.storageAccountName
+    postgresFqdn: database.outputs.postgresFqdn
+    postgresDatabaseName: database.outputs.postgresDatabaseName
+    redisHostName: cache.outputs.redisHostName
+    redisSslPort: cache.outputs.redisSslPort
+    keyVaultUri: keyVault.outputs.keyVaultUri
+    redisPasswordSecretUri: keyVault.outputs.redisPasswordSecretUri
+    containerImage: containerImage
+    containerRegistryServer: containerRegistryServer
+  }
+}
+
+// ============================================================================
+// OUTPUTS
+// ============================================================================
+
+output resourceGroupName string = resourceGroup().name
+output location string = location
+output environmentName string = environmentName
+
+// Monitoring
+output logAnalyticsWorkspaceName string = monitoring.outputs.logAnalyticsWorkspaceName
+output appInsightsName string = monitoring.outputs.appInsightsName
+output appInsightsConnectionString string = monitoring.outputs.appInsightsConnectionString
+
+// Storage
+output storageAccountName string = storage.outputs.storageAccountName
+output sourcePdfsContainerName string = storage.outputs.sourcePdfsContainerName
+output outputContainerName string = storage.outputs.outputContainerName
+
+// Cognitive Services
+output documentIntelligenceName string = cognitiveServices.outputs.documentIntelligenceName
+output documentIntelligenceEndpoint string = cognitiveServices.outputs.documentIntelligenceEndpoint
+output openAIName string = cognitiveServices.outputs.openAIName
+output openAIEndpoint string = cognitiveServices.outputs.openAIEndpoint
+output gpt4oDeploymentName string = cognitiveServices.outputs.gpt4oDeploymentName
+
+// Database
+output postgresServerName string = database.outputs.postgresServerName
+output postgresFqdn string = database.outputs.postgresFqdn
+output postgresDatabaseName string = database.outputs.postgresDatabaseName
+
+// Cache
+output redisCacheName string = cache.outputs.redisCacheName
+output redisHostName string = cache.outputs.redisHostName
+
+// Key Vault
+output keyVaultName string = keyVault.outputs.keyVaultName
+output keyVaultUri string = keyVault.outputs.keyVaultUri
+
+// Identity
+output managedIdentityName string = identity.outputs.managedIdentityName
+output managedIdentityClientId string = identity.outputs.managedIdentityClientId
+
+// Container App
+output containerAppName string = containerApp.outputs.containerAppName
+output containerAppFqdn string = containerApp.outputs.containerAppFqdn

@@ -1,0 +1,81 @@
+{
+  "api_version": "2023-07-31",
+  "model_id": "prebuilt-read",
+  "content": "योगस्थः कुरु कर्माणि सङ्गं त्यक्त्वा धनञ्जय।\nसिद्ध्यसिद्ध्योः समो भूत्वा समत्वं योग उच्यते॥\n\nChapter 2: Verse 48\n\nThis verse from the Bhagavad Gita teaches the principle of karma yoga.",
+  "pages": [
+    {
+      "page_number": 1,
+      "angle": 0,
+      "width": 8.5,
+      "height": 11,
+      "unit": "inch",
+      "words": [
+        {
+          "content": "योगस्थः",
+          "bounding_box": [1.2, 2.1, 1.8, 2.1, 1.8, 2.3, 1.2, 2.3],
+          "confidence": 0.985,
+          "span": {"offset": 0, "length": 8}
+        },
+        {
+          "content": "कुरु",
+          "bounding_box": [1.9, 2.1, 2.3, 2.1, 2.3, 2.3, 1.9, 2.3],
+          "confidence": 0.992,
+          "span": {"offset": 9, "length": 4}
+        },
+        {
+          "content": "कर्माणि",
+          "bounding_box": [2.4, 2.1, 3.0, 2.1, 3.0, 2.3, 2.4, 2.3],
+          "confidence": 0.988,
+          "span": {"offset": 14, "length": 7}
+        }
+      ],
+      "lines": [
+        {
+          "content": "योगस्थः कुरु कर्माणि सङ्गं त्यक्त्वा धनञ्जय।",
+          "bounding_box": [1.2, 2.1, 6.5, 2.1, 6.5, 2.3, 1.2, 2.3],
+          "spans": [{"offset": 0, "length": 45}]
+        },
+        {
+          "content": "सिद्ध्यसिद्ध्योः समो भूत्वा समत्वं योग उच्यते॥",
+          "bounding_box": [1.2, 2.5, 6.8, 2.5, 6.8, 2.7, 1.2, 2.7],
+          "spans": [{"offset": 46, "length": 48}]
+        },
+        {
+          "content": "Chapter 2: Verse 48",
+          "bounding_box": [1.2, 3.5, 4.0, 3.5, 4.0, 3.7, 1.2, 3.7],
+          "spans": [{"offset": 95, "length": 19}]
+        }
+      ]
+    },
+    {
+      "page_number": 2,
+      "angle": 0,
+      "width": 8.5,
+      "height": 11,
+      "unit": "inch",
+      "words": [
+        {
+          "content": "This",
+          "bounding_box": [1.2, 2.1, 1.6, 2.1, 1.6, 2.3, 1.2, 2.3],
+          "confidence": 0.995,
+          "span": {"offset": 115, "length": 4}
+        },
+        {
+          "content": "verse",
+          "bounding_box": [1.7, 2.1, 2.1, 2.1, 2.1, 2.3, 1.7, 2.3],
+          "confidence": 0.993,
+          "span": {"offset": 120, "length": 5}
+        }
+      ],
+      "lines": [
+        {
+          "content": "This verse from the Bhagavad Gita teaches the principle of karma yoga.",
+          "bounding_box": [1.2, 2.1, 7.5, 2.1, 7.5, 2.3, 1.2, 2.3],
+          "spans": [{"offset": 115, "length": 71}]
+        }
+      ]
+    }
+  ],
+  "styles": [],
+  "content_format": "text"
+}
