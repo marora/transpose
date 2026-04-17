@@ -49,8 +49,8 @@ RUN useradd -m -u 1000 transpose && \
 
 USER transpose
 
-# Health check endpoint (assuming the CLI can expose a simple HTTP health endpoint)
+# Health check endpoint
 EXPOSE 8000
 
-# Default command (override in Container Apps with actual CLI commands)
-CMD ["python", "-m", "transpose.cli", "--help"]
+# Run the HTTP API server
+CMD ["python", "-m", "transpose.api"]
