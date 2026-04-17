@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS translations (
     book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     translated_text TEXT NOT NULL,
     model_version TEXT NOT NULL,
+    cultural_terms JSONB,
     prompt_tokens INTEGER NOT NULL DEFAULT 0,
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     raw_response JSONB,
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS cultural_terms (
 CREATE TABLE IF NOT EXISTS glossaries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    entries JSONB,
     generated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     version INTEGER NOT NULL DEFAULT 1,
     UNIQUE (book_id, version)
@@ -92,9 +94,12 @@ CREATE TABLE IF NOT EXISTS glossaries (
 CREATE TABLE IF NOT EXISTS manuscripts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-    structure JSONB NOT NULL,
-    metadata JSONB NOT NULL,
+    title TEXT,
+    author TEXT,
+    chapters JSONB,
     glossary_id UUID REFERENCES glossaries(id),
+    table_of_contents JSONB,
+    metadata JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

@@ -146,6 +146,8 @@ class Database:
 
     async def create_pages(self, pages: list[Page]) -> None:
         """Create multiple page records."""
+        import json
+
         if not pages:
             return
 
@@ -165,7 +167,7 @@ class Database:
                         page.raw_text,
                         page.confidence,
                         page.needs_review,
-                        page.ocr_metadata,
+                        json.dumps(page.ocr_metadata),
                         page.created_at,
                     )
                     for page in pages
@@ -297,7 +299,7 @@ class Database:
                 terms_json,
                 translation.prompt_tokens,
                 translation.completion_tokens,
-                translation.raw_response,
+                json.dumps(translation.raw_response) if isinstance(translation.raw_response, dict) else translation.raw_response,
                 translation.created_at,
             )
 

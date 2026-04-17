@@ -66,3 +66,32 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 **Password auth:**
 - Re-enabled on `transpose-dev-psql` via `az postgres flexible-server update --password-auth Enabled`.
 - Admin password reset to the value in `.env` via `--admin-password`.
+
+### 2026-04-18: Cloud Deployment Prep — HTTP API, Blob-Source Ingest, Test PDF
+
+**HTTP API (`src/transpose/api.py`):**
+- Lightweight aiohttp server with three endpoints: `GET /health`, `POST /translate`, `GET /status/{book_id}`.
+- `/translate` accepts `blob_uri` (PDF already in blob storage), fires pipeline in background via `asyncio.create_task`.
+- In-memory job tracker (`_jobs` dict) for status polling — sufficient for single-replica Container Apps.
+- TLS CRL workaround replicated from `cli.py` since `api.py` is now the container entrypoint.
+- Dockerfile CMD is `python -m transpose.api` (port 8000).
+
+**Blob-source ingest (`src/transpose/pipeline/ingest.py`):**
+- `IngestInput` now has optional `blob_uri` field. When set, downloads PDF from blob instead of reading from disk.
+- `_parse_blob_uri()` extracts (container, blob_name) from full Azure blob URI.
+- When `blob_uri` is set, upload step is skipped (PDF is already in blob storage).
+- Local file path (`source_path`) still works for CLI usage — backward compatible.
+- `PipelineInput` also gained `blob_uri` field, passed through to `IngestInput`.
+
+**Hindi test PDF:**
+- `scripts/create_test_pdf.py` generates a 10-page Hindi PDF using PyMuPDF + Noto Sans Devanagari font.
+- Content covers dharma, karma, moksha, yoga, prana, sangat, langar, seva, guru — all key cultural terms.
+- Font file: `fonts/NotoSansDevanagari.ttf` (downloaded from Google Fonts CDN).
+- Output: `tests/fixtures/test-hindi-10page.pdf` (697KB, ~165 words/page).
+- Uploaded to `transposedevst/source-pdfs/test-hindi-10page.pdf`.
+
+**Dependencies:**
+- `aiohttp>=3.9.0` added to pyproject.toml (was already installed, now declared).
+
+**RBAC note:**
+- `Storage Blob Data Contributor` role was assigned to the admin principal on `transposedevst` for blob upload. RBAC propagation took ~60s before `az storage blob upload --auth-mode login` worked (needed explicit `--subscription` flag).
