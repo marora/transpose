@@ -14,6 +14,7 @@ class IngestInput:
     title: str
     author: str | None = None
     source_language: SourceLanguage = SourceLanguage.HINDI
+    blob_uri: str | None = None
 
 
 @dataclass
@@ -25,8 +26,29 @@ class IngestOutput:
     already_existed: bool
 
 
+def _parse_blob_uri(blob_uri: str) -> tuple[str, str]:
+    """Extract (container, blob_name) from a full Azure Blob Storage URI.
+
+    Example: https://transposedevst.blob.core.windows.net/source-pdfs/test.pdf
+             → ("source-pdfs", "test.pdf")
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(blob_uri)
+    # Path is /container/blob_name
+    parts = parsed.path.lstrip("/").split("/", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Cannot parse blob URI: {blob_uri}")
+    return parts[0], parts[1]
+
+
 async def run(input: IngestInput, ctx) -> IngestOutput:  # type: ignore[no-untyped-def]
-    """Ingest a PDF: compute hash, dedup, store in blob, create book record."""
+    """Ingest a PDF: compute hash, dedup, store in blob, create book record.
+
+    Supports two modes:
+    - Local file (source_path): reads from disk, uploads to blob storage.
+    - Blob URI (blob_uri): downloads from blob storage, skips upload.
+    """
     import hashlib
     import logging
     from datetime import UTC, datetime
@@ -39,19 +61,30 @@ async def run(input: IngestInput, ctx) -> IngestOutput:  # type: ignore[no-untyp
 
     logger = logging.getLogger(__name__)
 
-    # Read the source PDF
-    source_path = Path(input.source_path)
-    if not source_path.exists():
-        raise FileNotFoundError(f"Source PDF not found: {input.source_path}")
+    # --- Acquire PDF data ---
+    if input.blob_uri:
+        # Download from blob storage
+        logger.info(f"Downloading PDF from blob: {input.blob_uri}")
+        container, blob_name = _parse_blob_uri(input.blob_uri)
+        pdf_data = await ctx.blob.download_blob(container=container, blob_name=blob_name)
+        source_blob_uri = input.blob_uri
+        skip_upload = True
+    else:
+        # Read from local file
+        source_path = Path(input.source_path)
+        if not source_path.exists():
+            raise FileNotFoundError(f"Source PDF not found: {input.source_path}")
 
-    with open(source_path, "rb") as f:
-        pdf_data = f.read()
+        with open(source_path, "rb") as f:
+            pdf_data = f.read()
+        skip_upload = False
+        source_blob_uri = ""  # will be set after upload
 
-    # Compute SHA-256 hash for deduplication
+    # --- Compute hash for deduplication ---
     source_hash = hashlib.sha256(pdf_data).hexdigest()
     logger.info(f"Computed hash {source_hash} for {input.title}")
 
-    # Check for existing book with same hash
+    # --- Check for existing book with same hash ---
     existing_book = await ctx.db.get_book_by_hash(source_hash)
     if existing_book:
         logger.info(f"Book already exists: {existing_book.id}")
@@ -63,24 +96,23 @@ async def run(input: IngestInput, ctx) -> IngestOutput:  # type: ignore[no-untyp
             already_existed=True,
         )
 
-    # Count pages using PyMuPDF
+    # --- Count pages ---
     pdf_doc = fitz.open(stream=pdf_data, filetype="pdf")
     page_count = len(pdf_doc)
     pdf_doc.close()
-
     logger.info(f"PDF has {page_count} pages")
 
-    # Upload to blob storage
-    blob_name = f"{source_hash}.pdf"
-    source_blob_uri = await ctx.blob.upload_pdf(
-        container=ctx.settings.blob_container_source,
-        blob_name=blob_name,
-        data=pdf_data,
-    )
+    # --- Upload to blob storage (only for local files) ---
+    if not skip_upload:
+        blob_name = f"{source_hash}.pdf"
+        source_blob_uri = await ctx.blob.upload_pdf(
+            container=ctx.settings.blob_container_source,
+            blob_name=blob_name,
+            data=pdf_data,
+        )
+        logger.info(f"Uploaded to blob storage: {source_blob_uri}")
 
-    logger.info(f"Uploaded to blob storage: {source_blob_uri}")
-
-    # Create book record
+    # --- Create book record ---
     book = Book(
         title=input.title,
         author=input.author,

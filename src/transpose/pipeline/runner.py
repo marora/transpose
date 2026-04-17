@@ -21,6 +21,7 @@ class PipelineInput:
     source_language: SourceLanguage = SourceLanguage.HINDI
     output_formats: list[str] = field(default_factory=lambda: ["epub", "pdf"])
     resume_from: str | None = None
+    blob_uri: str | None = None
 
 
 @dataclass
@@ -90,6 +91,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                     title=input.title,
                     author=input.author,
                     source_language=input.source_language,
+                    blob_uri=input.blob_uri,
                 ),
                 ctx,
             )

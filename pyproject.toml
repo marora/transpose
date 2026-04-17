@@ -39,6 +39,8 @@ dependencies = [
     "click>=8.1.0",
     # Async utilities
     "tenacity>=9.0.0",
+    # HTTP API
+    "aiohttp>=3.9.0",
     # HTTP server
     "aiohttp>=3.9.0",
 ]
