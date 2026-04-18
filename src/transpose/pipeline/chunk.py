@@ -57,14 +57,8 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
 
     logger.info(f"Chunking {len(pages)} pages")
 
-    # Merge pages into continuous text
-    full_text = ""
-    page_boundaries: list[tuple[int, int]] = []  # (start_pos, page_num)
-
-    for page in pages:
-        start_pos = len(full_text)
-        full_text += page.raw_text + "\n\n"
-        page_boundaries.append((start_pos, page.page_number))
+    # Merge pages into continuous text, joining paragraphs split across page boundaries
+    full_text, page_boundaries = _join_cross_page_paragraphs(pages)
 
     # Initialize tokenizer
     encoding = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
@@ -185,6 +179,74 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
         total_chunks=len(chunks),
         chunks=chunk_results,
     )
+
+
+def _ends_with_terminal(text: str) -> bool:
+    """Check if text ends with sentence-terminal punctuation."""
+    terminal_chars = {'.', '?', '!', '।', '॥', '—', '"', "'", '\u201d', '\u2019'}
+    stripped = text.rstrip()
+    return bool(stripped) and stripped[-1] in terminal_chars
+
+
+def _starts_with_continuation(text: str) -> bool:
+    """Check if text starts with a continuation pattern (lowercase, Devanagari, etc.)."""
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    first_char = stripped[0]
+    # Lowercase Latin letter = likely mid-sentence continuation
+    if first_char.islower():
+        return True
+    # Devanagari characters (U+0900–U+097F) — Hindi text rarely starts a new
+    # sentence with an explicit marker, so Devanagari after a non-terminal ending
+    # is very likely a continuation.
+    return '\u0900' <= first_char <= '\u097F'
+
+
+def _join_cross_page_paragraphs(pages) -> tuple[str, list[tuple[int, int]]]:
+    """Merge pages into continuous text, joining paragraphs that span page boundaries.
+
+    When a page ends without terminal punctuation and the next page begins
+    with a continuation pattern (lowercase letter, Devanagari script), the
+    artificial ``\\n\\n`` page break is replaced with a single space so the
+    downstream paragraph splitter keeps the sentence intact.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    full_text = ""
+    page_boundaries: list[tuple[int, int]] = []
+
+    for i, page in enumerate(pages):
+        text = page.raw_text
+
+        if i > 0 and full_text:
+            prev_end = full_text.rstrip()
+            curr_start = text.lstrip()
+            if (
+                prev_end
+                and curr_start
+                and not _ends_with_terminal(prev_end)
+                and _starts_with_continuation(curr_start)
+            ):
+                # Replace the trailing \n\n with a single space to join
+                full_text = full_text.rstrip() + " "
+                logger.debug(
+                    "Joined paragraph across page boundary %d→%d",
+                    pages[i - 1].page_number,
+                    page.page_number,
+                )
+                start_pos = len(full_text)
+                page_boundaries.append((start_pos, page.page_number))
+                full_text += text + "\n\n"
+                continue
+
+        start_pos = len(full_text)
+        page_boundaries.append((start_pos, page.page_number))
+        full_text += text + "\n\n"
+
+    return full_text, page_boundaries
 
 
 def _create_chunk(
