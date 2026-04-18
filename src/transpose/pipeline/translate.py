@@ -33,6 +33,9 @@ class TranslationResult:
     model_version: str
 
 
+TRANSLATION_FAILED_PLACEHOLDER = "[TRANSLATION FAILED — REVIEW REQUIRED]"
+
+
 @dataclass
 class TranslateOutput:
     book_id: UUID
@@ -42,6 +45,7 @@ class TranslateOutput:
     total_completion_tokens: int
     cultural_terms_found: int
     translations: list[TranslationResult] = field(default_factory=list)
+    failed_count: int = 0
 
 
 async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no-untyped-def]
@@ -110,6 +114,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_cultural_terms = 0
+    failed_count = 0
     previous_translation = None
 
     async def translate_chunk(chunk, prev_context: str | None):
@@ -170,14 +175,46 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
         if previous_translation and len(previous_translation.translated_text) > 200:
             prev_context = previous_translation.translated_text[-200:]
 
-        result, response = await translate_chunk(chunk, prev_context)
-        translations.append(result)
+        try:
+            result, response = await translate_chunk(chunk, prev_context)
+            translations.append(result)
 
-        total_prompt_tokens += result.prompt_tokens
-        total_completion_tokens += result.completion_tokens
-        total_cultural_terms += len(result.cultural_terms)
+            total_prompt_tokens += result.prompt_tokens
+            total_completion_tokens += result.completion_tokens
+            total_cultural_terms += len(result.cultural_terms)
 
-        previous_translation = response
+            previous_translation = response
+        except Exception as exc:
+            logger.warning(
+                f"Translation failed for chunk {chunk.id} "
+                f"(sequence {chunk.sequence}): {exc}"
+            )
+            failed_count += 1
+
+            # Create placeholder translation so downstream stages have data
+            placeholder = Translation(
+                chunk_id=chunk.id,
+                book_id=input.book_id,
+                translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                model_version="n/a",
+                cultural_terms=[],
+                prompt_tokens=0,
+                completion_tokens=0,
+                raw_response={},
+            )
+            await ctx.db.create_translation(placeholder)
+
+            translations.append(
+                TranslationResult(
+                    chunk_id=chunk.id,
+                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                    cultural_terms=[],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    model_version="n/a",
+                )
+            )
+            # Don't update previous_translation — keep last successful context
 
         # Update progress
         await ctx.state.set_progress(
@@ -187,14 +224,20 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
             len(chunks_to_translate),
         )
 
+    # Completeness check: every input chunk must have a translation result
+    if len(translations) != len(chunks_to_translate):
+        raise ValueError(
+            f"Translation completeness check failed: "
+            f"expected {len(chunks_to_translate)} translations, "
+            f"got {len(translations)}"
+        )
+
     # Update book status
     await ctx.db.update_book_status(input.book_id, BookStatus.TRANSLATED)
 
     logger.info(
-        f"Translation complete: {len(translations)} chunks, "
-        f"{total_prompt_tokens} prompt tokens, "
-        f"{total_completion_tokens} completion tokens, "
-        f"{total_cultural_terms} cultural terms"
+        f"Translation complete: {len(translations)} chunks translated, "
+        f"{failed_count} failed"
     )
 
     return TranslateOutput(
@@ -205,5 +248,6 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
         total_completion_tokens=total_completion_tokens,
         cultural_terms_found=total_cultural_terms,
         translations=translations,
+        failed_count=failed_count,
     )
 

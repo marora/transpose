@@ -129,3 +129,20 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 
 **RBAC note:**
 - `Storage Blob Data Contributor` role was assigned to the admin principal on `transposedevst` for blob upload. RBAC propagation took ~60s before `az storage blob upload --auth-mode login` worked (needed explicit `--subscription` flag).
+
+### 2026-04-18: Translation Completeness Enforcement (GitHub Issue #8)
+
+**Problem:** Raw untranslated Hindi source text was bleeding through to output PDFs. Failed translation blocks silently crashed the pipeline or passed source text through unchanged.
+
+**Changes to `src/transpose/pipeline/translate.py`:**
+
+1. **Per-chunk error handling:** Wrapped `translate_chunk()` call in try/except. On failure, creates a placeholder `TranslationResult` with `translated_text="[TRANSLATION FAILED — REVIEW REQUIRED]"` instead of crashing the pipeline.
+2. **Database record for failed chunks:** A `Translation` record with placeholder text is persisted to the database so downstream stages (Glossary, Assemble, Export) always have data to work with.
+3. **Completeness check:** After the translation loop, validates `len(translations) == len(chunks_to_translate)`. Raises `ValueError` if counts don't match (defensive — should never trigger given the try/except).
+4. **`failed_count` field:** Added to `TranslateOutput` with `default=0` for backward compatibility.
+5. **`TRANSLATION_FAILED_PLACEHOLDER` constant:** Module-level constant for the exact placeholder string, importable by tests and downstream code.
+6. **Context continuity:** On failure, `previous_translation` is NOT updated — next chunk gets the last *successful* translation context, preserving continuity.
+
+**Key design choice:** Failed chunks don't halt the pipeline. The placeholder text is visually obvious in output, making review easy. The `failed_count` field lets callers detect partial failures programmatically.
+
+**Testing:** All 26 existing translate tests pass. Ruff clean. No model changes needed — `Translation.translated_text` already accepts any string.
