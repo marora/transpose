@@ -190,67 +190,87 @@ async def _generate_epub(manuscript, glossary, book) -> bytes:
 
 async def _generate_pdf(manuscript, glossary, book) -> bytes:
     """Generate PDF file from manuscript HTML."""
-    from weasyprint import HTML
+    from pathlib import Path
 
-    # Build complete HTML document
+    from weasyprint import CSS, HTML
+    from weasyprint.text.fonts import FontConfiguration
+
+    # Resolve font path relative to repo root
+    font_path = Path(__file__).resolve().parents[3] / "fonts" / "NotoSansDevanagari.ttf"
+
+    # FontConfiguration must be shared between CSS parsing and PDF rendering
+    # so that @font-face declarations (especially for complex scripts like
+    # Devanagari which need GSUB/GPOS tables) are processed correctly.
+    font_config = FontConfiguration()
+
+    stylesheet = CSS(
+        string=f"""
+        @font-face {{
+            font-family: 'Noto Sans Devanagari';
+            src: url('file://{font_path}') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        }}
+        @page {{
+            size: A4;
+            margin: 2.5cm;
+        }}
+        body {{
+            font-family: Georgia, 'Noto Sans Devanagari', serif;
+            line-height: 1.6;
+            font-size: 12pt;
+        }}
+        h1 {{
+            font-size: 24pt;
+            margin-top: 2em;
+            page-break-before: always;
+        }}
+        h1:first-of-type {{
+            page-break-before: avoid;
+        }}
+        h2 {{
+            font-size: 18pt;
+            margin-top: 1.5em;
+        }}
+        p {{
+            margin: 1em 0;
+            text-align: justify;
+        }}
+        .title-page {{
+            text-align: center;
+            padding-top: 3cm;
+            page-break-after: always;
+        }}
+        .title {{
+            font-size: 28pt;
+            font-weight: bold;
+        }}
+        .author {{
+            font-size: 18pt;
+            margin-top: 2em;
+        }}
+        .glossary-term {{
+            font-weight: bold;
+        }}
+        dl {{
+            margin: 1em 0;
+        }}
+        dt {{
+            font-weight: bold;
+            margin-top: 0.5em;
+        }}
+        dd {{
+            margin-left: 2em;
+        }}
+        """,
+        font_config=font_config,
+    )
+
+    # Build HTML document (no inline styles — handled by stylesheet above)
     html_content = """
     <!DOCTYPE html>
     <html>
-    <head>
-        <meta charset="UTF-8">
-        <style>
-            @page {
-                size: A4;
-                margin: 2.5cm;
-            }
-            body {
-                font-family: Georgia, serif;
-                line-height: 1.6;
-                font-size: 12pt;
-            }
-            h1 {
-                font-size: 24pt;
-                margin-top: 2em;
-                page-break-before: always;
-            }
-            h1:first-of-type {
-                page-break-before: avoid;
-            }
-            h2 {
-                font-size: 18pt;
-                margin-top: 1.5em;
-            }
-            p {
-                margin: 1em 0;
-                text-align: justify;
-            }
-            .title-page {
-                text-align: center;
-                padding-top: 5cm;
-            }
-            .title {
-                font-size: 36pt;
-                font-weight: bold;
-            }
-            .author {
-                font-size: 18pt;
-                margin-top: 2em;
-            }
-            .glossary-term {
-                font-weight: bold;
-            }
-            dl {
-                margin: 1em 0;
-            }
-            dt {
-                font-weight: bold;
-                margin-top: 0.5em;
-            }
-            dd {
-                margin-left: 2em;
-            }
-        </style>
-    </head>
+    <head><meta charset="UTF-8"></head>
     <body>
     """
 
@@ -277,8 +297,10 @@ async def _generate_pdf(manuscript, glossary, book) -> bytes:
 
     html_content += "</body></html>"
 
-    # Generate PDF
-    pdf_bytes = HTML(string=html_content).write_pdf()
+    pdf_bytes = HTML(string=html_content).write_pdf(
+        stylesheets=[stylesheet],
+        font_config=font_config,
+    )
     return pdf_bytes
 
 

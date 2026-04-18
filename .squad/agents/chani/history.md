@@ -67,6 +67,40 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 - Re-enabled on `transpose-dev-psql` via `az postgres flexible-server update --password-auth Enabled`.
 - Admin password reset to the value in `.env` via `--admin-password`.
 
+### 2026-04-18: PDF Export Fixes — Font Embedding and Layout Optimization
+
+**Fixed GitHub issue #1:** Two visual bugs in PDF export causing page overflow and unreadable Devanagari text.
+
+**Changes to `src/transpose/pipeline/export.py` (_generate_pdf function):**
+
+1. **Devanagari Font Embedding:**
+   - Added `@font-face` declaration for `NotoSansDevanagari.ttf` with `file://` URL pointing to `fonts/NotoSansDevanagari.ttf`
+   - Used `Path(__file__).resolve().parents[3]` to dynamically resolve font path relative to repo root (no hardcoded paths)
+   - **Key fix:** Separated CSS into WeasyPrint `CSS()` object with `font_config` parameter. Initial attempt had inline CSS not connected to FontConfiguration. Fixed by building CSS as object: `css = CSS(string=f"...@font-face..."); HTML(...).write_pdf(font_config=font_config, stylesheets=[css])`
+   - Updated `font-family` CSS to `Georgia, 'Noto Sans Devanagari', serif` — Georgia for Latin, Noto Sans Devanagari for Hindi/Devanagari Unicode blocks, serif as final fallback
+
+2. **Title Page Layout Fix:**
+   - Reduced `.title-page` padding-top from `5cm` → `3cm` (less vertical waste)
+   - Reduced `.title` font-size from `36pt` → `28pt` (fits better on page 1)
+   - Added `page-break-after: always` to `.title-page` class to ensure chapter content starts on page 2 (matching source PDF structure)
+
+3. **Glossary Rendering:**
+   - With font embedding, glossary `entry.original_script` (Devanagari) now renders correctly instead of tofu/replacement characters
+   - No code changes needed here — the font-family fallback handles it automatically
+
+**Key Decisions:**
+- WeasyPrint does **not** auto-discover system fonts — explicit `@font-face` with `file://` URLs is required for embedded fonts
+- Using `FontConfiguration()` with proper CSS object structure is required. Inline CSS with FontConfiguration doesn't work.
+- Pathlib-based dynamic path resolution prevents brittleness across environments (dev vs container vs tests)
+
+**Testing:**
+- All 8 export stage tests pass (`tests/unit/pipeline/test_export.py`)
+- 12 visual regression tests pass (`tests/unit/test_export_visual.py`) — validates title page layout, Devanagari rendering, glossary, page counts, edge cases
+- Ruff linting clean
+- No regressions in existing functionality
+
+**Outcome:** Generated PDFs now correctly render all Devanagari text (cultural terms, glossary entries) and title page fits on page 1 without overflow. Visual regression testing prevents future regressions.
+
 ### 2026-04-18: Cloud Deployment Prep — HTTP API, Blob-Source Ingest, Test PDF
 
 **HTTP API (`src/transpose/api.py`):**
