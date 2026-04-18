@@ -130,6 +130,19 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 **RBAC note:**
 - `Storage Blob Data Contributor` role was assigned to the admin principal on `transposedevst` for blob upload. RBAC propagation took ~60s before `az storage blob upload --auth-mode login` worked (needed explicit `--subscription` flag).
 
+### 2026-04-18: Cross-Page Paragraph Joining (Issue #6)
+
+**Problem:** The chunk stage blindly inserted `\n\n` between every page, splitting mid-sentence paragraphs that span PDF page boundaries into separate chunks — producing broken, unpublishable output.
+
+**Fix:** Added a paragraph-joining pass (`_join_cross_page_paragraphs`) that runs BEFORE the chunking logic. Three new helpers:
+- `_ends_with_terminal(text)` — checks for `.`, `?`, `!`, `।` (Devanagari danda), `॥`, `—`, and quote characters
+- `_starts_with_continuation(text)` — detects lowercase Latin or Devanagari script (U+0900–U+097F)
+- `_join_cross_page_paragraphs(pages)` — replaces `\n\n` with a single space at page boundaries where continuation is detected
+
+**Conservative approach:** Only joins when BOTH conditions hold (no terminal + continuation start). Pages ending with proper sentence terminators always get the paragraph break preserved.
+
+**No model/signature changes.** ChunkInput, ChunkOutput, ChunkResult unchanged. Chapter detection and overlap logic untouched. All 14 existing unit tests pass.
+
 ### 2026-04-18: Translation Completeness Enforcement (GitHub Issue #8)
 
 **Problem:** Raw untranslated Hindi source text was bleeding through to output PDFs. Failed translation blocks silently crashed the pipeline or passed source text through unchanged.
