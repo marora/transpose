@@ -21,7 +21,7 @@
 
 ## Project Context
 
-- **Owner:** Mani
+- **Owner:** Manish
 - **Project:** Transpose
 - **Stack:** Python, PostgreSQL, Redis, Azure Container Apps, Azure AI Document Intelligence, Azure OpenAI GPT-4o, Managed Identity, Key Vault, Application Insights
 - **Created:** 2026-04-17

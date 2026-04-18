@@ -170,6 +170,20 @@ Removed Redis (cache.bicep), updated Key Vault (removed Redis secret), updated C
 
 ---
 
+### Decision: User Identity Clarification
+
+**Author:** Manish (via Copilot)  
+**Date:** 2026-04-18  
+**Status:** Active  
+
+User's name is **Manish**, not Mani. All team references and documentation use "Manish" for clarity.
+
+**Rationale:** Explicit user correction captured for team memory.
+
+**Impact:** Update all past references (decisions, logs, code comments) from "Mani" → "Manish".
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
