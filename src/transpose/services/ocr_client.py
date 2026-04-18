@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+import unicodedata
 from uuid import UUID
 
 from transpose.models.book import Page
+
+logger = logging.getLogger(__name__)
+
+# Confidence threshold below which pages are flagged for manual review.
+# Chosen to catch garbled Devanagari output while allowing imperfect scans through.
+_LOW_CONFIDENCE_THRESHOLD = 0.5
 
 
 class OcrClient:
@@ -31,12 +39,15 @@ class OcrClient:
             )
         return self._client
 
-    async def extract_pages(self, blob_uri: str, book_id: UUID) -> list[Page]:
+    async def extract_pages(
+        self, blob_uri: str, book_id: UUID, *, locale: str = "hi"
+    ) -> list[Page]:
         """Extract text from all pages of a PDF using the prebuilt-read model.
 
         Args:
             blob_uri: Azure Blob Storage URI of the source PDF.
             book_id: ID of the book being processed.
+            locale: BCP-47 locale hint for OCR (default: 'hi' for Hindi/Devanagari).
 
         Returns:
             List of Page objects with extracted text and confidence scores.
@@ -45,10 +56,13 @@ class OcrClient:
 
         client = await self._get_client()
 
-        # Start the analysis job with prebuilt-read model
+        logger.info("Starting Document Intelligence analysis with locale=%s", locale)
+
+        # Start the analysis job with prebuilt-read model and locale hint
         poller = await client.begin_analyze_document(
             model_id="prebuilt-read",
             analyze_request=AnalyzeDocumentRequest(url_source=blob_uri),
+            locale=locale,
         )
 
         # Wait for completion
@@ -63,7 +77,7 @@ class OcrClient:
                 # The prebuilt-read model gives us lines
                 page_text = ""
                 page_confidence_sum = 0.0
-                line_count = 0
+                word_count_for_avg = 0
 
                 if page.lines:
                     for line in page.lines:
@@ -78,12 +92,34 @@ class OcrClient:
                                     and word.confidence is not None
                                 ):
                                     page_confidence_sum += word.confidence
-                                    line_count += 1
+                                    word_count_for_avg += 1
+
+                # Word-level confidence logging for debugging garbled output
+                if page.words:
+                    low_words = [
+                        w for w in page.words
+                        if w.confidence is not None and w.confidence < 0.5
+                    ]
+                    if low_words:
+                        sample = low_words[:5]
+                        logger.warning(
+                            "Page %d: %d/%d words below 0.5 confidence. "
+                            "Sample: %s",
+                            page_num,
+                            len(low_words),
+                            len(page.words),
+                            [(w.content, round(w.confidence, 3)) for w in sample],
+                        )
 
                 # Calculate average confidence
                 avg_confidence = (
-                    page_confidence_sum / line_count if line_count > 0 else 1.0
+                    page_confidence_sum / word_count_for_avg
+                    if word_count_for_avg > 0
+                    else 1.0
                 )
+
+                # Apply Unicode NFC normalization to fix garbled Devanagari
+                page_text = unicodedata.normalize("NFC", page_text.strip())
 
                 # Build OCR metadata
                 ocr_metadata = {
@@ -92,15 +128,29 @@ class OcrClient:
                     "unit": page.unit if hasattr(page, "unit") else "pixel",
                     "line_count": len(page.lines) if page.lines else 0,
                     "word_count": len(page.words) if page.words else 0,
+                    "locale_hint": locale,
                 }
+
+                needs_review = avg_confidence < _LOW_CONFIDENCE_THRESHOLD
+                if needs_review:
+                    logger.warning(
+                        "Page %d flagged for review: avg_confidence=%.3f (threshold=%.2f)",
+                        page_num,
+                        avg_confidence,
+                        _LOW_CONFIDENCE_THRESHOLD,
+                    )
+                    ocr_metadata["review_reason"] = (
+                        f"confidence {avg_confidence:.3f} below threshold "
+                        f"{_LOW_CONFIDENCE_THRESHOLD}"
+                    )
 
                 pages.append(
                     Page(
                         book_id=book_id,
                         page_number=page_num,
-                        raw_text=page_text.strip(),
+                        raw_text=page_text,
                         confidence=avg_confidence,
-                        needs_review=avg_confidence < 0.7,
+                        needs_review=needs_review,
                         ocr_metadata=ocr_metadata,
                     )
                 )

@@ -130,6 +130,32 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 **RBAC note:**
 - `Storage Blob Data Contributor` role was assigned to the admin principal on `transposedevst` for blob upload. RBAC propagation took ~60s before `az storage blob upload --auth-mode login` worked (needed explicit `--subscription` flag).
 
+### 2026-04-19: Devanagari OCR Fix — Locale Hint, NFC Normalization, Validation Layer (Issue #7)
+
+**Problem:** OCR pipeline produced garbled Unicode for Devanagari pages (e.g., 'धǺ R yǺ' instead of 'धर्म और कर्म'). Root cause: no locale hint to Document Intelligence + no Unicode normalization + no post-OCR validation.
+
+**Changes to `src/transpose/services/ocr_client.py`:**
+- Added `locale="hi"` keyword arg to `begin_analyze_document()` — tells Azure DI to expect Devanagari script
+- Applied `unicodedata.normalize('NFC', text)` to all extracted text before returning
+- Lowered confidence threshold to 0.5 (from 0.7) for `needs_review` flagging — pages below 0.5 are genuinely garbled
+- Added word-level confidence logging (warns when >0 words below 0.5 confidence, logs samples)
+- Added `locale_hint` and `review_reason` to `ocr_metadata` dict
+
+**Changes to `src/transpose/pipeline/ocr.py`:**
+- Added `_normalize_text()` helper applying NFC normalization — used on both digital (PyMuPDF) and scanned paths
+- Added `_validate_page()` function checking: minimum text length, Devanagari codepoint presence (U+0900-U+097F) when source is Hindi, excessive replacement characters (U+FFFD)
+- Validation runs on both digital and OCR-extracted pages
+- Pages failing validation get `needs_review=True` with `validation_issues` list in `ocr_metadata`
+- Added per-page validation logging and summary log
+
+**Key decisions:**
+- NFC normalization on *both* paths (digital + scanned) — PyMuPDF can also produce non-NFC text
+- Validation is a separate function, not tied to confidence scoring — catches structural problems (no Devanagari, all replacement chars) that confidence alone misses
+- Did NOT change Page model or OcrOutput signatures — backward compatible
+- `_LOW_CONFIDENCE_THRESHOLD = 0.5` in ocr_client — tighter than old 0.7 but for reject/review, not filtering
+
+**All 39 existing OCR tests pass. Ruff clean.**
+
 ### 2026-04-18: Cross-Page Paragraph Joining (Issue #6)
 
 **Problem:** The chunk stage blindly inserted `\n\n` between every page, splitting mid-sentence paragraphs that span PDF page boundaries into separate chunks — producing broken, unpublishable output.
