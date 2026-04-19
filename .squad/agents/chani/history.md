@@ -470,3 +470,23 @@ No changes needed for page numbering — already correct.
 - Ruff clean
 
 **Key finding:** Devanagari text in glossary appears garbled in PyMuPDF text extraction (e.g., `दीपाTली` instead of `दीपावली`) but renders correctly visually. This is a WeasyPrint ToUnicode CMap limitation with complex Indic scripts — affects copy/paste and search but not visual quality. Upstream WeasyPrint issue, not fixable in pipeline code.
+
+---
+
+### Cross-Agent Update: Thufir's Golden QA Framework (2026-04-20)
+
+Thufir completed **Gate 6: Golden-Targeted QA** validation framework. This is critical context for future translation/export changes:
+
+- **Golden target** is a frozen JSON reference (`tests/golden/golden-target.json`) that captures expected output quality
+- **Golden QA runs after artifact export** — validates against golden-target.json
+- **When you change** translation logic, glossary handling, or export formatting, **golden-target.json must be updated** to reflect the legitimate improvement
+- **Update process:** Verify gate failure → review candidate diff → intentional update to golden-target.json → re-run to confirm pass
+- **5-check validation:**
+  1. Structural match (chapters, sections)
+  2. Content completeness (word count ±30% per chapter)
+  3. Script hygiene (Devanagari < 2% in body)
+  4. Glossary integrity (required terms + entry count)
+  5. Page count regression (≤1.5×)
+
+Your PDF fixes (duplicate titles, foreword cleanup, page numbering) now lock in the quality baseline for Thufir's golden target. All 347 tests pass.
+

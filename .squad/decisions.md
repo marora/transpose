@@ -386,3 +386,48 @@ CI pipeline (`.github/workflows/quality-gates.yml`) runs all 5 quality gates on 
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
 - Proof-based Definition of Done: artifacts + gates + validation report required for closure
+
+### Decision: Strip Duplicate Chapter Titles from Translated Content
+
+**Author:** Chani  
+**Date:** 2026-04-20  
+**Status:** Active  
+
+LLM translations start each chunk with its chapter heading (e.g., "Chapter 2: Yoga and Meditation — Physical and Spiritual Discipline"). The assemble stage already renders a separate `<h1>` from the extracted title. A new `_strip_leading_chapter_title()` helper now removes the first line of translated text when it matches a chapter-heading pattern, preventing duplication in the output.
+
+**Also fixed:**
+- Foreword cleanup: `_clean_foreword()` strips LLM placeholder signatures like "[Translator's Name]"
+- Foreword page numbering: `.foreword-page` now uses `page: frontmatter` CSS for roman numerals
+
+**Impact:** Publishable-quality output — no visible duplications, clean foreword, consistent page numbering. No model or contract changes.
+
+**Known limitation:** WeasyPrint's ToUnicode CMap for Noto Sans Devanagari produces garbled text extraction (copy/paste) despite correct visual rendering. This is an upstream WeasyPrint issue. Affects accessibility/search but not visual quality.
+
+---
+
+### Decision: Golden-Targeted QA Gate Design
+
+**Author:** Thufir  
+**Date:** 2026-04-20  
+**Status:** Active  
+
+The pipeline needed a post-export quality gate that compares actual output against a known-good reference translation — not just structural checks, but content completeness, script hygiene, and glossary integrity.
+
+**Decision:** Implemented a 3-artifact comparison system:
+1. **Golden Source** — the stable Hindi input PDF (never regenerated)
+2. **Golden Target** — a versioned JSON reference of expected English output (frozen, updated only on legitimate improvement)
+3. **Candidate** — actual pipeline output compared against golden target
+
+The gate runs 5 sub-checks: structural match, content completeness (±30% word count per chapter), script hygiene (Devanagari < 2% in body), glossary integrity (required terms + min entry count), and page count regression (≤1.5×).
+
+**Rationale:**
+- Word count tolerance of ±30% balances sensitivity (catches missing/duplicate content) with flexibility (translation naturally varies)
+- Script hygiene threshold of 2% allows inline preserved terms in parentheses while catching untranslated passages
+- Golden target is JSON (not PDF) for easy diffing, versioning, and test assertion
+- Gate uses PyMuPDF for text extraction — consistent with existing visual regression tests
+
+**Team Impact:**
+- All squad members: golden-target.json must be updated when pipeline output legitimately changes
+- Chani: changes to translation/export logic may require golden target updates
+- Runner now has 6 gates total (golden QA runs last)
+

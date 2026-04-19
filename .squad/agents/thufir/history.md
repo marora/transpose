@@ -229,3 +229,18 @@ Wrote tests validating fixes for five issues filed during export stage review.
 - Gate uses PyMuPDF for PDF text extraction (same as existing visual tests)
 
 **Status:** 347 passed, 1 pre-existing env failure, 4 xfailed. All ruff clean.
+
+---
+
+### Cross-Agent Update: Chani's PDF Quality Fixes (2026-04-20)
+
+Chani completed **3 PDF quality fixes** that lock in the baseline for your golden-target validation:
+
+1. **Duplicate chapter titles stripped** — `_strip_leading_chapter_title()` removes chapter headings from start of translated content (prevents "Chapter 2" appearing twice)
+2. **Foreword placeholder cleanup** — `_clean_foreword()` strips "[Translator's Name]" placeholders
+3. **Foreword page numbering fixed** — roman numerals (i, ii, iii) via `page: frontmatter` CSS
+
+**All 5 gates pass.** The PDF output is now the golden baseline your QA framework validates against. Any future changes to translation/export logic will need to update `golden-target.json` intentionally.
+
+Known WeasyPrint issue: ToUnicode CMap produces garbled text extraction for Devanagari (copy/paste), but visual rendering is perfect. Does not affect visual quality.
+
