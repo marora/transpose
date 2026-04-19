@@ -446,3 +446,27 @@ No changes needed for page numbering — already correct.
 - Chapter title extraction is rock-solid; extracted titles match expected ToC format
 - Regression suite provides objective proof for proof-based Definition of Done
 - Local path support in artifact gate enables fast dev iteration
+
+### 2026-04-20: PDF Quality Fixes — Duplicate Titles, Foreword Cleanup, Page Numbering
+
+**Problem:** Three quality issues in the generated PDF output:
+1. **Duplicate chapter titles** — Each chapter heading (e.g., `<h1>Chapter 2: Yoga and Meditation</h1>`) was immediately followed by the same title as the first paragraph of content (e.g., "Chapter 2: Yoga and Meditation — Physical and Spiritual Discipline"), because the LLM translation starts each chunk with its chapter heading.
+2. **"[Translator's Name]" placeholder** — The LLM-generated Translator's Foreword ended with "Warm regards, [Translator's Name]" — a placeholder that should not appear in publishable output.
+3. **Foreword page numbering** — The foreword page showed arabic "4" instead of roman numeral "iii". The `.foreword-page` CSS class was not assigned to the `frontmatter` named page.
+
+**Fixes:**
+
+1. **`assemble.py` — `_strip_leading_chapter_title()` helper:** After extracting the chapter title for the `<h1>`, strips the first line of translated text when it matches a "Chapter N:" or "Introduction" pattern. Applied only to the first chunk in each chapter.
+
+2. **`assemble.py` — `_clean_foreword()` helper:** Strips trailing lines containing bracketed placeholders like `[Translator's Name]` and orphaned sign-off lines like "Warm regards,". Applied to foreword text after LLM generation. Also updated the foreword prompt to explicitly request no placeholder signature.
+
+3. **`export.py` — CSS fix:** Added `.foreword-page` to the `page: frontmatter` CSS rule alongside `.title-page` and `.toc-page`, so the foreword gets roman numeral page numbering.
+
+**Verification:**
+- Visual inspection confirms: no duplicate titles, foreword ends naturally, foreword shows "iii"
+- All 5/5 quality gates pass
+- All 38 gate tests + 41 assemble/export tests pass
+- PDF: 14 pages, 212KB
+- Ruff clean
+
+**Key finding:** Devanagari text in glossary appears garbled in PyMuPDF text extraction (e.g., `दीपाTली` instead of `दीपावली`) but renders correctly visually. This is a WeasyPrint ToUnicode CMap limitation with complex Indic scripts — affects copy/paste and search but not visual quality. Upstream WeasyPrint issue, not fixable in pipeline code.

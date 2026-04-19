@@ -275,7 +275,7 @@ async def _generate_pdf(manuscript, glossary, book) -> bytes:
                 content: none;
             }}
         }}
-        .title-page, .toc-page {{
+        .title-page, .toc-page, .foreword-page {{
             page: frontmatter;
         }}
         @page frontmatter {{

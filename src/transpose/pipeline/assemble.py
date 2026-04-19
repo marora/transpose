@@ -95,12 +95,20 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         content_html = "<div class='chapter'>\n"
         content_html += f"<h1>{_escape_html(english_title)}</h1>\n"
 
-        for item in chapter_chunks:
+        for item_idx, item in enumerate(chapter_chunks):
             chunk = item["chunk"]
             translation = item["translation"]
 
+            text = translation.translated_text
+
+            # Strip duplicate chapter title from first chunk's text.
+            # The LLM translation often starts with "Chapter N: Title — ..."
+            # which duplicates the <h1> we already rendered above.
+            if item_idx == 0:
+                text = _strip_leading_chapter_title(text)
+
             # Convert text to paragraphs
-            paragraphs = translation.translated_text.split("\n\n")
+            paragraphs = text.split("\n\n")
             for para in paragraphs:
                 if para.strip():
                     content_html += f"<p>{_escape_html(para.strip())}</p>\n"
@@ -141,6 +149,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         ]
         try:
             foreword_text = await _generate_foreword(ctx, book.title, cultural_terms)
+            foreword_text = _clean_foreword(foreword_text)
             manuscript.metadata["foreword"] = foreword_text
             logger.info("Generated Translator's Foreword (%d chars)", len(foreword_text))
         except Exception:
@@ -223,6 +232,44 @@ def _extract_chapter_title(chapter_chunks: list[dict], fallback: str) -> str:
     return fallback
 
 
+def _strip_leading_chapter_title(text: str) -> str:
+    """Remove a leading chapter-title line from translated text.
+
+    The LLM translation often starts with a line like
+    ``Chapter 2: Yoga and Meditation — Physical and Spiritual Discipline``
+    which would duplicate the ``<h1>`` already rendered by the assemble stage.
+    This helper strips that first line when it matches a chapter-heading
+    pattern, returning the remaining content.
+    """
+    import re
+
+    lines = text.split("\n", 1)
+    first = lines[0].strip()
+    # Matches "Chapter N: ..." or "Introduction"
+    if re.match(r"^(Chapter\s+\d+\b|Introduction\b)", first, re.IGNORECASE):
+        return lines[1].lstrip("\n") if len(lines) > 1 else ""
+    return text
+
+
+def _clean_foreword(text: str) -> str:
+    """Remove LLM-generated placeholder sign-offs from the foreword.
+
+    GPT-4o often appends lines like ``Warm regards, [Translator's Name]``
+    even when asked not to.  Strip them so the output looks polished.
+    """
+    import re
+
+    # Remove trailing lines that contain bracketed placeholders
+    lines = text.rstrip().split("\n")
+    while lines and re.search(r"\[.*?name.*?\]", lines[-1], re.IGNORECASE):
+        lines.pop()
+    # Also remove a bare sign-off line left orphaned (e.g. "Warm regards,")
+    sign_off = r"^(Warm regards|Sincerely|With .* regards|Yours),?\s*$"
+    while lines and re.match(sign_off, lines[-1].strip(), re.IGNORECASE):
+        lines.pop()
+    return "\n".join(lines).rstrip()
+
+
 def _escape_html(text: str) -> str:
     """Basic HTML escaping."""
     return (
@@ -255,7 +302,9 @@ async def _generate_foreword(ctx, book_title: str, cultural_terms: list[dict]) -
         f"a published eBook\n"
         f'5. Address the reader directly ("Dear Reader" or similar)\n\n'
         f"Write ONLY the foreword text. Do not include a title "
-        f"— it will be added separately."
+        f"— it will be added separately. Do not include a "
+        f"sign-off with a placeholder name like '[Translator\\'s Name]' "
+        f"— end naturally without a signature block."
     )
 
     return await ctx.llm.chat(prompt)
