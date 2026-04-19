@@ -102,3 +102,24 @@ Cultural term preservation is P0 — if atman gets translated, the test fails.
 - Used `_FakePage` dataclass matching `Page` interface for chunk helper tests
 - Tests call `_join_cross_page_paragraphs`, `_ends_with_terminal`, `_starts_with_continuation` directly
 - All 117 tests passing, all ruff clean
+
+## Issue Tests for #9, #10, #11, #12, #13 (2026-04-18)
+
+Wrote tests validating fixes for five issues filed during export stage review.
+
+**Files modified:**
+- `tests/unit/pipeline/test_glossary.py` — Added 4 test classes (Issue #9: Unicode normalization)
+- `tests/unit/pipeline/test_export.py` — Added 5 test classes (Issues #10–#13: cover page, ToC, page numbering, foreword)
+
+**Issue coverage:**
+- **#9 (Glossary Unicode):** NFC normalization round-trip, seed term NFC verification, corrupted UTF-8 rejection, rendered HTML entity-free output
+- **#10 (Cover Page):** title-page div present, book title rendered, author rendered, subtitle from metadata, ordering before chapters
+- **#11 (Page Numbering):** CSS page counter present, front-matter roman numerals, cover page suppression
+- **#12 (Translator's Foreword):** 4 integration tests correctly xfail (feature not yet implemented by Chani)
+- **#13 (Table of Contents):** ToC div present, entries match chapter titles, ordering between title page and chapters, absent when empty
+
+**Key Learnings:**
+- Devanagari nukta characters (क़ U+0958, ऩ U+0929) are composition-excluded in Unicode — NFD decomposition produces forms that are still NFC-valid. Use Hangul syllables (가, 한) for reliable NFD≠NFC round-trip tests.
+- Chani already implemented Issues #10, #11, #13 — removed xfail markers from 7 tests that pass.
+- `_capture_export_html()` helper patches WeasyPrint lazy imports inside `_generate_pdf` to intercept built HTML/CSS.
+- Suite total: 265 passed, 4 xfailed (Issue #12 foreword), ruff clean.
