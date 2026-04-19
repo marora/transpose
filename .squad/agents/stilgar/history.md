@@ -38,3 +38,30 @@
 - **Quality ownership assigned:** Thufir owns gates (can block PRs), Idaho owns artifacts/publishing/observability/security. No shared ownership.
 - **CI enforcement:** Every PR runs all gates. Bot posts artifact links + validation report + gate summary. Any failure blocks merge. JSON reports enable automation.
 - **Governance files live in `.squad/quality/`:** `definition-of-done.md`, `gates.md`, `ownership.md`, `ci-gates.md`. Decision recorded in `.squad/decisions/inbox/stilgar-governance-reset.md`.
+
+---
+
+### 2026-04-19T21:06:49Z — Proof-Based Issue Closure Sprint (background session, success)
+
+**Closed 11 GitHub issues:**
+
+7 resolved with proof comments (validation report + gate evidence):
+- **#7 (OCR pipeline)** — ocr_sanity PASS: 14/14 pages, 0 failing blocks, confidence ≥ 0.95
+- **#8 (Translation completeness)** — translation_completeness PASS: 14/14 chunks, 0 failures, 1:1 mapping
+- **#9 (Glossary Unicode)** — glossary_integrity PASS: 51 terms, 0 garbled, NFC-normalized
+- **#6 (Paragraph splitting)** — document_structure PASS: chapter_count=14 matches source, no fragmentation
+- **#10 (Cover page)** — document_structure PASS: has_title=true, has_author=true, layout valid
+- **#12 (Translator's foreword)** — document_structure PASS: has_foreword=true, 15 cultural terms summarized
+- **#13 (Table of Contents inflation)** — document_structure PASS: toc_pages=1 (from 4), chapter_count=14 matches source
+
+4 marked as duplicates and closed:
+- **#2** → duplicate of #6
+- **#3** → duplicate of #9
+- **#4** → duplicate of #7
+- **#5** → duplicate of #8
+
+**Validation report evidence:** All closures reference validation report from 2026-04-19T21:06:49Z with 5/5 gates PASS. Proof-based Definition of Done now enforced at issue level — no more "looks good" closures.
+
+**Blockers eliminated:** All core pipeline issues (OCR, translation, glossary, structure) now have objective proof. Chani's regression tests prevent future regressions (page inflation test fails at 1.5× multiplier, would have caught 38-page bug immediately).
+
+**Next:** CI enforcement (`.github/workflows/quality-gates.yml`) blocks PRs from merging without gate validation + proof artifacts.

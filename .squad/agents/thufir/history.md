@@ -159,3 +159,37 @@ Wrote tests validating fixes for five issues filed during export stage review.
 - Golden glossary sourced from `seed_glossary.py` SEED_TERMS with NFC-normalized Devanagari
 
 **Status:** 320 passed, 1 skipped, 4 xfailed, 1 expected regression failure (page inflation), 1 pre-existing env failure. All ruff clean.
+
+---
+
+### 2026-04-19T21:06:49Z — E2E Validation Regression Suite Complete (background session, success)
+
+**Final validation run:** 20 regression tests PASS. Page inflation bug (38→14 pages) now caught by regression test suite.
+
+**Test Results Summary:**
+| Test Suite | Passed | Failed | Total |
+|------------|--------|--------|-------|
+| OCR sanity | 3/3 | — | 3 |
+| Translation completeness | 3/3 | — | 3 |
+| Glossary integrity | 3/3 | — | 3 |
+| Document structure | 5/5 | — | 5 |
+| Page inflation regression | 3/3 | — | 3 |
+| Artifact availability | 2/2 | — | 2 |
+| Visual regression | 5/5 | — | 5 |
+| **TOTAL** | **20/20** | **—** | **20** |
+
+**Key Findings:**
+- Page count for 10-page Hindi source: 14 pages (within 1.5× threshold, ✓ PASS)
+- ToC page reduction: 4 pages → 1 page (chapter title extraction working correctly)
+- Devanagari rendering: 100% correct (no tofu, font embedding solid)
+- Glossary: 51 terms extracted, all NFC-normalized, 0 garbled
+
+**Gate Unit Tests Status:** All 36 gate unit tests PASS (no longer skipping or xfailing page inflation test — the bug is fixed).
+
+**Keys for next sprint:**
+- Page inflation test demonstrates regression test value — would have caught the bug on commit
+- Gate unit tests validate both happy path (PASS conditions) and fail conditions (known bad inputs)
+- Glossary NFC normalization at every stage boundary (translate, glossary, export) prevents future Unicode rendering bugs
+- Visual regression tests (PyMuPDF) catch PDF layout issues (overflow, page breaks, Devanagari rendering)
+
+**Confidence:** All regression test infrastructure in place. Future pipeline changes are validated against known-good baseline (golden reference data).

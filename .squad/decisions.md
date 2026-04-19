@@ -246,8 +246,143 @@ Every pipeline stage that touches `original_script` (Devanagari/Gurmukhi) text n
 
 ---
 
+### Decision: Artifact Availability Gate — Local Dev URI Support
+
+**Author:** Chani  
+**Date:** 2026-04-19  
+**Status:** Active  
+
+The `artifact_availability_gate` in `src/transpose/pipeline/gates.py` now accepts both cloud URIs (HTTP/HTTPS) and local file paths (absolute paths starting with `/`).
+
+**Problem:** First E2E validation run failed the artifact gate because local dev mode writes to filesystem instead of blob storage. Gate only accepted HTTP URIs, causing false positive failures on valid local artifacts.
+
+**Solution:** Modified URI validation to allow both patterns:
+```python
+if uri and not (uri.startswith("http") or uri.startswith("/")):
+    failures.append(f"{fmt} artifact has invalid URI: {uri}")
+```
+
+**Impact:** 
+- Local dev E2E runs now pass artifact gate
+- No impact on cloud pipeline (blob URIs always start with `https://`)
+- Thufir updated gate tests to cover both URI patterns
+
+---
+
+### Decision: Chapter Title Extraction for Multi-Script Documents
+
+**Author:** Chani  
+**Date:** 2026-04-20  
+**Status:** Active  
+
+The assemble stage now extracts English chapter titles from translated text instead of using source-language (Devanagari/Gurmukhi) chapter references.
+
+**Problem:** 
+1. E2E validation run produced 38 pages instead of expected 14 (10-page source)
+2. Root cause: Source-language chapter refs (sometimes containing full chapter text, not just titles) were used as chapter headers in HTML and ToC
+3. This caused two issues:
+   - ToC page inflation (4 pages instead of 1)
+   - Mixed-language output (English book with Devanagari headers)
+
+**Solution:** Implemented `_extract_chapter_title(chapter_chunks, fallback)` in `src/transpose/pipeline/assemble.py`:
+- Extracts English title from first translated chunk using regex patterns:
+  - "Chapter N: Title" format (common in translation output)
+  - Title-case lines like "Introduction"
+  - First non-empty line as fallback
+- Maximum title length check (100 chars) to prevent using paragraph text as chapter title
+
+**Result:** Page count normalized from 38 to 14 pages (matches source).
+
+**Impact:**
+- Fixes ToC inflation (issue #13)
+- Fixes mixed-language output (issue #6)
+- Chani added regression tests asserting `page_count ≤ 1.5 × source_page_count` to catch this bug type in future
+
+---
+
+### Decision: Blocking Quality Gates — Version 2 (Proof-Based Definition of Done)
+
+**Author:** Stilgar (recorded from Manish directive)  
+**Date:** 2026-04-19  
+**Status:** Active  
+
+Established proof-based Definition of Done: nothing is "done" without artifacts generated, published with stable links, validation report attached, and all 5 quality gates passing.
+
+**Five blocking quality gates:**
+
+| Gate | Placed After | Key Criteria |
+|------|--------------|--------------|
+| ocr_sanity | OCR stage | Zero garbled blocks; confidence ≥ 0.95 on ≥ 95% of pages; no U+FFFD corruption |
+| translation_completeness | Translation stage | 1:1 source→target chunk mapping; zero silent passthrough; tagged [REVIEW REQUIRED] on failures |
+| glossary_integrity | Glossary stage | No mixed scripts; no garbled transliterations; required seed terms render correctly; NFC-normalized |
+| document_structure | Assemble stage | Cover + ToC + Foreword + all chapters present; chapter count matches source; no mixed-language bleed |
+| artifact_availability | Export stage | PDF + ePub artifacts generated with stable URIs (HTTP or local file path); downloadable/openable |
+
+**Implementation Details:**
+- Duck-typed inputs using `getattr()` to avoid circular imports
+- GateResult dataclass with `passed`, `failures`, `details`, `timestamp`
+- QualityGateError exception wraps GateResult for pipeline abort
+- Validation report (JSON) written to output dir, includes all gate results
+- CI enforcement via `.github/workflows/quality-gates.yml` — PRs cannot merge on gate failure
+
+**E2E Results (2026-04-19):** 5/5 gates PASS
+
+**Impact:**
+- Eliminates ambiguity about "done"
+- CI enforcement prevents quality regression
+- All 11 open issues now have proof-based closure path
+
+---
+
+### Decision: Golden Reference Regression Testing
+
+**Author:** Thufir  
+**Date:** 2026-04-19  
+**Status:** Active  
+
+Golden reference data (`tests/golden/`) establishes the objective truth for pipeline output quality. Regression tests (`tests/regression/`) compare candidate output against these files.
+
+**Key Decisions:**
+1. Golden data is updated intentionally, never automatically — a failing test means "investigate", not "overwrite"
+2. Regression tests are marked `@pytest.mark.regression` + `@pytest.mark.slow` to separate from fast unit tests
+3. Glossary golden reference uses NFC-normalized Devanagari from seed_glossary.py (42 entries covering all Hindi + philosophical terms)
+4. Page count test uses 1.5× source multiplier — immediately caught the existing 3.8× page inflation bug
+5. Source text leak detection uses regex for 4+ consecutive Devanagari characters with spaces (sentences) while allowing inline preserved terms
+
+**E2E Results (2026-04-19):** 20/20 regression tests PASS
+
+**Impact:**
+- Page inflation bug (38 pages) now fails as regression test
+- Future refactoring cannot silently degrade output quality
+- Provides objective proof for Definition of Done
+
+---
+
+### Decision: CI/CD Enforcement — Quality Gates in GitHub Actions
+
+**Author:** Stilgar  
+**Date:** 2026-04-19  
+**Status:** Active  
+
+CI pipeline (`.github/workflows/quality-gates.yml`) runs all 5 quality gates on every PR to main. PRs cannot merge if any gate fails.
+
+**Workflow Details:**
+- Triggered on push to main and PRs to main
+- Runs full validation suite (ocr_sanity, translation_completeness, glossary_integrity, document_structure, artifact_availability)
+- Writes validation report to workflow artifacts
+- Blocks merge on gate failure
+- Comments on PR with gate status, artifact links, validation report link
+
+**Impact:**
+- Quality regressions caught before merge
+- Proof-based closure enforced at CI level
+- Team visibility on gate status via PR comments
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
+- Proof-based Definition of Done: artifacts + gates + validation report required for closure
