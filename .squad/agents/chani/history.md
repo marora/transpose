@@ -185,3 +185,36 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 **Key design choice:** Failed chunks don't halt the pipeline. The placeholder text is visually obvious in output, making review easy. The `failed_count` field lets callers detect partial failures programmatically.
 
 **Testing:** All 26 existing translate tests pass. Ruff clean. No model changes needed — `Translation.translated_text` already accepts any string.
+
+### 2026-04-19: Cover Page, Table of Contents, Page Numbering (Issues #10, #13, #11)
+
+**Problem:** Translated PDFs had a bare plain-text title (no visual hierarchy), no Table of Contents page, and no page numbering.
+
+**Changes to `src/transpose/pipeline/export.py`:**
+
+1. **Issue #10 — Cover Page Enhancement:**
+   - Title page now has 32pt bold title with 2px letter-spacing
+   - Subtitle support via `manuscript.metadata.get("subtitle")` — optional, rendered in 20pt italic when present
+   - Decorative `<hr>` separator between title/subtitle and author
+   - Author in 16pt with letter-spacing
+   - ePub gets a `cover.xhtml` as the FIRST chapter in the spine, with matching CSS
+
+2. **Issue #13 — Auto-generated Table of Contents:**
+   - ToC page inserted between cover and first chapter in PDF
+   - Renders from `manuscript.table_of_contents` (built by assemble stage)
+   - Styled with centered heading, dotted border-bottom entries at 14pt
+   - `page-break-after: always` ensures chapters start on a fresh page
+   - ePub ToC already functional via `ebook.toc` tuple + EpubNcx/EpubNav — verified, no changes needed
+
+3. **Issue #11 — Page Numbering:**
+   - CSS `@page` rule adds `counter(page)` at bottom-center in 10pt gray
+   - `@page :first` suppresses page number on cover
+   - `.title-page` and `.toc-page` use `page: frontmatter` named page with roman numerals
+   - `<div style='counter-reset: page 1;'>` inserted before first chapter resets to arabic numbering
+
+**Key decisions:**
+- Kept `padding-top: 3cm` on title page (not 5cm from issue spec) — 5cm caused overflow in visual tests, 3cm was proven safe in earlier fix
+- Subtitle is optional (from metadata), not auto-detected from first chapter — cleaner, no false positives
+- All three changes are in the same commit since they share CSS and HTML ordering dependencies
+
+**Testing:** All 223 tests pass (including 12 visual regression tests). Ruff clean. No model or contract changes.

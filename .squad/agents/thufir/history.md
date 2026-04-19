@@ -69,3 +69,36 @@ Cultural term preservation is P0 — if atman gets translated, the test fails.
 **Status:** 12 tests created, 9 passing (structural tests), 3 correctly failing (Devanagari rendering bug). Ready for Chani's fix.
 
 **Update 2026-04-18:** Chani fixed PDF font embedding in export.py. All 12 tests now pass. Adjusted Devanagari validation to check individual codepoints (ध, र्, म) instead of full conjunct words, since PyMuPDF text extraction has limitations with subset fonts. Tests now serve as reliable regression detectors for PDF quality.
+
+### Session 2025-07-24: Critical Issue Tests (#6, #7, #8)
+
+**Delivered:** 65 new tests across 3 files (117 total including existing 52), covering all acceptance criteria for the 3 CRITICAL issues being fixed in parallel by Chani.
+
+**Issue #7 — Devanagari OCR (6 test classes, ~20 tests):**
+- NFC Unicode normalization (idempotent, mixed-script)
+- Devanagari codepoint validation (U+0900–U+097F parametrized)
+- U+FFFD replacement character detection (>10% threshold)
+- Empty/garbage OCR output detection
+- Digital PDF (PyMuPDF) normalization path
+- Confidence threshold flagging (parametrized 0.50–0.99)
+
+**Issue #8 — Translation completeness (4 test classes, ~14 tests):**
+- Exact placeholder text validation (`[TRANSLATION FAILED — REVIEW REQUIRED]`, em-dash)
+- Block count match (input chunks == output translations)
+- `failed_count` field tracking via real `TranslateOutput` import
+- Partial failure resilience (some fail, others succeed; total failure)
+
+**Issue #6 — Paragraph splitting (8 test classes, ~21 tests):**
+- Cross-page joining when no terminal punctuation
+- Terminal punctuation prevents joining
+- Devanagari danda (।) and double danda (॥) as terminators
+- `_starts_with_continuation` heuristic (lowercase, Devanagari)
+- Page boundary tracking (count, ascending, preserved numbers)
+- Mixed Hindi/English continuation detection
+- Edge cases: single page, all-terminal pages
+
+**Key Decisions:**
+- Imported real `TranslateOutput` for `failed_count` tests (local shadow dataclass lacks the field)
+- Used `_FakePage` dataclass matching `Page` interface for chunk helper tests
+- Tests call `_join_cross_page_paragraphs`, `_ends_with_terminal`, `_starts_with_continuation` directly
+- All 117 tests passing, all ruff clean
