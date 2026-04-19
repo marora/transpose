@@ -29,3 +29,10 @@ def golden_gates() -> dict:
     """Load the golden gate-expectations reference."""
     with open(GOLDEN_DIR / "gate-expectations.json") as f:
         return json.load(f)
+
+
+@pytest.fixture
+def golden_target() -> dict:
+    """Load the golden target reference for QA comparison."""
+    with open(GOLDEN_DIR / "golden-target.json") as f:
+        return json.load(f)

@@ -3,5 +3,6 @@
   "translation_completeness": "PASS",
   "glossary_integrity": "PASS",
   "document_structure": "PASS",
-  "artifact_availability": "PASS"
+  "artifact_availability": "PASS",
+  "golden_targeted_qa": "PASS"
 }

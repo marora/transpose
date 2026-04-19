@@ -1,0 +1,81 @@
+{
+  "description": "Structural fingerprint of the golden source PDF (tests/fixtures/test-hindi-10page.pdf)",
+  "source_path": "tests/fixtures/test-hindi-10page.pdf",
+  "page_count": 10,
+  "total_words_approx": 1671,
+  "language": "Hindi",
+  "script": "Devanagari",
+  "structure": {
+    "page_1": {
+      "type": "title_page",
+      "title": "हिन्दी साहित्य और संस्कृति",
+      "subtitle": "परीक्षण पुस्तिका",
+      "word_count_approx": 139
+    },
+    "chapters": [
+      {
+        "number": 1,
+        "hindi_title": "धर्म और कर्म — गीता का संदेश",
+        "source_page": 2,
+        "word_count_approx": 184,
+        "key_terms": ["dharma", "karma", "gita", "bhagavad"]
+      },
+      {
+        "number": 2,
+        "hindi_title": "योग और ध्यान — शारीरिक एवं आध्यात्मिक साधना",
+        "source_page": 3,
+        "word_count_approx": 167,
+        "key_terms": ["yoga", "dhyana", "pranayama", "samadhi"]
+      },
+      {
+        "number": 3,
+        "hindi_title": "सिख परम्परा — संगत, लंगर, और सेवा",
+        "source_page": 4,
+        "word_count_approx": 177,
+        "key_terms": ["sangat", "langar", "seva", "gurdwara", "waheguru"]
+      },
+      {
+        "number": 4,
+        "hindi_title": "मोक्ष और वेदान्त दर्शन",
+        "source_page": 5,
+        "word_count_approx": 166,
+        "key_terms": ["moksha", "vedanta", "brahman", "atman"]
+      },
+      {
+        "number": 5,
+        "hindi_title": "हिन्दी साहित्य — कबीर से प्रेमचन्द तक",
+        "source_page": 6,
+        "word_count_approx": 172,
+        "key_terms": ["kabir", "premchand", "bhakti", "sahitya"]
+      },
+      {
+        "number": 6,
+        "hindi_title": "बॉलीवुड और भारतीय सिनेमा",
+        "source_page": 7,
+        "word_count_approx": 157,
+        "key_terms": ["bollywood", "cinema", "raga"]
+      },
+      {
+        "number": 7,
+        "hindi_title": "त्योहार और परम्पराएँ",
+        "source_page": 8,
+        "word_count_approx": 163,
+        "key_terms": ["diwali", "holi", "navratri", "festival"]
+      },
+      {
+        "number": 8,
+        "hindi_title": "आयुर्वेद और प्राचीन चिकित्सा",
+        "source_page": 9,
+        "word_count_approx": 164,
+        "key_terms": ["ayurveda", "prana", "yoga", "kundalini"]
+      },
+      {
+        "number": 9,
+        "hindi_title": "उपसंहार — भारतीय संस्कृति की निरन्तरता",
+        "source_page": 10,
+        "word_count_approx": 182,
+        "key_terms": ["guru", "dharma", "karma", "yoga"]
+      }
+    ]
+  }
+}

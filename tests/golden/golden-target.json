@@ -1,0 +1,143 @@
+{
+  "description": "Golden target — stable reference English translation of the 10-page Hindi test PDF",
+  "source": "tests/fixtures/test-hindi-10page.pdf",
+  "generated_from": "Test_Hindi_Book_final.pdf (209KB, 14 pages)",
+  "version": "1.0",
+  "frozen_date": "2026-04-20",
+  "update_policy": "Update ONLY when pipeline legitimately improves. Never regenerate automatically.",
+
+  "structure": {
+    "expected_sections": [
+      {"type": "cover", "required": true, "page": 1},
+      {"type": "toc", "required": true, "page": 2},
+      {"type": "foreword", "required": true, "page": 3, "note": "Translator's Foreword — pipeline-added, not in source"},
+      {"type": "introduction", "required": true, "page": 5},
+      {"type": "chapter", "number": 1, "required": true},
+      {"type": "chapter", "number": 2, "required": true},
+      {"type": "chapter", "number": 3, "required": true},
+      {"type": "chapter", "number": 4, "required": true},
+      {"type": "chapter", "number": 5, "required": true},
+      {"type": "chapter", "number": 6, "required": true},
+      {"type": "chapter", "number": 7, "required": true},
+      {"type": "chapter", "number": 8, "required": true},
+      {"type": "chapter", "number": 9, "required": true},
+      {"type": "glossary", "required": true, "note": "Pipeline-added glossary of preserved cultural terms"}
+    ],
+    "allowed_additions": ["Translator's Foreword", "Glossary", "Table of Contents"],
+    "total_page_count": 14,
+    "source_page_count": 10,
+    "page_count_ratio_max": 1.5
+  },
+
+  "chapters": [
+    {
+      "number": 1,
+      "title": "Dharma and Karma",
+      "full_title": "Dharma and Karma — The Message of the Gita",
+      "word_count_approx": 218,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["Shrimad Bhagavad Gita", "Kurukshetra", "nishkama karma", "selfless action"],
+      "preserved_terms": ["dharma", "karma"]
+    },
+    {
+      "number": 2,
+      "title": "Yoga and Meditation",
+      "full_title": "Yoga and Meditation — Physical and Spiritual Discipline",
+      "word_count_approx": 208,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["pranayama", "samadhi", "spiritual discipline", "eight limbs"],
+      "preserved_terms": ["yoga", "pranayama", "samadhi"]
+    },
+    {
+      "number": 3,
+      "title": "Sikh Tradition",
+      "full_title": "Sikh Tradition — Sangat, Langar, and Seva",
+      "word_count_approx": 198,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["Guru Nanak", "Sikhism", "universal God", "sacred congregation"],
+      "preserved_terms": ["sangat", "langar", "seva", "gurdwara", "waheguru"]
+    },
+    {
+      "number": 4,
+      "title": "Moksha and Vedanta Philosophy",
+      "full_title": "Moksha and Vedanta Philosophy",
+      "word_count_approx": 189,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["liberation", "rebirth", "karma", "fruits of action"],
+      "preserved_terms": ["moksha", "karma", "samsara"]
+    },
+    {
+      "number": 5,
+      "title": "Hindi Literature",
+      "full_title": "Hindi Literature — From Kabir to Premchand",
+      "word_count_approx": 157,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["Kabir", "Premchand", "Romanticism", "social justice"],
+      "preserved_terms": ["dharma", "karma", "bhakti"]
+    },
+    {
+      "number": 6,
+      "title": "Bollywood and Indian Cinema",
+      "full_title": "Bollywood and Indian Cinema",
+      "word_count_approx": 152,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["film industry", "cinema", "Indian"],
+      "preserved_terms": []
+    },
+    {
+      "number": 7,
+      "title": "Festivals and Traditions",
+      "full_title": "Festivals and Traditions",
+      "word_count_approx": 150,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["Diwali", "Holi", "festivals", "agrarian traditions"],
+      "preserved_terms": []
+    },
+    {
+      "number": 8,
+      "title": "Ayurveda and Ancient Medicine",
+      "full_title": "Ayurveda and Ancient Medicine",
+      "word_count_approx": 160,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["Ayurveda", "guru tradition", "yoga", "meditation"],
+      "preserved_terms": ["yoga", "guru", "prana"]
+    },
+    {
+      "number": 9,
+      "title": "Conclusion",
+      "full_title": "Conclusion — The Continuity of Indian Culture",
+      "word_count_approx": 191,
+      "word_count_tolerance": 0.30,
+      "key_phrases": ["Indian culture", "continuity", "dharma", "tradition"],
+      "preserved_terms": ["dharma", "karma", "yoga"]
+    }
+  ],
+
+  "glossary": {
+    "min_entries": 35,
+    "required_terms": [
+      {"term": "dharma", "has_devanagari": true},
+      {"term": "karma", "has_devanagari": true},
+      {"term": "yoga", "has_devanagari": true},
+      {"term": "moksha", "has_devanagari": true},
+      {"term": "sangat", "has_devanagari": true},
+      {"term": "langar", "has_devanagari": true},
+      {"term": "seva", "has_devanagari": true},
+      {"term": "guru", "has_devanagari": true},
+      {"term": "prana", "has_devanagari": true},
+      {"term": "samsara", "has_devanagari": true},
+      {"term": "samadhi", "has_devanagari": true},
+      {"term": "jnana", "has_devanagari": true},
+      {"term": "maya", "has_devanagari": true},
+      {"term": "waheguru", "has_devanagari": true}
+    ]
+  },
+
+  "quality_thresholds": {
+    "word_count_tolerance": 0.30,
+    "page_count_ratio_max": 1.5,
+    "min_chapter_count": 9,
+    "devanagari_in_body_max_ratio": 0.02,
+    "glossary_min_entries": 35
+  }
+}

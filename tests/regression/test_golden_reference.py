@@ -202,6 +202,7 @@ class TestNoRegressionInGates:
             "glossary_integrity",
             "document_structure",
             "artifact_availability",
+            "golden_targeted_qa",
         }
         assert set(golden_gates.keys()) == expected_gates
 

@@ -427,3 +427,257 @@ def artifact_availability_gate(export_output) -> GateResult:
         failures=failures,
         details=details,
     )
+
+
+# ---------------------------------------------------------------------------
+# Gate 6: Golden-Targeted QA (post-export, compares against golden target)
+# ---------------------------------------------------------------------------
+
+_GOLDEN_TARGET_DEFAULT = "tests/golden/golden-target.json"
+_WORD_COUNT_TOLERANCE = 0.30
+_PAGE_COUNT_RATIO_MAX = 1.5
+_BODY_DEVANAGARI_MAX_RATIO = 0.02
+
+
+def golden_targeted_qa_gate(
+    candidate_pdf_path: str,
+    golden_target_path: str = _GOLDEN_TARGET_DEFAULT,
+) -> GateResult:
+    """Compare a candidate PDF against the golden target reference.
+
+    Checks:
+      1. Structural match — chapter count, section presence, chapter ordering
+      2. Content completeness — word counts within ±30% of golden target
+      3. Script hygiene — no Devanagari in English body (glossary terms excepted)
+      4. Glossary integrity — required preserved terms present
+      5. No regression — page count within 1.5× of source
+    """
+    import json
+    from pathlib import Path
+
+    import fitz  # PyMuPDF
+
+    failures: list[str] = []
+    details: dict = {
+        "checks": {
+            "structural_match": True,
+            "content_completeness": True,
+            "script_hygiene": True,
+            "glossary_integrity": True,
+            "no_regression": True,
+        },
+        "chapter_count": 0,
+        "page_count": 0,
+        "glossary_terms_found": 0,
+    }
+
+    # Load golden target
+    golden_path = Path(golden_target_path)
+    if not golden_path.is_absolute():
+        # Resolve relative to repo root (walk up from this file)
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        golden_path = repo_root / golden_target_path
+
+    if not golden_path.exists():
+        failures.append(f"Golden target not found: {golden_path}")
+        details["checks"]["structural_match"] = False
+        return GateResult(
+            gate_name="golden_targeted_qa",
+            passed=False,
+            failures=failures,
+            details=details,
+        )
+
+    with open(golden_path) as f:
+        golden = json.load(f)
+
+    # Load candidate PDF
+    candidate = Path(candidate_pdf_path)
+    if not candidate.exists():
+        failures.append(f"Candidate PDF not found: {candidate_pdf_path}")
+        return GateResult(
+            gate_name="golden_targeted_qa",
+            passed=False,
+            failures=failures,
+            details=details,
+        )
+
+    doc = fitz.open(str(candidate))
+    page_count = doc.page_count
+    all_text = [doc[i].get_text() for i in range(page_count)]
+    doc.close()
+
+    full_text = "\n".join(all_text)
+    details["page_count"] = page_count
+
+    # --- Check 1: Structural match ---
+    golden_chapters = golden.get("chapters", [])
+    expected_chapter_count = len(golden_chapters)
+
+    # Count actual chapters by finding "Chapter N:" patterns
+    chapter_matches = re.findall(r"Chapter\s+(\d+)\s*:", full_text)
+    # Deduplicate (ToC + body both contain chapter refs)
+    actual_chapter_numbers = sorted(set(int(n) for n in chapter_matches))
+    details["chapter_count"] = len(actual_chapter_numbers)
+
+    if len(actual_chapter_numbers) < expected_chapter_count:
+        failures.append(
+            f"Chapter count mismatch: found {len(actual_chapter_numbers)}, "
+            f"expected {expected_chapter_count}"
+        )
+        details["checks"]["structural_match"] = False
+
+    # Check sequential ordering
+    expected_numbers = list(range(1, expected_chapter_count + 1))
+    if actual_chapter_numbers != expected_numbers:
+        failures.append(
+            f"Chapters not sequential: found {actual_chapter_numbers}, "
+            f"expected {expected_numbers}"
+        )
+        details["checks"]["structural_match"] = False
+
+    # Check section presence
+    structure = golden.get("structure", {})
+    for section in structure.get("expected_sections", []):
+        section_type = section["type"]
+        if not section.get("required", False):
+            continue
+        if section_type == "cover":
+            if page_count < 1 or not all_text[0].strip():
+                failures.append("Cover page missing or empty")
+                details["checks"]["structural_match"] = False
+        elif section_type == "toc":
+            if "Table of Contents" not in full_text:
+                failures.append("Table of Contents not found")
+                details["checks"]["structural_match"] = False
+        elif section_type == "foreword":
+            if "Foreword" not in full_text:
+                failures.append("Translator's Foreword not found")
+                details["checks"]["structural_match"] = False
+        elif section_type == "glossary":
+            # Glossary detected by presence of terms with Devanagari in parens
+            glossary_pattern = re.search(
+                r"[a-z]+\s*\([\u0900-\u097F]+", full_text
+            )
+            if not glossary_pattern:
+                failures.append("Glossary section not found")
+                details["checks"]["structural_match"] = False
+
+    # --- Check 2: Content completeness (word counts per chapter) ---
+    for golden_ch in golden_chapters:
+        ch_num = golden_ch["number"]
+        expected_words = golden_ch["word_count_approx"]
+        tolerance = golden_ch.get("word_count_tolerance", _WORD_COUNT_TOLERANCE)
+        min_words = int(expected_words * (1 - tolerance))
+        max_words = int(expected_words * (1 + tolerance))
+
+        # Extract chapter text between "Chapter N:" and next "Chapter N+1:"
+        ch_pattern = re.compile(
+            rf"Chapter\s+{ch_num}\s*:.*?(?=Chapter\s+{ch_num + 1}\s*:|Glossary|$)",
+            re.DOTALL,
+        )
+        # Search in body text (skip first few pages which are cover/ToC/foreword)
+        body_text = "\n".join(all_text[2:])  # Skip cover and ToC
+        ch_match = ch_pattern.search(body_text)
+
+        if ch_match:
+            ch_text = ch_match.group()
+            actual_words = len(ch_text.split())
+            if actual_words < min_words or actual_words > max_words:
+                failures.append(
+                    f"Chapter {ch_num} word count {actual_words} outside "
+                    f"tolerance [{min_words}, {max_words}] "
+                    f"(golden: {expected_words} ±{tolerance:.0%})"
+                )
+                details["checks"]["content_completeness"] = False
+        else:
+            failures.append(f"Chapter {ch_num} content not found in candidate")
+            details["checks"]["content_completeness"] = False
+
+    # --- Check 3: Script hygiene (no Devanagari in English body) ---
+    # Check body pages (skip glossary pages at end)
+    # Glossary typically starts after last chapter content
+    glossary_start = full_text.rfind("Glossary")
+    if glossary_start < 0:
+        # Try finding the glossary by pattern (terms with Devanagari in parens)
+        glossary_match = re.search(
+            r"(?:^|\n)([a-z]+\s*\([\u0900-\u097F])", full_text
+        )
+        glossary_start = glossary_match.start() if glossary_match else len(full_text)
+
+    body_only = full_text[:glossary_start]
+    # Remove known allowed Devanagari (inline preserved terms in parens)
+    body_cleaned = re.sub(r"\([\u0900-\u097F\s]+\)", "", body_only)
+    # Count remaining Devanagari characters
+    devanagari_in_body = len(_DEVANAGARI_RE.findall(body_cleaned))
+    total_body_chars = max(len(body_cleaned.replace(" ", "").replace("\n", "")), 1)
+    dev_ratio = devanagari_in_body / total_body_chars
+
+    if dev_ratio > _BODY_DEVANAGARI_MAX_RATIO:
+        failures.append(
+            f"Devanagari script in English body: {devanagari_in_body} chars "
+            f"({dev_ratio:.1%}, max {_BODY_DEVANAGARI_MAX_RATIO:.0%})"
+        )
+        details["checks"]["script_hygiene"] = False
+
+    details["devanagari_body_ratio"] = round(dev_ratio, 4)
+
+    # --- Check 4: Glossary integrity ---
+    glossary_config = golden.get("glossary", {})
+    required_terms = glossary_config.get("required_terms", [])
+    full_text_lower = full_text.lower()
+    found_terms = 0
+    missing_terms: list[str] = []
+
+    for term_entry in required_terms:
+        term = term_entry["term"]
+        if term.lower() in full_text_lower:
+            found_terms += 1
+        else:
+            missing_terms.append(term)
+
+    details["glossary_terms_found"] = found_terms
+    details["glossary_terms_missing"] = missing_terms
+
+    if missing_terms:
+        failures.append(
+            f"Missing glossary terms: {', '.join(missing_terms)}"
+        )
+        details["checks"]["glossary_integrity"] = False
+
+    # Check minimum glossary entry count
+    min_entries = glossary_config.get("min_entries", 35)
+    # Count entries by pattern: "term (devanagari)"
+    glossary_entries_found = len(
+        re.findall(r"[a-z][a-z ]+\s*\([\u0900-\u097F]", full_text)
+    )
+    details["glossary_entries_count"] = glossary_entries_found
+
+    if glossary_entries_found < min_entries:
+        failures.append(
+            f"Glossary has {glossary_entries_found} entries, "
+            f"minimum {min_entries} required"
+        )
+        details["checks"]["glossary_integrity"] = False
+
+    # --- Check 5: No regression (page count) ---
+    source_pages = structure.get("source_page_count", 10)
+    max_pages = int(source_pages * structure.get("page_count_ratio_max", _PAGE_COUNT_RATIO_MAX))
+
+    if page_count > max_pages:
+        failures.append(
+            f"Page count {page_count} exceeds {max_pages} "
+            f"(1.5× source {source_pages})"
+        )
+        details["checks"]["no_regression"] = False
+
+    if page_count < 1:
+        failures.append("Candidate PDF has zero pages")
+        details["checks"]["no_regression"] = False
+
+    return GateResult(
+        gate_name="golden_targeted_qa",
+        passed=len(failures) == 0,
+        failures=failures,
+        details=details,
+    )

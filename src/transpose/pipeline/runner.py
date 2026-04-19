@@ -20,6 +20,7 @@ from transpose.pipeline.gates import (
     artifact_availability_gate,
     document_structure_gate,
     glossary_integrity_gate,
+    golden_targeted_qa_gate,
     ocr_sanity_gate,
     translation_completeness_gate,
 )
@@ -329,6 +330,31 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
             # Quality Gate: Artifact Availability
             _run_gate(artifact_availability_gate, export_output, gate_results)
+
+            # Quality Gate: Golden-Targeted QA (runs after all other gates)
+            # Find the PDF artifact path for golden comparison
+            pdf_artifact_path = None
+            for artifact in export_output.artifacts:
+                if getattr(artifact, "format", "") == "pdf":
+                    blob_uri = getattr(artifact, "blob_uri", "")
+                    if blob_uri:
+                        import urllib.parse
+
+                        if blob_uri.startswith("file://"):
+                            parsed = urllib.parse.urlparse(blob_uri)
+                            pdf_artifact_path = urllib.parse.unquote(parsed.path)
+                        elif blob_uri.startswith("/") or (
+                            len(blob_uri) > 2 and blob_uri[1] == ":"
+                        ):
+                            pdf_artifact_path = blob_uri
+                    break
+
+            if pdf_artifact_path:
+                _run_gate(
+                    lambda _inp: golden_targeted_qa_gate(pdf_artifact_path),
+                    None,
+                    gate_results,
+                )
 
         # Write validation report
         report = _build_validation_report(book_id, gate_results, artifacts)
