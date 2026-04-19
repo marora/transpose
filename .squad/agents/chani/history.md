@@ -370,3 +370,48 @@ No changes needed for page numbering — already correct.
 
 **Note for next pipeline run:** The manuscript data in PostgreSQL contains Devanagari chapter refs. After this fix, re-running `assemble` + `export` stages will generate proper English titles and compact ToC, reducing page count from 38 to ~12-15 pages.
 
+
+### 2026-04-20: E2E Validation — Page Inflation Fix Verified
+
+**Task:** Re-run full E2E pipeline to validate page inflation fix from Issue #11.
+
+**Context:** Previous E2E run produced 38 pages for 10-page source. Fixes were committed to:
+- `assemble.py` — extract English chapter titles from translations
+- `export.py` — add page-break-inside: avoid for glossary entries
+- `gates.py` — artifact gate accepts local paths
+
+**Key discovery:** The `scripts/e2e_validation_run.py` script reconstructs gates from DB data but does NOT re-run assemble stage. It only runs export to generate fresh artifacts. This meant the manuscript in the database still had the old Devanagari chapter titles.
+
+**Solution:**
+1. Manually ran assemble stage via Python script to regenerate manuscript with English titles
+2. Re-ran e2e_validation_run.py to generate fresh PDF/ePub from new manuscript
+
+**Results after fix:**
+- **PDF page count:** 14 pages (down from 38, within expected 12-15 range)
+- **PDF size:** 209KB (down from 258KB)
+- **ePub size:** 17KB (down from 34KB)
+- **All 5 quality gates:** PASS
+- **All 20 regression tests:** PASS (including page count test)
+
+**Chapter titles now properly extracted:**
+1. Introduction
+2. Chapter 1: Dharma and Karma
+3. Chapter 2: Yoga and Meditation
+4. Chapter 3: Sikh Tradition
+5. Chapter 4: Moksha and Vedanta Philosophy
+6. Chapter 5: Hindi Literature
+7. Chapter 6: Bollywood and Indian Cinema
+8. Chapter 7: Festivals and Traditions
+9. Chapter 8: Ayurveda and Ancient Medicine
+10. Chapter 9: Conclusion
+
+**Learning:** E2E validation scripts should be explicit about which stages they re-run vs reconstruct from DB. For future validation runs after code fixes:
+- If fix is in assemble/earlier stages → must re-run those stages OR delete old manuscript
+- If fix is only in export → e2e_validation_run.py is sufficient
+- The `_extract_chapter_title()` regex patterns work correctly — extracts concise English titles like "Chapter 1: Dharma and Karma" instead of full Devanagari content
+
+**Validation-report.json summary:**
+- Overall: PASS
+- Gates passed: 5/5
+- PDF: 213KB at Test_Hindi_Book_final.pdf
+- ePub: 17KB at Test_Hindi_Book_final.epub
