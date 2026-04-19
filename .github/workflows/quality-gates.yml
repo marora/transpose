@@ -1,0 +1,112 @@
+name: Quality Gates
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  quality-gates:
+    name: Pipeline Quality Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libpango1.0-dev libharfbuzz-dev libffi-dev libjpeg-dev libopenjp2-7-dev
+
+      - name: Install project dependencies
+        run: |
+          pip install --quiet -e ".[test]"
+
+      - name: Lint with ruff
+        run: ruff check src/ tests/
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short -q 2>&1 | tee test-output.txt
+
+      - name: Run quality gate tests
+        id: gate-tests
+        run: |
+          pytest tests/unit/pipeline/test_gates.py -v --tb=short -q 2>&1 | tee gate-output.txt
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Build gate results summary
+        if: always()
+        id: summary
+        run: |
+          TOTAL=$(grep -oP '\d+ passed' gate-output.txt | head -1 || echo "0 passed")
+          FAILED=$(grep -oP '\d+ failed' gate-output.txt | head -1 || echo "0 failed")
+
+          {
+            echo 'comment<<ENDOFCOMMENT'
+            echo '## 🔒 Quality Gate Results'
+            echo ''
+            echo '| Check | Status |'
+            echo '|-------|--------|'
+            if grep -q "FAILED\|ERROR" gate-output.txt; then
+              echo '| Gate Tests | ❌ FAIL |'
+            else
+              echo '| Gate Tests | ✅ PASS |'
+            fi
+            if grep -q "FAILED\|ERROR" test-output.txt; then
+              echo '| Unit Tests | ❌ FAIL |'
+            else
+              echo '| Unit Tests | ✅ PASS |'
+            fi
+            echo ''
+            echo "<details><summary>Gate test details ($TOTAL, $FAILED)</summary>"
+            echo ''
+            echo '```'
+            cat gate-output.txt
+            echo '```'
+            echo '</details>'
+            echo 'ENDOFCOMMENT'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `${{ steps.summary.outputs.comment }}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Quality Gate Results')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail if gates failed
+        if: steps.gate-tests.outputs.exit_code != '0'
+        run: exit 1

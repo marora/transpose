@@ -260,3 +260,27 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 - All three changes are in the same commit since they share CSS and HTML ordering dependencies
 
 **Testing:** All 223 tests pass (including 12 visual regression tests). Ruff clean. No model or contract changes.
+
+## Session 2026-04-20: Quality Gates Implementation
+
+**Delivered:** Blocking quality gates between pipeline stages. 5 gate functions in `src/transpose/pipeline/gates.py`, runner integration in `runner.py`, 34 unit tests in `tests/unit/pipeline/test_gates.py`, CI workflow in `.github/workflows/quality-gates.yml`.
+
+**Gates implemented:**
+1. `ocr_sanity_gate` — after OCR, checks replacement chars, Devanagari density, confidence
+2. `translation_completeness_gate` — after translate, checks failed ratio, Devanagari passthrough, TRANSLATION FAILED markers
+3. `glossary_integrity_gate` — after glossary, checks NFC normalization, replacement chars, Latin in Devanagari, non-empty
+4. `document_structure_gate` — after assemble, checks ToC/chapter count, foreword length, title, sequential numbering
+5. `artifact_availability_gate` — after export, checks PDF/ePub presence, size >1KB, valid URIs
+
+**Key design decisions:**
+- Gates use duck-typing via `getattr()` — no tight coupling to stage output dataclasses
+- `GateResult` dataclass carries gate_name, passed, failures list, details dict, timestamp
+- `QualityGateError` wraps GateResult so runner can catch and write partial validation report
+- Runner writes `validation-report.json` to output_dir (full on success, partial on gate failure)
+- PipelineOutput gained `gate_results` field (list of dicts)
+
+**Learnings:**
+- Most Devanagari characters are identical in NFC vs NFD form in Python's `unicodedata`. Testing NFC normalization requires using characters that actually decompose (like Latin é = e + combining acute). Pure Devanagari strings often don't change between NFC/NFD.
+- Thufir's test-first stubs had different function signatures (dict-based, 2-arg) from the real implementation (typed stage outputs, 1-arg). Had to completely rewrite tests rather than fill in stubs.
+
+**Testing:** 34 gate-specific tests pass. Full suite: 279 pass, 4 xfail, 1 pre-existing env-dependent failure (test_settings).
