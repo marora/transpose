@@ -62,6 +62,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     from transpose.models.enums import BookStatus
     from transpose.models.translation import Translation
     from transpose.observability.metrics import chunks_translated, tokens_used
+    from transpose.utils.unicode import normalize_unicode
 
     logger = logging.getLogger(__name__)
 
@@ -157,7 +158,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
                 cultural_terms=[
                     ExtractedTerm(
                         term=term.term,
-                        original_script=term.original_script,
+                        original_script=normalize_unicode(term.original_script),
                         definition=term.definition,
                         source=term.source,
                     )

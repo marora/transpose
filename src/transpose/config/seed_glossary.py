@@ -80,5 +80,11 @@ SEED_TERMS: list[tuple[str, str, str]] = [
 
 
 def get_seed_glossary() -> dict[str, tuple[str, str]]:
-    """Return seed glossary as {term: (original_script, definition)}."""
-    return {term: (script, defn) for term, script, defn in SEED_TERMS}
+    """Return seed glossary as {term: (original_script, definition)}.
+
+    NFC-normalizes original_script to prevent encoding mismatches
+    when seed terms are compared against OCR / LLM output.
+    """
+    from transpose.utils.unicode import normalize_unicode
+
+    return {term: (normalize_unicode(script), defn) for term, script, defn in SEED_TERMS}

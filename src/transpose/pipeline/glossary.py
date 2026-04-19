@@ -49,6 +49,7 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
     from transpose.models.enums import TermSource
     from transpose.models.glossary import Glossary
     from transpose.models.translation import CulturalTerm
+    from transpose.utils.unicode import normalize_unicode
 
     logger = logging.getLogger(__name__)
 
@@ -87,9 +88,9 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
             data = term_data[term_key]
             data["occurrences"] += 1
 
-            # Keep original script (prefer non-empty)
+            # Keep original script (prefer non-empty), NFC-normalize Indic text
             if extracted_term.original_script and not data["original_script"]:
-                data["original_script"] = extracted_term.original_script
+                data["original_script"] = normalize_unicode(extracted_term.original_script)
 
             # Collect definitions
             if extracted_term.definition and extracted_term.definition not in data["definitions"]:
