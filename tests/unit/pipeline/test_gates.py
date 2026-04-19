@@ -528,4 +528,72 @@ class TestArtifactAvailabilityGate:
         output = StubExportOutput(artifacts=artifacts)
         result = artifact_availability_gate(output)
         assert result.passed is False
-        assert any("invalid URI" in f for f in result.failures)
+        assert any("invalid" in f and "URI" in f for f in result.failures)
+
+    def test_accepts_https_uri(self) -> None:
+        artifacts = [
+            StubExportArtifact(
+                format="pdf",
+                blob_uri="https://storage.blob.core.windows.net/output/book.pdf",
+                file_size_bytes=50000,
+            ),
+            StubExportArtifact(format="epub", file_size_bytes=30000),
+        ]
+        output = StubExportOutput(artifacts=artifacts)
+        result = artifact_availability_gate(output)
+        assert result.passed is True
+
+    def test_accepts_file_uri(self) -> None:
+        import tempfile
+        import pathlib
+        
+        # Create a temporary file to test against
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pdf", delete=False) as f:
+            temp_path = pathlib.Path(f.name)
+            f.write("test content")
+        
+        try:
+            file_uri = f"file://{temp_path}"
+            artifacts = [
+                StubExportArtifact(format="pdf", blob_uri=file_uri, file_size_bytes=50000),
+                StubExportArtifact(format="epub", file_size_bytes=30000),
+            ]
+            output = StubExportOutput(artifacts=artifacts)
+            result = artifact_availability_gate(output)
+            assert result.passed is True
+        finally:
+            temp_path.unlink()
+
+    def test_accepts_absolute_path(self) -> None:
+        import tempfile
+        import pathlib
+        
+        # Create a temporary file to test against
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pdf", delete=False) as f:
+            temp_path = pathlib.Path(f.name)
+            f.write("test content")
+        
+        try:
+            artifacts = [
+                StubExportArtifact(format="pdf", blob_uri=str(temp_path), file_size_bytes=50000),
+                StubExportArtifact(format="epub", file_size_bytes=30000),
+            ]
+            output = StubExportOutput(artifacts=artifacts)
+            result = artifact_availability_gate(output)
+            assert result.passed is True
+        finally:
+            temp_path.unlink()
+
+    def test_fails_with_nonexistent_file_path(self) -> None:
+        artifacts = [
+            StubExportArtifact(
+                format="pdf",
+                blob_uri="/nonexistent/path/to/file.pdf",
+                file_size_bytes=50000,
+            ),
+            StubExportArtifact(format="epub", file_size_bytes=30000),
+        ]
+        output = StubExportOutput(artifacts=artifacts)
+        result = artifact_availability_gate(output)
+        assert result.passed is False
+        assert any("invalid" in f or "non-existent" in f for f in result.failures)

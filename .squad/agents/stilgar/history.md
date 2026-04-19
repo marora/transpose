@@ -9,6 +9,14 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-19 — Issues Closed on Validation Proof
+
+- **Resolved issues:** #7 (OCR pipeline), #8 (Translation completeness), #9 (Glossary Unicode), #6 (Paragraph splitting), #10 (Cover page), #12 (Foreword), #13 (Table of Contents) — all closed with proof-based comments citing validation report commit `4f4f16a`.
+- **Duplicate issues:** #2, #3, #4, #5 marked as duplicates of their canonical issues and closed.
+- **Issue #11 left open:** Page numbering/inflation still being worked on. No gate validates it yet.
+- **Validation report shows 4/4 core quality gates PASS:** OCR Sanity, Translation Completeness, Glossary Integrity, Document Structure all passed. Artifact Availability gate failed (local-dev false positive: URIs are filesystem paths, not Azure Blob URIs, but files exist and are valid).
+- **Governance applied:** Proof-based Definition of Done enforced. Each closure includes gate name, specific metrics, commit hash. No subjective "it looks good" closing.
+
 ### 2025-07-18 — Architecture Laid Down
 
 - **7-stage pipeline:** Ingest → OCR → Chunk → Translate → Glossary → Assemble → Export

@@ -291,7 +291,19 @@ class TestArtifactSizesReasonable:
 # ===================================================================
 
 class TestPageCountReasonable:
-    """Output page count should be within 1.5x of source page count."""
+    """Output page count should be within 1.5x of source page count.
+    
+    Expected structure for 10-page source:
+    - Cover: 1 page
+    - ToC: 1 page (short English chapter titles)
+    - Foreword: 1 page
+    - Chapters: ~8 pages (5 chapters with translated content)
+    - Glossary: 1 page
+    Total: ~12 pages (well within 1.5× = 15 pages)
+    
+    Previous issue: ToC spanned 4 pages with full Devanagari content,
+    causing 38-page output (3.8× inflation).
+    """
 
     SOURCE_PAGE_COUNT = 10  # test-hindi-10page.pdf
 

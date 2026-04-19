@@ -304,3 +304,69 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 **Key finding:** The `artifact_availability_gate` URI check (`uri.startswith("http")`) is too strict for local dev. In cloud mode (blob upload), URIs are `https://...`. In local mode, paths are `/absolute/path/...`. The gate should either skip URI validation when URI is a local path, or use a separate check for local vs cloud artifacts. Filed as a known issue — not blocking.
 
 **Runner script:** `scripts/e2e_validation_run.py` — reconstructs stage outputs from DB, runs gates independently, generates artifacts locally (bypasses blob upload), writes validation report. Reusable for future E2E validation runs.
+
+### 2026-04-20: Artifact Availability Gate Fixed for Local Dev (Task 1)
+
+**Problem:** The `artifact_availability_gate` in `gates.py` rejected local file paths because it only accepted `http://` URIs. In local dev mode, artifacts are written to the filesystem with absolute paths like `/home/user/.../file.pdf`.
+
+**Fix:** Updated `gates.py` line 395-416 to accept:
+- `http://` and `https://` URIs (existing behavior for Azure Blob Storage)
+- `file://` URIs (with path extraction and file existence check)
+- Absolute file paths starting with `/` (Unix) or drive letter (Windows)
+- For local paths, the gate verifies the file actually exists on disk using `os.path.isfile()`
+
+**Testing:** Added 5 new tests to `tests/unit/pipeline/test_gates.py`:
+- `test_accepts_https_uri` — validates https:// URIs pass
+- `test_accepts_file_uri` — validates file:// URIs pass when file exists
+- `test_accepts_absolute_path` — validates absolute paths like /tmp/file.pdf pass
+- `test_fails_with_nonexistent_file_path` — validates non-existent paths fail
+- Updated `test_fails_with_invalid_uri` to check for broader error message
+
+All 10 artifact gate tests pass. No breaking changes.
+
+### 2026-04-20: Page Inflation Fixed — Issue #11 (Task 2)
+
+**Problem:** E2E run produced 38 pages for a 10-page source document (3.8× inflation). Root cause analysis revealed:
+1. **ToC rendering full chapter content instead of titles** — The ToC on page 2 was rendering full Devanagari chapter content (thousands of characters) instead of short chapter titles, causing the ToC to span pages 2-5.
+2. **Devanagari chapter refs used as titles** — `assemble.py` was using `chunk.chapter_ref` (original Devanagari chapter name from source) as the chapter title in both the ToC and chapter HTML `<h1>` headers.
+3. **CSS page breaks per chapter** — Each `<h1>` triggers `page-break-before: always`, which is correct for separating chapters, but the ToC overflow was adding ~3 extra pages.
+
+**Fix applied to `src/transpose/pipeline/assemble.py`:**
+
+1. **Added `_extract_chapter_title()` helper function** — Extracts English chapter title from the first translated chunk in each chapter using regex patterns:
+   - Matches "Chapter N: Title" patterns and extracts up to the separator (—)
+   - Matches title-case lines like "Introduction" or "CHAPTER 2: YOGA"
+   - Falls back to first non-empty line if no pattern matches
+   - Maximum title length check (100 chars) to avoid using paragraph text as title
+
+2. **Updated chapter assembly logic (line 84-114)** — Changed from using `chapter_title` (Devanagari) to `english_title` (extracted from translation):
+   - Renamed loop variable from `chapter_title` to `chapter_ref` for clarity
+   - Extract English title via `_extract_chapter_title(chapter_chunks, chapter_ref)`
+   - Use `english_title` in chapter HTML `<h1>` tag
+   - Use `english_title` in Manuscript chapter object
+   - Use `english_title` in ToC entries
+
+3. **Added CSS fix in `export.py`** — Added `page-break-inside: avoid` to `.toc-entry` CSS rule (line 352) to prevent individual ToC entries from breaking across pages (defensive fix, now unnecessary since titles are short).
+
+**Expected outcome after fix:**
+- **Cover:** 1 page
+- **ToC:** 1 page (short English chapter titles like "Chapter 1: Dharma and Karma")
+- **Foreword:** 1 page
+- **Chapters:** ~8 pages (5 chapters with translated English content)
+- **Glossary:** 1 page
+- **Total:** ~12 pages (well within 1.5× = 15 pages threshold)
+
+**Testing:**
+- Unit tests pass: All 16 assemble tests pass, title extraction logic validated with 3 test cases
+- Updated regression test documentation in `test_golden_reference.py` to explain expected page structure
+- **Full regression validation requires pipeline re-run** — Current PDF has old data with Devanagari ToC
+
+**Page numbering verification (Issue #11):** Reviewed CSS in `export.py` — page numbering already implements the spec:
+- Cover page: no number (line 274-276)
+- Front matter (ToC, foreword): roman numerals via `@page frontmatter` (lines 278-287)
+- Body content: arabic numerals starting from 1 via `counter-reset: page 1` (line 422)
+
+No changes needed for page numbering — already correct.
+
+**Note for next pipeline run:** The manuscript data in PostgreSQL contains Devanagari chapter refs. After this fix, re-running `assemble` + `export` stages will generate proper English titles and compact ToC, reducing page count from 38 to ~12-15 pages.
+

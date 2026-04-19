@@ -84,12 +84,16 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
     chapters: list[ManuscriptChapter] = []
     toc: list[dict] = []
 
-    for chapter_num, (chapter_title, chapter_chunks) in enumerate(
+    for chapter_num, (chapter_ref, chapter_chunks) in enumerate(
         sorted(chapters_data.items()), start=1
     ):
-        # Build chapter HTML
+        # Extract English chapter title from first translated chunk
+        # The original chapter_ref is in Devanagari; we need the English title
+        english_title = _extract_chapter_title(chapter_chunks, chapter_ref)
+        
+        # Build chapter HTML (use English title in h1)
         content_html = "<div class='chapter'>\n"
-        content_html += f"<h1>{chapter_title}</h1>\n"
+        content_html += f"<h1>{_escape_html(english_title)}</h1>\n"
 
         for item in chapter_chunks:
             chunk = item["chunk"]
@@ -105,13 +109,13 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
 
         chapter = ManuscriptChapter(
             number=chapter_num,
-            title=chapter_title,
+            title=english_title,
             content_html=content_html,
         )
         chapters.append(chapter)
 
-        # Add to TOC
-        toc.append({"chapter": chapter_num, "title": chapter_title})
+        # Add to TOC (with English title)
+        toc.append({"chapter": chapter_num, "title": english_title})
 
     # Create manuscript
     manuscript = Manuscript(
@@ -169,6 +173,54 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         table_of_contents=toc,
         foreword=foreword_text,
     )
+
+
+def _extract_chapter_title(chapter_chunks: list[dict], fallback: str) -> str:
+    """Extract English chapter title from translated content.
+    
+    Looks for patterns like "Chapter N: Title" or just uses first line.
+    Falls back to the provided fallback if extraction fails.
+    """
+    import re
+    
+    if not chapter_chunks:
+        return fallback
+    
+    # Get first translation
+    first_translation = chapter_chunks[0].get("translation")
+    if not first_translation:
+        return fallback
+    
+    text = first_translation.translated_text
+    if not text:
+        return fallback
+    
+    # Try to extract "Chapter N: Title" or "Introduction" pattern
+    lines = text.split("\n")
+    for line in lines[:3]:  # Check first 3 lines
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Match "Chapter N: Title" or "Introduction" or similar
+        chapter_match = re.match(r"^(Chapter \d+:.*?)(?:\s*—|$)", line, re.IGNORECASE)
+        if chapter_match:
+            return chapter_match.group(1).strip()
+        
+        # Check if it's a standalone title-like line (all caps or title case)
+        if re.match(r"^[A-Z][^a-z]*$", line) or re.match(r"^[A-Z][a-zA-Z\s:—-]+$", line):
+            # Remove common separator patterns
+            title = re.sub(r"\s*—.*$", "", line)
+            if len(title) < 100:  # Reasonable title length
+                return title.strip()
+    
+    # Fallback: use first non-empty line
+    for line in lines[:5]:
+        line = line.strip()
+        if line and len(line) < 100:
+            return line
+    
+    return fallback
 
 
 def _escape_html(text: str) -> str:

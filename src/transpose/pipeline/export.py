@@ -350,6 +350,7 @@ async def _generate_pdf(manuscript, glossary, book) -> bytes:
             padding: 0.5em 0;
             border-bottom: 1px dotted #ccc;
             font-size: 14pt;
+            page-break-inside: avoid;
         }}
         .glossary-term {{
             font-weight: bold;

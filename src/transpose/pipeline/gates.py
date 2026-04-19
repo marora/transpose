@@ -392,8 +392,28 @@ def artifact_availability_gate(export_output) -> GateResult:
             )
 
         # Check URI if upload was attempted (non-empty URI expected)
-        if uri and not uri.startswith("http"):
-            failures.append(f"{fmt} artifact has invalid URI: {uri}")
+        # Accept http://, https://, file://, and absolute paths
+        if uri:
+            import os
+            import urllib.parse
+            
+            is_valid = False
+            
+            # Check for http(s):// URIs (Azure Blob Storage)
+            if uri.startswith("http://") or uri.startswith("https://"):
+                is_valid = True
+            # Check for file:// URIs
+            elif uri.startswith("file://"):
+                # Extract path from file:// URI and verify it exists
+                parsed = urllib.parse.urlparse(uri)
+                local_path = urllib.parse.unquote(parsed.path)
+                is_valid = os.path.isfile(local_path)
+            # Check for absolute paths (Unix: starts with /, Windows: starts with drive letter)
+            elif uri.startswith("/") or (len(uri) > 2 and uri[1] == ":"):
+                is_valid = os.path.isfile(uri)
+            
+            if not is_valid:
+                failures.append(f"{fmt} artifact has invalid or non-existent URI: {uri}")
 
     # Check expected formats present
     for expected in ("pdf", "epub"):
