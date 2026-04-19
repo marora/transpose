@@ -204,6 +204,34 @@ Remember to output valid JSON with both translated_text and cultural_terms field
 
         return prompt
 
+    async def chat(self, prompt: str, *, temperature: float = 0.4) -> str:
+        """Send a freeform prompt and return the text response.
+
+        Used for non-translation tasks like foreword generation.
+        """
+        from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+        client = await self._get_client()
+
+        @retry(
+            retry=retry_if_exception_type((Exception,)),
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            reraise=True,
+        )
+        async def _call():
+            return await client.chat.completions.create(
+                model=self._deployment,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+            )
+
+        response = await _call()
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("Empty response from LLM")
+        return content.strip()
+
     async def close(self) -> None:
         """Release SDK resources."""
         if self._client is not None:

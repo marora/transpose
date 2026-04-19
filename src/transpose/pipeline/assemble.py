@@ -28,6 +28,7 @@ class AssembleOutput:
     chapters: list[Chapter] = field(default_factory=list)
     glossary_id: UUID | None = None
     table_of_contents: list[dict] = field(default_factory=list)
+    foreword: str | None = None
 
 
 async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-untyped-def]
@@ -127,6 +128,20 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         },
     )
 
+    # Generate Translator's Foreword using cultural terms from glossary
+    foreword_text = None
+    if glossary and glossary.entries:
+        cultural_terms = [
+            {"term": e.term, "original_script": e.original_script, "definition": e.definition}
+            for e in sorted(glossary.entries, key=lambda e: e.occurrence_count, reverse=True)
+        ]
+        try:
+            foreword_text = await _generate_foreword(ctx, book.title, cultural_terms)
+            manuscript.metadata["foreword"] = foreword_text
+            logger.info("Generated Translator's Foreword (%d chars)", len(foreword_text))
+        except Exception:
+            logger.warning("Failed to generate foreword — continuing without it", exc_info=True)
+
     await ctx.db.create_manuscript(manuscript)
 
     logger.info(f"Created manuscript with {len(chapters)} chapters")
@@ -152,6 +167,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         chapters=output_chapters,
         glossary_id=glossary_id,
         table_of_contents=toc,
+        foreword=foreword_text,
     )
 
 
@@ -163,4 +179,32 @@ def _escape_html(text: str) -> str:
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+async def _generate_foreword(ctx, book_title: str, cultural_terms: list[dict]) -> str:
+    """Generate a Translator's Foreword using the LLM.
+
+    The foreword explains the cultural translation philosophy and contextualises
+    the preserved original-language words for the reader.
+    """
+    terms_list = ", ".join(t["term"] for t in cultural_terms[:15])
+
+    prompt = (
+        f'Write a Translator\'s Foreword (250-400 words) for the '
+        f'English translation of "{book_title}".\n\n'
+        f"This foreword should:\n"
+        f"1. Explain the literary and cultural translation approach "
+        f"— not a literal translation but a cultural bridge\n"
+        f"2. Explain why certain words are preserved in their "
+        f"original language: {terms_list}\n"
+        f"3. Help the reader understand these preserved words add "
+        f"authenticity and cultural depth\n"
+        f"4. Be written in a warm, scholarly tone appropriate for "
+        f"a published eBook\n"
+        f'5. Address the reader directly ("Dear Reader" or similar)\n\n'
+        f"Write ONLY the foreword text. Do not include a title "
+        f"— it will be added separately."
+    )
+
+    return await ctx.llm.chat(prompt)
 
