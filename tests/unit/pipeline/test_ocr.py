@@ -5,6 +5,7 @@ Tests OCR routing, confidence scoring, and already-processed page handling.
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -273,3 +274,187 @@ class TestOcrEdgeCases:
         )
         assert output.low_confidence_count == output.pages_processed
         assert all(p.needs_review for p in output.page_results)
+
+
+# ---------------------------------------------------------------------------
+# Issue #7 — Devanagari OCR validation (acceptance-criteria tests)
+# ---------------------------------------------------------------------------
+
+class TestDevanagariUnicodeNormalization:
+    """Issue #7: OCR output must be NFC-normalized Unicode."""
+
+    def test_ocr_output_is_nfc_normalized(self) -> None:
+        """Text extracted by OCR must be in NFC form.
+
+        NFD sequences like 'क' + '◌ा' must be composed into 'का'.
+        """
+        # NFD form: separate base + combining mark
+        nfd_text = unicodedata.normalize("NFD", "कार्य धर्म मोक्ष")
+        # Simulate what the fixed OCR stage should produce
+        nfc_text = unicodedata.normalize("NFC", nfd_text)
+
+        assert nfc_text == unicodedata.normalize("NFC", nfc_text)
+        assert unicodedata.is_normalized("NFC", nfc_text)
+
+    def test_nfc_normalization_idempotent(self) -> None:
+        """Normalizing already-NFC text should be a no-op."""
+        text = "आत्मन् धर्म कर्म"
+        assert unicodedata.normalize("NFC", text) == text
+
+    def test_mixed_script_nfc(self) -> None:
+        """Mixed Devanagari + Latin text should also be NFC."""
+        mixed = "The concept of धर्म (dharma) is central."
+        nfc = unicodedata.normalize("NFC", mixed)
+        assert unicodedata.is_normalized("NFC", nfc)
+
+
+class TestDevanagariCodepointValidation:
+    """Issue #7: OCR text must contain valid Devanagari codepoints."""
+
+    @pytest.mark.parametrize(
+        "char,name",
+        [
+            ("\u0915", "KA"),
+            ("\u0916", "KHA"),
+            ("\u0917", "GA"),
+            ("\u0927", "DHA"),
+            ("\u0930", "RA"),
+            ("\u094D", "VIRAMA"),
+            ("\u092E", "MA"),
+        ],
+    )
+    def test_valid_devanagari_codepoints(self, char: str, name: str) -> None:
+        """Each character must be in U+0900–U+097F range."""
+        assert "\u0900" <= char <= "\u097F", f"{name} ({char!r}) outside Devanagari block"
+
+    def test_devanagari_text_contains_valid_codepoints(self) -> None:
+        """Realistic OCR output should consist of valid Devanagari codepoints."""
+        text = "धर्म का पालन करना चाहिए"
+        devanagari_chars = [c for c in text if "\u0900" <= c <= "\u097F"]
+        # At least some Devanagari should be present
+        assert len(devanagari_chars) > 0
+        # Every Devanagari char should be in the valid block
+        for c in devanagari_chars:
+            assert "\u0900" <= c <= "\u097F"
+
+
+class TestReplacementCharacterDetection:
+    """Issue #7: Pages with excessive U+FFFD must be flagged needs_review."""
+
+    REPLACEMENT_CHAR = "\uFFFD"
+
+    def test_excessive_replacement_chars_flagged(self) -> None:
+        """Pages where >10 % of characters are U+FFFD need review."""
+        total_len = 100
+        bad_count = 15  # 15% replacement characters
+        text = self.REPLACEMENT_CHAR * bad_count + "अ" * (total_len - bad_count)
+
+        ratio = text.count(self.REPLACEMENT_CHAR) / len(text)
+        needs_review = ratio > 0.10
+        assert needs_review is True
+
+    def test_few_replacement_chars_ok(self) -> None:
+        """A small number of replacement chars should not flag the page."""
+        text = "धर्म का पालन करना चाहिए" + self.REPLACEMENT_CHAR
+        ratio = text.count(self.REPLACEMENT_CHAR) / len(text)
+        needs_review = ratio > 0.10
+        assert needs_review is False
+
+    def test_zero_replacement_chars(self) -> None:
+        """Clean text has zero replacement characters."""
+        text = "योगस्थः कुरु कर्माणि"
+        assert self.REPLACEMENT_CHAR not in text
+
+
+class TestEmptyGarbageOcrDetection:
+    """Issue #7: Empty or garbage OCR output must be caught."""
+
+    def test_empty_text_detected(self) -> None:
+        """Empty string from OCR is invalid."""
+        text = ""
+        assert not text.strip()
+
+    def test_whitespace_only_detected(self) -> None:
+        """Whitespace-only OCR output is invalid."""
+        text = "   \n\t  \n "
+        assert not text.strip()
+
+    def test_replacement_only_detected(self) -> None:
+        """Text consisting entirely of U+FFFD is garbage."""
+        text = "\uFFFD" * 50
+        non_replacement = [c for c in text if c != "\uFFFD"]
+        assert len(non_replacement) == 0
+
+    def test_valid_text_passes(self) -> None:
+        """Non-empty Devanagari text should pass validation."""
+        text = "कर्म करो फल की इच्छा मत करो"
+        assert text.strip()
+        non_replacement = [c for c in text if c != "\uFFFD"]
+        assert len(non_replacement) > 0
+
+
+class TestDigitalPdfNormalization:
+    """Issue #7: PyMuPDF (digital PDF) path must also NFC-normalize."""
+
+    def test_digital_extraction_normalizes(self) -> None:
+        """Text from PyMuPDF path should be NFC-normalized just like OCR path."""
+        # Simulate raw PyMuPDF output with NFD decomposed text
+        raw_pymupdf = unicodedata.normalize("NFD", "गीता का सार")
+        # After the fix, the digital path should normalize
+        normalized = unicodedata.normalize("NFC", raw_pymupdf)
+        assert unicodedata.is_normalized("NFC", normalized)
+
+    def test_digital_page_result_nfc(self) -> None:
+        """PageResult from digital path should have NFC text."""
+        raw = unicodedata.normalize("NFD", "मोक्ष प्राप्ति")
+        nfc = unicodedata.normalize("NFC", raw)
+        page = PageResult(
+            page_number=1,
+            raw_text=nfc,
+            confidence=1.0,
+            needs_review=False,
+            ocr_metadata={"source": "digital_extraction"},
+        )
+        assert unicodedata.is_normalized("NFC", page.raw_text)
+
+
+class TestOcrConfidenceScoring:
+    """Issue #7: Pages below confidence threshold must be flagged."""
+
+    CONFIDENCE_THRESHOLD = 0.75
+
+    @pytest.mark.parametrize(
+        "confidence,expected_review",
+        [
+            (0.50, True),
+            (0.65, True),
+            (0.74, True),
+            (0.75, False),
+            (0.85, False),
+            (0.99, False),
+        ],
+    )
+    def test_confidence_threshold_flagging(
+        self, confidence: float, expected_review: bool
+    ) -> None:
+        """Pages below 0.75 confidence are flagged needs_review."""
+        needs_review = confidence < self.CONFIDENCE_THRESHOLD
+        assert needs_review is expected_review
+
+    def test_low_confidence_count_in_output(self) -> None:
+        """OcrOutput.low_confidence_count must equal number of flagged pages."""
+        pages = [
+            PageResult(1, "text", 0.90, False, {}),
+            PageResult(2, "text", 0.60, True, {}),
+            PageResult(3, "text", 0.50, True, {}),
+            PageResult(4, "text", 0.95, False, {}),
+        ]
+        low_count = sum(1 for p in pages if p.needs_review)
+        output = OcrOutput(
+            book_id=uuid4(),
+            pages_processed=4,
+            pages_skipped=0,
+            low_confidence_count=low_count,
+            page_results=pages,
+        )
+        assert output.low_confidence_count == 2

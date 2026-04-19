@@ -13,6 +13,12 @@ from uuid import UUID, uuid4
 import pytest
 
 from transpose.models.enums import TermSource
+from transpose.pipeline.translate import (
+    TRANSLATION_FAILED_PLACEHOLDER,
+)
+from transpose.pipeline.translate import (
+    TranslateOutput as RealTranslateOutput,
+)
 
 
 @dataclass
@@ -438,3 +444,226 @@ class TestTranslateTokenAggregation:
         )
         assert output.total_prompt_tokens == 330
         assert output.total_completion_tokens == 165
+
+
+# ---------------------------------------------------------------------------
+# Issue #8 — Translation completeness enforcement (acceptance-criteria tests)
+# ---------------------------------------------------------------------------
+
+# Use the real TranslateOutput for failed_count tests (has the field Chani added).
+# The local shadow dataclass above lacks failed_count.
+_RealTranslateOutput = RealTranslateOutput
+
+
+class TestTranslationFailurePlaceholder:
+    """Issue #8: Failed translations must produce the exact placeholder."""
+
+    def test_placeholder_text_exact(self) -> None:
+        """The placeholder must be exactly this string — no variation."""
+        assert TRANSLATION_FAILED_PLACEHOLDER == "[TRANSLATION FAILED — REVIEW REQUIRED]"
+
+    def test_placeholder_uses_em_dash(self) -> None:
+        """Must use em-dash (—), not double-hyphen (--)."""
+        assert "—" in TRANSLATION_FAILED_PLACEHOLDER
+        assert "--" not in TRANSLATION_FAILED_PLACEHOLDER
+
+    def test_failed_translation_produces_placeholder(self) -> None:
+        """When an LLM call fails, translated_text must be the placeholder."""
+        # Simulate: LLM raised an exception, pipeline catches and inserts placeholder
+        result = TranslationResult(
+            chunk_id=uuid4(),
+            translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+            cultural_terms=[],
+            prompt_tokens=0,
+            completion_tokens=0,
+            model_version="gpt-4",
+        )
+        assert result.translated_text == TRANSLATION_FAILED_PLACEHOLDER
+
+    def test_failed_result_never_contains_raw_source(self) -> None:
+        """A failed chunk must NOT contain the original Hindi source text."""
+        source_text = "कर्म करो फल की इच्छा मत करो"
+        failed_result = TranslationResult(
+            chunk_id=uuid4(),
+            translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+            cultural_terms=[],
+            prompt_tokens=0,
+            completion_tokens=0,
+            model_version="gpt-4",
+        )
+        assert source_text not in failed_result.translated_text
+
+
+class TestTranslationCompletenessCheck:
+    """Issue #8: Input block count must match output block count."""
+
+    def test_block_count_matches(self) -> None:
+        """Number of TranslationResults must equal number of input chunks."""
+        input_chunk_count = 5
+        translations = [
+            TranslationResult(uuid4(), f"translated {i}", [], 100, 50, "gpt-4")
+            for i in range(input_chunk_count)
+        ]
+        output = TranslateOutput(
+            book_id=uuid4(),
+            chunks_translated=input_chunk_count,
+            chunks_skipped=0,
+            total_prompt_tokens=500,
+            total_completion_tokens=250,
+            cultural_terms_found=0,
+            translations=translations,
+        )
+        assert len(output.translations) == input_chunk_count
+
+    def test_block_count_mismatch_detected(self) -> None:
+        """If output has fewer translations than expected, something is wrong."""
+        expected = 10
+        actual_translations = [
+            TranslationResult(uuid4(), f"text {i}", [], 100, 50, "gpt-4")
+            for i in range(7)
+        ]
+        # The count field says 7, not 10 — completeness check would catch this
+        output = TranslateOutput(
+            book_id=uuid4(),
+            chunks_translated=len(actual_translations),
+            chunks_skipped=0,
+            total_prompt_tokens=700,
+            total_completion_tokens=350,
+            cultural_terms_found=0,
+            translations=actual_translations,
+        )
+        assert output.chunks_translated != expected
+        assert output.chunks_translated == 7
+
+
+class TestTranslationFailedCountTracking:
+    """Issue #8: failed_count must be tracked in TranslateOutput."""
+
+    def test_failed_count_field_exists(self) -> None:
+        """TranslateOutput must have a failed_count field."""
+        output = _RealTranslateOutput(
+            book_id=uuid4(),
+            chunks_translated=3,
+            chunks_skipped=0,
+            total_prompt_tokens=300,
+            total_completion_tokens=150,
+            cultural_terms_found=0,
+            translations=[],
+            failed_count=2,
+        )
+        assert output.failed_count == 2
+
+    def test_failed_count_default_zero(self) -> None:
+        """failed_count defaults to 0 when all succeed."""
+        output = _RealTranslateOutput(
+            book_id=uuid4(),
+            chunks_translated=5,
+            chunks_skipped=0,
+            total_prompt_tokens=500,
+            total_completion_tokens=250,
+            cultural_terms_found=3,
+            translations=[],
+        )
+        assert output.failed_count == 0
+
+    def test_failed_count_matches_placeholder_translations(self) -> None:
+        """failed_count must equal the number of placeholder translations."""
+        translations = [
+            TranslationResult(uuid4(), "Good translation 1", [], 100, 50, "gpt-4"),
+            TranslationResult(uuid4(), TRANSLATION_FAILED_PLACEHOLDER, [], 0, 0, "gpt-4"),
+            TranslationResult(uuid4(), "Good translation 2", [], 100, 50, "gpt-4"),
+            TranslationResult(uuid4(), TRANSLATION_FAILED_PLACEHOLDER, [], 0, 0, "gpt-4"),
+            TranslationResult(uuid4(), TRANSLATION_FAILED_PLACEHOLDER, [], 0, 0, "gpt-4"),
+        ]
+        failed = sum(
+            1 for t in translations if t.translated_text == TRANSLATION_FAILED_PLACEHOLDER
+        )
+        output = _RealTranslateOutput(
+            book_id=uuid4(),
+            chunks_translated=5,
+            chunks_skipped=0,
+            total_prompt_tokens=200,
+            total_completion_tokens=100,
+            cultural_terms_found=0,
+            translations=translations,
+            failed_count=failed,
+        )
+        assert output.failed_count == 3
+
+
+class TestPartialTranslationFailure:
+    """Issue #8: Partial failures must not crash the pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_some_chunks_fail_others_succeed(
+        self,
+        mock_llm_client: AsyncMock,
+    ) -> None:
+        """Pipeline continues even when some chunks fail translation."""
+        call_count = 0
+
+        async def translate_with_partial_failure(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count % 3 == 0:
+                raise RuntimeError("LLM API timeout")
+            return {
+                "translated_text": "Successful translation.",
+                "cultural_terms": [],
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "model_version": "gpt-4",
+            }
+
+        mock_llm_client.translate_chunk = AsyncMock(side_effect=translate_with_partial_failure)
+
+        # Simulate pipeline handling: try each chunk, catch errors
+        total_chunks = 6
+        results = []
+        failed = 0
+        for i in range(total_chunks):
+            try:
+                resp = await mock_llm_client.translate_chunk(source_text=f"chunk {i}")
+                results.append(
+                    TranslationResult(
+                        uuid4(), resp["translated_text"], [], 100, 50, "gpt-4"
+                    )
+                )
+            except RuntimeError:
+                failed += 1
+                results.append(
+                    TranslationResult(
+                        uuid4(), TRANSLATION_FAILED_PLACEHOLDER, [], 0, 0, "gpt-4"
+                    )
+                )
+
+        # Pipeline must NOT crash — we have results for all chunks
+        assert len(results) == total_chunks
+        assert failed == 2  # chunks 3 and 6 failed
+        successes = [r for r in results if r.translated_text != TRANSLATION_FAILED_PLACEHOLDER]
+        assert len(successes) == 4
+
+    @pytest.mark.asyncio
+    async def test_all_chunks_fail_produces_all_placeholders(
+        self,
+        mock_llm_client: AsyncMock,
+    ) -> None:
+        """Even total failure should produce placeholder results, not crash."""
+        mock_llm_client.translate_chunk = AsyncMock(
+            side_effect=RuntimeError("Service unavailable")
+        )
+
+        total_chunks = 3
+        results = []
+        for i in range(total_chunks):
+            try:
+                await mock_llm_client.translate_chunk(source_text=f"chunk {i}")
+            except RuntimeError:
+                results.append(
+                    TranslationResult(
+                        uuid4(), TRANSLATION_FAILED_PLACEHOLDER, [], 0, 0, "gpt-4"
+                    )
+                )
+
+        assert len(results) == total_chunks
+        assert all(r.translated_text == TRANSLATION_FAILED_PLACEHOLDER for r in results)

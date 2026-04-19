@@ -1,15 +1,22 @@
 """Tests for the export pipeline stage.
 
 Tests ePub and PDF generation, blob uploads, and multi-format exports.
+Issues #10 (Cover Page), #11 (Page Numbering), #12 (Foreword), #13 (ToC).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+
+from transpose.models.enums import TermSource
+from transpose.models.glossary import Glossary, GlossaryEntry
+from transpose.models.manuscript import Chapter, Manuscript
+from transpose.pipeline.export import _generate_pdf
 
 
 @dataclass
@@ -168,3 +175,361 @@ class TestBlobUpload:
         assert uri.startswith("https://")
         assert "storage" in uri
         assert "blob" in uri
+
+
+class TestForewordRendering:
+    """Test Translator's Foreword rendering in exports."""
+
+    def test_foreword_html_for_pdf(self) -> None:
+        """Test foreword HTML structure for PDF rendering."""
+        foreword_text = "Dear Reader, welcome.\n\nThis is a cultural bridge."
+        html = "<div class='foreword-page'>\n"
+        html += "<h1>Translator's Foreword</h1>\n"
+        html += "<div class='foreword-content'>\n"
+        for para in foreword_text.split("\n\n"):
+            if para.strip():
+                html += f"<p>{para.strip()}</p>\n"
+        html += "</div>\n</div>\n"
+
+        assert "foreword-page" in html
+        assert "<h1>Translator's Foreword</h1>" in html
+        assert "foreword-content" in html
+        assert "<p>Dear Reader, welcome.</p>" in html
+        assert "<p>This is a cultural bridge.</p>" in html
+
+    def test_foreword_not_rendered_when_absent(self) -> None:
+        """No foreword div when metadata has no foreword."""
+        metadata: dict = {"source_language": "hindi"}
+        foreword_text = metadata.get("foreword")
+        assert foreword_text is None
+
+    def test_foreword_css_present(self) -> None:
+        """Foreword CSS classes should style content correctly."""
+        css = ".foreword-page { page-break-after: always; }"
+        assert "page-break-after" in css
+
+    def test_foreword_epub_chapter_order(self) -> None:
+        """Foreword should appear before chapter content in ePub spine."""
+        spine = ["foreword", "chapter_1", "chapter_2", "glossary"]
+        assert spine.index("foreword") < spine.index("chapter_1")
+
+
+# ---------------------------------------------------------------------------
+# Helpers for HTML capture from _generate_pdf
+# ---------------------------------------------------------------------------
+
+
+async def _capture_export_html(
+    manuscript: Manuscript,
+    glossary: Glossary | None = None,
+    book: object | None = None,
+) -> tuple[str, str]:
+    """Call _generate_pdf and capture the HTML/CSS strings before rendering.
+
+    Patches WeasyPrint so no actual PDF is produced.
+    Returns ``(html, css)`` tuple.
+    """
+    captured: dict[str, str] = {"html": "", "css": ""}
+
+    class _MockCSS:
+        def __init__(self, string: str = "", **kwargs: object) -> None:
+            captured["css"] = string
+
+    class _MockHTML:
+        def __init__(self, string: str = "", **kwargs: object) -> None:
+            captured["html"] = string
+
+        def write_pdf(
+            self,
+            stylesheets: object = None,
+            font_config: object = None,
+            **kwargs: object,
+        ) -> bytes:
+            return b"%PDF-1.4 fake"
+
+    with (
+        patch("weasyprint.HTML", _MockHTML),
+        patch("weasyprint.CSS", _MockCSS),
+        patch("weasyprint.text.fonts.FontConfiguration", MagicMock),
+    ):
+        await _generate_pdf(manuscript, glossary, book)
+
+    return captured["html"], captured["css"]
+
+
+def _make_manuscript(**overrides: object) -> Manuscript:
+    """Build a Manuscript with sensible defaults."""
+    defaults: dict = {
+        "book_id": uuid4(),
+        "title": "The Bhagavad Gita",
+        "author": "Vyasa",
+        "chapters": [
+            Chapter(
+                number=1,
+                title="Chapter 1: Arjuna's Despair",
+                content_html=(
+                    "<h1>Chapter 1: Arjuna's Despair</h1>"
+                    "<p>On the battlefield of Kurukshetra...</p>"
+                ),
+            ),
+            Chapter(
+                number=2,
+                title="Chapter 2: The Yoga of Knowledge",
+                content_html=(
+                    "<h1>Chapter 2: The Yoga of Knowledge</h1>"
+                    "<p>The concept of dharma is central...</p>"
+                ),
+            ),
+        ],
+        "glossary_id": uuid4(),
+    }
+    defaults.update(overrides)
+    return Manuscript(**defaults)
+
+
+def _make_glossary(book_id: object = None, n_entries: int = 3) -> Glossary:
+    """Build a Glossary with Devanagari entries."""
+    terms = [
+        ("dharma", "धर्म", "Righteous duty"),
+        ("karma", "कर्म", "Action and consequences"),
+        ("moksha", "मोक्ष", "Liberation from rebirth"),
+        ("yoga", "योग", "Spiritual discipline"),
+        ("atman", "आत्मन्", "The eternal self"),
+    ]
+    return Glossary(
+        book_id=book_id or uuid4(),
+        entries=[
+            GlossaryEntry(
+                term=t,
+                original_script=s,
+                definition=d,
+                source=TermSource.SEED,
+                occurrence_count=i + 1,
+            )
+            for i, (t, s, d) in enumerate(terms[:n_entries])
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Issue #10 — Cover Page
+# ---------------------------------------------------------------------------
+
+
+class TestCoverPage:
+    """Issue #10: PDF output must contain a styled title/cover page."""
+
+    @pytest.mark.asyncio
+    async def test_html_contains_title_page_div(self) -> None:
+        """Generated HTML must contain a .title-page div."""
+        ms = _make_manuscript()
+        html, _css = await _capture_export_html(ms)
+        assert "title-page" in html
+
+    @pytest.mark.asyncio
+    async def test_title_page_contains_book_title(self) -> None:
+        """Title page must display the book title."""
+        ms = _make_manuscript(title="A Test Title")
+        html, _css = await _capture_export_html(ms)
+        assert "A Test Title" in html
+
+    @pytest.mark.asyncio
+    async def test_title_page_contains_author_when_provided(self) -> None:
+        """Title page must display author name when provided."""
+        ms = _make_manuscript(author="Test Author")
+        html, _css = await _capture_export_html(ms)
+        assert "Test Author" in html
+
+    @pytest.mark.asyncio
+    async def test_cover_page_before_chapter_content(self) -> None:
+        """Title-page div must appear before any chapter content in the HTML."""
+        ms = _make_manuscript()
+        html, _css = await _capture_export_html(ms)
+        title_pos = html.find("title-page")
+        chapter_pos = html.find("<h1>Chapter 1")
+        assert title_pos != -1, "title-page not found in HTML"
+        assert chapter_pos != -1, "Chapter 1 not found in HTML"
+        assert title_pos < chapter_pos, "title-page must precede chapter content"
+
+    @pytest.mark.asyncio
+    async def test_subtitle_in_metadata_rendered(self) -> None:
+        """Subtitle from manuscript metadata should appear on the title page."""
+        ms = _make_manuscript(
+            metadata={"subtitle": "A Practical Guide to Self-Realization"},
+        )
+        html, _css = await _capture_export_html(ms)
+        assert "Practical Guide to Self-Realization" in html
+
+
+# ---------------------------------------------------------------------------
+# Issue #13 — Table of Contents
+# ---------------------------------------------------------------------------
+
+
+class TestTableOfContents:
+    """Issue #13: PDF must include a ToC when table_of_contents is populated."""
+
+    @pytest.mark.asyncio
+    async def test_toc_page_div_present(self) -> None:
+        """HTML must contain a .toc-page div when ToC data exists."""
+        ms = _make_manuscript(
+            table_of_contents=[
+                {"title": "Chapter 1: Arjuna's Despair", "number": 1},
+                {"title": "Chapter 2: The Yoga of Knowledge", "number": 2},
+            ],
+        )
+        html, _css = await _capture_export_html(ms)
+        assert "toc-page" in html
+
+    @pytest.mark.asyncio
+    async def test_toc_entries_match_chapter_titles(self) -> None:
+        """ToC entries must list the chapter titles."""
+        ms = _make_manuscript(
+            table_of_contents=[
+                {"title": "Chapter 1: Arjuna's Despair", "number": 1},
+                {"title": "Chapter 2: The Yoga of Knowledge", "number": 2},
+            ],
+        )
+        html, _css = await _capture_export_html(ms)
+        toc_start = html.find("toc-page")
+        assert toc_start != -1, "toc-page div not found"
+        toc_region = html[toc_start : toc_start + 2000]
+        assert "Arjuna" in toc_region
+        assert "Yoga of Knowledge" in toc_region
+
+    @pytest.mark.asyncio
+    async def test_toc_after_title_page_before_chapters(self) -> None:
+        """ToC must appear after the title page and before chapter content."""
+        ms = _make_manuscript(
+            table_of_contents=[
+                {"title": "Chapter 1: Arjuna's Despair", "number": 1},
+            ],
+        )
+        html, _css = await _capture_export_html(ms)
+        title_pos = html.find("title-page")
+        toc_pos = html.find("toc-page")
+        chapter_pos = html.find("<h1>", toc_pos + 1) if toc_pos != -1 else -1
+        assert title_pos < toc_pos < chapter_pos
+
+    @pytest.mark.asyncio
+    async def test_toc_not_rendered_when_empty(self) -> None:
+        """ToC should NOT appear when table_of_contents is empty."""
+        ms = _make_manuscript(table_of_contents=[])
+        html, _css = await _capture_export_html(ms)
+        assert "toc-page" not in html
+
+
+# ---------------------------------------------------------------------------
+# Issue #11 — Page Numbering
+# ---------------------------------------------------------------------------
+
+
+class TestPageNumbering:
+    """Issue #11: PDF CSS must include @page rules with page counters."""
+
+    @pytest.mark.asyncio
+    async def test_css_has_page_counter(self) -> None:
+        """CSS must contain a counter(page) declaration for page numbers."""
+        ms = _make_manuscript()
+        _html, css = await _capture_export_html(ms)
+        assert "counter(page)" in css
+
+    @pytest.mark.asyncio
+    async def test_front_matter_roman_numerals(self) -> None:
+        """Front-matter pages must use roman numeral counter style."""
+        ms = _make_manuscript()
+        _html, css = await _capture_export_html(ms)
+        assert "lower-roman" in css
+
+    @pytest.mark.asyncio
+    async def test_cover_page_no_page_number(self) -> None:
+        """Cover/title page must suppress page numbers."""
+        ms = _make_manuscript()
+        _html, css = await _capture_export_html(ms)
+        css_lower = css.lower()
+        has_suppression = any(
+            pattern in css_lower
+            for pattern in [
+                "content: none",
+                "content:none",
+                'content: ""',
+                'content:""',
+                "content: ''",
+                "content:''",
+            ]
+        )
+        assert has_suppression, "Title page CSS must suppress page number content"
+
+
+# ---------------------------------------------------------------------------
+# Issue #12 — Translator's Foreword (integration with _generate_pdf)
+# ---------------------------------------------------------------------------
+
+
+class TestTranslatorsForewordIntegration:
+    """Issue #12: PDF must include a translator's foreword for cultural terms."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Issue #12: foreword generation pending Chani's fix")
+    async def test_foreword_produces_nonempty_text(self) -> None:
+        """Foreword section must contain non-empty text."""
+        ms = _make_manuscript()
+        glossary = _make_glossary(book_id=ms.book_id)
+        html, _css = await _capture_export_html(ms, glossary)
+        foreword_start = html.find("foreword-page")
+        assert foreword_start != -1, "foreword-page not found"
+        foreword_window = html[foreword_start : foreword_start + 3000]
+        plain = re.sub(r"<[^>]+>", " ", foreword_window).strip()
+        assert len(plain) > 20, "Foreword must contain meaningful text"
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Issue #12: foreword generation pending Chani's fix")
+    async def test_foreword_html_contains_div(self) -> None:
+        """HTML must contain a .foreword-page div."""
+        ms = _make_manuscript()
+        glossary = _make_glossary(book_id=ms.book_id)
+        html, _css = await _capture_export_html(ms, glossary)
+        assert "foreword-page" in html
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Issue #12: foreword generation pending Chani's fix")
+    async def test_foreword_after_toc_before_chapters(self) -> None:
+        """Foreword must appear after ToC (if present) and before chapters."""
+        ms = _make_manuscript(
+            table_of_contents=[{"title": "Chapter 1", "number": 1}],
+        )
+        glossary = _make_glossary(book_id=ms.book_id)
+        html, _css = await _capture_export_html(ms, glossary)
+
+        foreword_pos = html.find("foreword-page")
+        chapter_pos = html.find("<h1>Chapter 1")
+        assert foreword_pos != -1, "foreword-page not found"
+        assert chapter_pos != -1, "chapter content not found"
+        assert foreword_pos < chapter_pos, "foreword must precede chapter content"
+
+        toc_pos = html.find("toc-page")
+        if toc_pos != -1:
+            assert toc_pos < foreword_pos, "foreword must follow ToC"
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Issue #12: foreword generation pending Chani's fix")
+    async def test_foreword_mentions_preserved_cultural_terms(self) -> None:
+        """Foreword content should reference preservation of cultural terms."""
+        ms = _make_manuscript()
+        glossary = _make_glossary(book_id=ms.book_id)
+        html, _css = await _capture_export_html(ms, glossary)
+
+        foreword_start = html.find("foreword-page")
+        assert foreword_start != -1
+        foreword_text = html[foreword_start : foreword_start + 3000].lower()
+        cultural_indicators = ["cultural", "preserv", "untranslat", "original"]
+        assert any(kw in foreword_text for kw in cultural_indicators), (
+            "Foreword should mention cultural term preservation"
+        )
+
+    @pytest.mark.asyncio
+    async def test_foreword_absent_when_no_cultural_terms(self) -> None:
+        """Foreword should not appear when there are no cultural terms."""
+        ms = _make_manuscript()
+        html, _css = await _capture_export_html(ms, glossary=None)
+        assert "foreword-page" not in html

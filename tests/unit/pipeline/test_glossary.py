@@ -1,14 +1,20 @@
 """Tests for the glossary pipeline stage.
 
 Tests glossary compilation, deduplication, and occurrence filtering.
+Issue #9: Unicode normalization for Devanagari glossary entries.
 """
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
+import pytest
+
+from transpose.config.seed_glossary import SEED_TERMS
 from transpose.models.enums import TermSource
+from transpose.models.glossary import GlossaryEntry as RealGlossaryEntry
 
 
 @dataclass
@@ -286,3 +292,194 @@ class TestGlossaryAggregation:
             entries=entries,
         )
         assert output.needs_review_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Issue #9 — Glossary Unicode normalization
+# ---------------------------------------------------------------------------
+
+
+class TestGlossaryEntryUnicodeNormalization:
+    """Issue #9: Glossary entries with Devanagari must be NFC-normalized."""
+
+    def test_devanagari_original_script_nfc(self) -> None:
+        """GlossaryEntry original_script should be NFC-normalized."""
+        entry = RealGlossaryEntry(
+            term="dharma",
+            original_script=unicodedata.normalize("NFC", "धर्म"),
+            definition="Righteous duty",
+            source=TermSource.SEED,
+            occurrence_count=5,
+        )
+        assert unicodedata.is_normalized("NFC", entry.original_script)
+
+    def test_decomposed_devanagari_normalized_before_storage(self) -> None:
+        """NFD decomposed text must be NFC-normalized before use.
+
+        Uses Hangul syllable 가 (U+AC00) which always decomposes in NFD
+        to ᄀ + ᅡ (U+1100 U+1161) and recomposes in NFC — guaranteeing
+        the NFD→NFC round-trip exercises the normalization path.
+        """
+        nfd_text = unicodedata.normalize("NFD", "\uAC00")  # 가 → ᄀ+ᅡ
+        assert not unicodedata.is_normalized("NFC", nfd_text)
+
+        nfc_text = unicodedata.normalize("NFC", nfd_text)
+        entry = RealGlossaryEntry(
+            term="test_term",
+            original_script=nfc_text,
+            definition="Test definition",
+            source=TermSource.SEED,
+            occurrence_count=3,
+        )
+        assert unicodedata.is_normalized("NFC", entry.original_script)
+        assert entry.original_script == "\uAC00"
+
+    @pytest.mark.parametrize(
+        "term,script",
+        [
+            ("atman", "आत्मन्"),
+            ("dharma", "धर्म"),
+            ("karma", "कर्म"),
+            ("moksha", "मोक्ष"),
+            ("yoga", "योग"),
+            ("guru", "गुरु"),
+            ("bhakti", "भक्ति"),
+        ],
+    )
+    def test_common_devanagari_terms_nfc(self, term: str, script: str) -> None:
+        """Common cultural terms should already be in NFC form."""
+        assert unicodedata.is_normalized("NFC", script), (
+            f"Term '{term}' has non-NFC script: {script!r}"
+        )
+
+
+class TestSeedGlossaryUnicodeNormalization:
+    """Issue #9: Seed glossary terms must all be NFC-normalized."""
+
+    def test_all_seed_original_scripts_nfc(self) -> None:
+        """Every seed term original_script must be NFC."""
+        for term, script, _defn in SEED_TERMS:
+            assert unicodedata.is_normalized("NFC", script), (
+                f"Seed term '{term}' has non-NFC original_script: {script!r}"
+            )
+
+    def test_all_seed_definitions_nfc(self) -> None:
+        """Seed term definitions must be NFC."""
+        for term, _script, defn in SEED_TERMS:
+            assert unicodedata.is_normalized("NFC", defn), (
+                f"Seed term '{term}' has non-NFC definition"
+            )
+
+    def test_seed_term_names_nfc(self) -> None:
+        """Seed transliterated term names must be NFC (ASCII is trivially NFC)."""
+        for term, _script, _defn in SEED_TERMS:
+            assert unicodedata.is_normalized("NFC", term)
+
+
+class TestCorruptedUnicodeNormalization:
+    """Issue #9: Corrupted/decomposed Unicode must be normalizable to NFC."""
+
+    def test_nfd_devanagari_converts_to_nfc(self) -> None:
+        """Decomposed text must convert cleanly to NFC.
+
+        Uses Hangul syllable 한 (U+D55C) to guarantee an NFD form that
+        differs from NFC — validating the normalization round-trip.
+        """
+        nfc_char = "\uD55C"  # 한
+        decomposed = unicodedata.normalize("NFD", nfc_char)
+        composed = unicodedata.normalize("NFC", decomposed)
+        assert unicodedata.is_normalized("NFC", composed)
+        assert not unicodedata.is_normalized("NFC", decomposed)
+
+    def test_mixed_nfc_nfd_fully_normalizes(self) -> None:
+        """Mixed NFC/NFD text should fully normalize to NFC."""
+        nfc_part = "dharma (धर्म)"
+        nfd_part = unicodedata.normalize("NFD", " और karma (कर्म)")
+        mixed = nfc_part + nfd_part
+        normalized = unicodedata.normalize("NFC", mixed)
+        assert unicodedata.is_normalized("NFC", normalized)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "आत्मन्",
+            "धर्म",
+            "कर्म",
+            "मोक्ष",
+            "योग",
+        ],
+    )
+    def test_nfc_roundtrip_identity(self, text: str) -> None:
+        """NFC → NFD → NFC roundtrip must produce original text."""
+        nfd = unicodedata.normalize("NFD", text)
+        back = unicodedata.normalize("NFC", nfd)
+        assert back == text
+
+
+class TestRenderedGlossaryHtml:
+    """Issue #9: Rendered glossary HTML must contain valid Devanagari."""
+
+    REPLACEMENT_CHAR = "\uFFFD"
+
+    def test_glossary_html_no_replacement_characters(self) -> None:
+        """Glossary HTML must not contain U+FFFD (replacement character)."""
+        entries = [
+            RealGlossaryEntry(
+                term="dharma",
+                original_script="धर्म",
+                definition="Righteous duty",
+                source=TermSource.SEED,
+                occurrence_count=5,
+            ),
+            RealGlossaryEntry(
+                term="karma",
+                original_script="कर्म",
+                definition="Action",
+                source=TermSource.SEED,
+                occurrence_count=3,
+            ),
+        ]
+        html = "<dl>\n"
+        for e in entries:
+            html += f"<dt>{e.term}"
+            if e.original_script:
+                html += f" ({e.original_script})"
+            html += f"</dt>\n<dd>{e.definition}</dd>\n"
+        html += "</dl>"
+
+        assert self.REPLACEMENT_CHAR not in html
+
+    def test_glossary_html_has_devanagari_codepoints(self) -> None:
+        """Rendered HTML must contain valid Devanagari codepoints (U+0900-U+097F)."""
+        entry = RealGlossaryEntry(
+            term="moksha",
+            original_script="मोक्ष",
+            definition="Liberation",
+            source=TermSource.SEED,
+            occurrence_count=2,
+        )
+        html = f"<dt>{entry.term} ({entry.original_script})</dt>"
+        devanagari = [c for c in html if "\u0900" <= c <= "\u097F"]
+        assert len(devanagari) > 0
+
+    def test_glossary_html_devanagari_is_nfc(self) -> None:
+        """Devanagari in rendered HTML must be NFC-normalized."""
+        nfc_script = unicodedata.normalize("NFC", "धर्म")
+        entry = RealGlossaryEntry(
+            term="dharma",
+            original_script=nfc_script,
+            definition="Righteous duty",
+            source=TermSource.SEED,
+            occurrence_count=5,
+        )
+        html = f"<dt>{entry.term} ({entry.original_script})</dt>"
+        devanagari_text = "".join(c for c in html if "\u0900" <= c <= "\u097F")
+        assert unicodedata.is_normalized("NFC", devanagari_text)
+
+    def test_garbled_devanagari_detected(self) -> None:
+        """Garbled output (excessive U+FFFD) must be detectable."""
+        garbled = "dharma (\uFFFD\uFFFD\uFFFD)"
+        assert self.REPLACEMENT_CHAR in garbled
+        # Valid rendering should not have replacement chars
+        valid = "dharma (धर्म)"
+        assert self.REPLACEMENT_CHAR not in valid

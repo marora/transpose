@@ -37,6 +37,7 @@ class AssembleOutput:
     chapters: list[Chapter]
     glossary_id: UUID
     table_of_contents: list[dict] = field(default_factory=list)
+    foreword: str | None = None
 
 
 class TestAssembleContract:
@@ -221,3 +222,34 @@ class TestAssembleEdgeCases:
         )
         
         assert output.author is None
+
+
+class TestForewordGeneration:
+    """Test Translator's Foreword generation in assemble stage."""
+
+    def test_assemble_output_foreword_field_defaults_none(self) -> None:
+        """AssembleOutput.foreword defaults to None."""
+        output = AssembleOutput(
+            book_id=uuid4(),
+            manuscript_id=uuid4(),
+            title="Test",
+            author=None,
+            chapters=[],
+            glossary_id=uuid4(),
+        )
+        assert output.foreword is None
+
+    def test_assemble_output_with_foreword(self) -> None:
+        """AssembleOutput can carry foreword text."""
+        foreword = "Dear Reader, this translation preserves dharma..."
+        output = AssembleOutput(
+            book_id=uuid4(),
+            manuscript_id=uuid4(),
+            title="Test",
+            author="Author",
+            chapters=[],
+            glossary_id=uuid4(),
+            foreword=foreword,
+        )
+        assert output.foreword == foreword
+        assert "Dear Reader" in output.foreword
