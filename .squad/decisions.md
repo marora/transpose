@@ -184,6 +184,68 @@ User's name is **Manish**, not Mani. All team references and documentation use "
 
 ---
 
+### Decision: PDF/ePub Export Enhancements — Cover, ToC, Page Numbering
+
+**Author:** Chani  
+**Date:** 2026-04-19  
+**Status:** Active  
+
+Enhanced PDF and ePub export with three tightly coupled features:
+
+1. **Cover page** uses styled title (32pt), optional subtitle from `manuscript.metadata["subtitle"]`, decorative separator, and author. ePub gets a dedicated `cover.xhtml` as the first spine entry.
+
+2. **Table of Contents** page renders `manuscript.table_of_contents` (built by assemble stage) between cover and first chapter. Only appears when ToC data exists. ePub ToC uses ebooklib's built-in NCX/Nav — no custom rendering needed.
+
+3. **Page numbering** via CSS `@page` counters: no number on cover, roman numerals on front matter (ToC), arabic from chapter 1 onward via counter-reset div.
+
+**Key constraints:**
+- Title page `padding-top` stays at 3cm (not 5cm) to prevent overflow on long titles
+- Subtitle is opt-in via metadata, not auto-detected
+- All three features share CSS and HTML ordering — must be changed together
+- Devanagari font embedding (`@font-face` + `FontConfiguration`) is untouched
+
+**Impact:** Thufir — visual regression tests may need updating if ToC data is added to test manuscripts (currently `table_of_contents` defaults to empty, so ToC page doesn't render in existing tests). All 223 tests pass as-is.
+
+---
+
+### Decision: Translator's Foreword — LLM-Generated Front Matter (Issue #12)
+
+**Author:** Chani  
+**Date:** 2026-04-19  
+**Status:** Active  
+
+Auto-generated Translator's Foreword added to the assemble/export pipeline. The foreword is generated via `LlmClient.chat()` using the top 15 cultural terms from the glossary. It is stored in `manuscript.metadata["foreword"]` (not a new model field) so it can be edited post-generation without schema changes.
+
+**Key decisions:**
+1. Foreword stored in metadata dict — avoids Manuscript model/DB migration, remains editable
+2. `LlmClient.chat()` added as generic freeform prompt method — reusable for future tasks (e.g., back-cover blurb)
+3. Foreword generation is non-fatal — failure logs a warning and produces output without foreword
+4. Placement: after TOC, before Chapter 1 (front matter) in both ePub and PDF
+5. ePub gets a separate `foreword.xhtml` in the spine; PDF gets a `foreword-page` div with page-break-after
+
+**Impact:**
+- **Thufir:** 6 new tests added (2 assemble, 4 export). Visual regression tests may want a foreword-specific PDF test.
+- **Idaho:** No infra changes needed.
+- **Stilgar:** No architecture change — foreword is an optional enrichment step within the existing assemble stage.
+
+---
+
+### Decision: Defense-in-Depth NFC Normalization for Indic Script (Issue #9)
+
+**Author:** Chani  
+**Date:** 2026-04-19  
+**Status:** Active  
+
+Every pipeline stage that touches `original_script` (Devanagari/Gurmukhi) text now independently applies `unicodedata.normalize('NFC', text)` before storing or rendering. Shared helper lives in `src/transpose/utils/unicode.py`.
+
+**Touchpoints:** translate.py (extraction), glossary.py (aggregation), export.py (ePub + PDF rendering), seed_glossary.py (seed read).
+
+**Rationale:** NFC normalization is idempotent and near-zero cost. By normalizing at every layer boundary, we guarantee correct rendering regardless of whether upstream stages (OCR, LLM, seed data, future integrations) emit NFC or NFD. This eliminates an entire class of "text looks garbled" bugs.
+
+**Impact:** Fixes issue #9. No model or interface changes. All 223 tests pass.
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
