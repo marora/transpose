@@ -77,6 +77,8 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "integration: marks tests as integration tests (may require external services)",
+    "regression: golden-reference regression tests (require pipeline output)",
+    "slow: tests that are slow or need a full pipeline run",
 ]
 
 [tool.mypy]

@@ -9,3 +9,8 @@
 .env
 *.env
 __pycache__/
+
+# Pipeline output artifacts
+*.pdf
+*.epub
+test-visual-output.*

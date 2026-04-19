@@ -1,0 +1,29 @@
+{
+  "title": "Test Hindi Book",
+  "subtitle": "Hindi Literature and Culture — Test Booklet",
+  "chapter_count": 10,
+  "chapters": [
+    {"number": 1, "title_contains": "Poetry"},
+    {"number": 2, "title_contains": "Prose"},
+    {"number": 3, "title_contains": "Drama"},
+    {"number": 4, "title_contains": "Folk"},
+    {"number": 5, "title_contains": "Devotional"},
+    {"number": 6, "title_contains": "Modern"},
+    {"number": 7, "title_contains": "Philosophy"},
+    {"number": 8, "title_contains": "Mythology"},
+    {"number": 9, "title_contains": "Cultural"},
+    {"number": 10, "title_contains": "Legacy"}
+  ],
+  "has_foreword": true,
+  "has_toc": true,
+  "has_glossary": true,
+  "glossary_min_entries": 40,
+  "glossary_preserved_terms": [
+    "atman",
+    "dharma",
+    "karma",
+    "brahman",
+    "moksha",
+    "samsara"
+  ]
+}

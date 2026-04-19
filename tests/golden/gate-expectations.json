@@ -1,0 +1,7 @@
+{
+  "ocr_sanity": "PASS",
+  "translation_completeness": "PASS",
+  "glossary_integrity": "PASS",
+  "document_structure": "PASS",
+  "artifact_availability": "PASS"
+}

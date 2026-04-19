@@ -22,3 +22,11 @@
 - **Observability:** OpenTelemetry traces + custom metrics defined in `src/transpose/observability/metrics.py`
 - **DB:** PostgreSQL with UUID PKs, JSONB for flexible metadata, unique constraints for idempotency. Schema in `docs/architecture.md`.
 - **Redis:** Pipeline status, progress, distributed locks, chunk cache. All ephemeral — losing Redis loses nothing permanent.
+
+### 2025-07-18 — Governance Reset
+
+- **Definition of Done is proof-based.** Nothing is "done" without generated artifacts (PDF + ePub), stable download links, a validation report, and all 5 quality gates passing. Claims without proof are open items.
+- **5 blocking quality gates:** OCR Sanity → Translation Completeness → Glossary Integrity → Document Structure → Artifact Availability. Sequential, fail-fast. Each gate has specific pass/fail criteria and produces machine-readable JSON.
+- **Quality ownership assigned:** Thufir owns gates (can block PRs), Idaho owns artifacts/publishing/observability/security. No shared ownership.
+- **CI enforcement:** Every PR runs all gates. Bot posts artifact links + validation report + gate summary. Any failure blocks merge. JSON reports enable automation.
+- **Governance files live in `.squad/quality/`:** `definition-of-done.md`, `gates.md`, `ownership.md`, `ci-gates.md`. Decision recorded in `.squad/decisions/inbox/stilgar-governance-reset.md`.

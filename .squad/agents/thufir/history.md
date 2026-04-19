@@ -123,3 +123,39 @@ Wrote tests validating fixes for five issues filed during export stage review.
 - Chani already implemented Issues #10, #11, #13 — removed xfail markers from 7 tests that pass.
 - `_capture_export_html()` helper patches WeasyPrint lazy imports inside `_generate_pdf` to intercept built HTML/CSS.
 - Suite total: 265 passed, 4 xfailed (Issue #12 foreword), ruff clean.
+
+### Session 2026-04-19: Golden Reference QA & Regression Tests
+
+**Delivered:** Golden reference data + 56 new tests (36 gate unit tests, 20 regression tests) across 4 new files, 3 golden data files, plus pytest marker config.
+
+**Golden Reference Data (`tests/golden/`):**
+- `expected-structure.json` — 10-chapter document structure with title fragments, front/back matter flags
+- `expected-glossary.json` — 42 glossary entries with Devanagari (NFC) + English definitions, sourced from seed_glossary.py
+- `gate-expectations.json` — all 5 quality gates expected to PASS
+- `README.md` — explains golden data lifecycle and update process
+
+**Regression Tests (`tests/regression/test_golden_reference.py`) — 20 tests:**
+- Document structure: chapter count, title fragments, sequential numbering, foreword/ToC presence
+- Glossary: preserved terms present, NFC exact match on Devanagari, definition keyword checks
+- Gate expectations: all 5 gates PASS, all gate names present
+- Source text leak: regex detects Devanagari sentences, allows inline preserved terms
+- Artifact sizes: PDF 50KB–2MB, ePub 10KB–500KB, non-empty checks
+- Page count: output ≤ 1.5× source pages — **correctly catches known 3.8× inflation bug** (38 pages for 10-page source)
+
+**Gate Unit Tests (`tests/unit/pipeline/test_gates.py`) — 36 tests:**
+- GateResult: constructor, serialization (asdict), timestamp auto-population
+- QualityGateError: inheritance, gate_result attachment, str representation
+- OCR sanity (6 tests): good Hindi pass, empty trivial pass, replacement chars fail, low density fail, low confidence fail, mixed quality pass
+- Translation completeness (5 tests): all translated pass, high failure ratio fail, marker fail, Devanagari passthrough fail, empty pass
+- Glossary integrity (5 tests): NFC pass, NFD fail (skipped for composition-excluded chars), U+FFFD fail, Latin-in-script fail, empty fail
+- Document structure (7 tests): valid pass, empty chapters, no title fail, short/no foreword fail, ToC mismatch fail, non-sequential fail
+- Artifact availability (6 tests): both present pass, missing PDF/ePub fail, both missing fail, too small fail, invalid URI fail
+
+**Key Decisions:**
+- Tests use `SimpleNamespace` to match Chani's `getattr()`-based gate interface (not dicts)
+- Gate tests import from real `transpose.pipeline.gates` — Chani's implementation already landed
+- Regression tests marked `@pytest.mark.regression` and `@pytest.mark.slow` (markers registered in pyproject.toml)
+- Page count regression test is intentionally failing — proves the test catches real bugs
+- Golden glossary sourced from `seed_glossary.py` SEED_TERMS with NFC-normalized Devanagari
+
+**Status:** 320 passed, 1 skipped, 4 xfailed, 1 expected regression failure (page inflation), 1 pre-existing env failure. All ruff clean.
