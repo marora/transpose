@@ -193,3 +193,39 @@ Wrote tests validating fixes for five issues filed during export stage review.
 - Visual regression tests (PyMuPDF) catch PDF layout issues (overflow, page breaks, Devanagari rendering)
 
 **Confidence:** All regression test infrastructure in place. Future pipeline changes are validated against known-good baseline (golden reference data).
+
+### Session 2026-04-20: Golden-Targeted QA Gate (Objective 2)
+
+**Delivered:** Gate 6 (`golden_targeted_qa_gate`) + 23 new tests + 2 golden reference JSON files.
+
+**Golden Reference Artifacts:**
+- `tests/golden/golden-source-fingerprint.json` — structural fingerprint of 10-page Hindi source (9 chapters, per-chapter word counts, key terms)
+- `tests/golden/golden-target.json` — stable English translation reference with per-chapter word counts, glossary requirements, quality thresholds
+- Update policy: version-controlled, updated ONLY when pipeline legitimately improves
+
+**Gate 6 Checks (5 sub-checks):**
+1. Structural match — chapter count, section presence (cover/ToC/foreword/glossary), sequential ordering
+2. Content completeness — per-chapter word count within ±30% of golden target
+3. Script hygiene — Devanagari ratio in English body < 2% (glossary terms exempted)
+4. Glossary integrity — 14 required preserved terms present, ≥35 total entries
+5. No regression — page count ≤ 1.5× source (10 pages → max 15)
+
+**Test Suite (`tests/regression/test_golden_targeted_qa.py`) — 23 tests:**
+- Source fixture validation (4): PDF exists, 10 pages, fingerprint valid
+- Target fixture validation (5): JSON exists, chapters/structure/glossary/thresholds valid
+- Good candidate (4): real PDF passes, details populated, chapters detected, glossary found
+- Bad candidate (6): missing chapters, Hindi bleed, missing glossary, missing files, excessive pages
+- Tolerance boundaries (4): word count ±30%, page count 1.5×, far-below fails
+
+**Integration:**
+- Runner calls golden QA gate after artifact_availability (Gate 5)
+- gate-expectations.json includes `golden_targeted_qa: PASS`
+- README.md documents 3-artifact QA process
+
+**Key Decisions:**
+- fitz can't render Devanagari with default fonts → Hindi bleed test uses `pytest.skip` if font unavailable
+- Chapter 9 (Conclusion) regex boundary: uses `Glossary|$` terminator
+- Word count tolerance tests use per-chapter golden values (not flat counts)
+- Gate uses PyMuPDF for PDF text extraction (same as existing visual tests)
+
+**Status:** 347 passed, 1 pre-existing env failure, 4 xfailed. All ruff clean.
