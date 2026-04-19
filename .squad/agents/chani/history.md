@@ -186,6 +186,48 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 
 **Testing:** All 26 existing translate tests pass. Ruff clean. No model changes needed — `Translation.translated_text` already accepts any string.
 
+### 2026-04-19: Defensive NFC Normalization for Glossary Hindi Terms (Issue #9)
+
+**Problem:** Glossary `original_script` (Devanagari/Gurmukhi) values could arrive corrupted if any upstream stage emitted non-NFC Unicode. Issue #7 added NFC at OCR layer, but no downstream stages had their own normalization — a single bypass path (e.g., seed glossary, LLM cultural terms) could reintroduce corrupted text.
+
+**Fix — defense in depth:** Created `src/transpose/utils/unicode.py` with a shared `normalize_unicode()` helper, then applied it at every touchpoint:
+
+1. **translate.py:** NFC-normalize `original_script` when building `ExtractedTerm` from LLM response
+2. **glossary.py:** NFC-normalize when aggregating `original_script` into term data
+3. **export.py:** NFC-normalize at ePub and PDF rendering (both glossary loops)
+4. **seed_glossary.py:** NFC-normalize seed terms in `get_seed_glossary()`
+
+**Key decision:** Each layer normalizes independently — no layer trusts upstream to have done it. This is cheap (NFC on already-NFC text is a no-op) and guarantees correctness regardless of data provenance.
+
+**Testing:** All 223 existing tests pass. Ruff clean. No model/signature changes.
+
+### 2026-04-19: Auto-Generated Translator's Foreword (Issue #12)
+
+**Problem:** Product spec requires a Translator's Foreword explaining the cultural translation philosophy and preserved-word approach. This front-matter page was missing from generated output.
+
+**Changes across 3 source files + 2 test files:**
+
+1. **`src/transpose/services/llm_client.py`** — Added `chat()` method for freeform LLM prompts (non-translation tasks). Uses tenacity retry like `translate_chunk()`.
+
+2. **`src/transpose/pipeline/assemble.py`:**
+   - Added `foreword` field (Optional[str]) to `AssembleOutput`
+   - Added `_generate_foreword(ctx, book_title, cultural_terms)` — builds a prompt requesting a 250-400 word foreword in warm scholarly tone, preserving top 15 cultural terms
+   - After building chapters/TOC, invokes LLM to generate foreword; stores in `manuscript.metadata["foreword"]`
+   - Foreword generation failure is non-fatal (logged warning, pipeline continues)
+
+3. **`src/transpose/pipeline/export.py`:**
+   - **ePub:** Foreword rendered as a separate `foreword.xhtml` chapter inserted before all content chapters in the spine
+   - **PDF:** Foreword rendered as `<div class='foreword-page'>` after TOC, before page counter reset/chapters
+   - CSS: `.foreword-page { page-break-after: always; }`, `.foreword-content p { text-indent: 1.5em; font-style: italic; }`
+
+**Key decisions:**
+- Foreword stored in `manuscript.metadata["foreword"]` — no model schema change, editable via metadata
+- Graceful degradation: LLM failure doesn't block the pipeline
+- `LlmClient.chat()` is generic — reusable for future non-translation LLM tasks
+- Foreword is front matter (after TOC, before Chapter 1) in both formats
+
+**Testing:** 229 tests pass (6 new). Ruff clean.
+
 ### 2026-04-19: Cover Page, Table of Contents, Page Numbering (Issues #10, #13, #11)
 
 **Problem:** Translated PDFs had a bare plain-text title (no visual hierarchy), no Table of Contents page, and no page numbering.
