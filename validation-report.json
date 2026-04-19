@@ -1,6 +1,6 @@
 {
   "book_id": "d6671336-522a-48b6-82ee-624380d706b8",
-  "timestamp": "2026-04-19T22:12:51.319652+00:00",
+  "timestamp": "2026-04-19T22:24:06.555388+00:00",
   "overall": "PASS",
   "gates": [
     {
@@ -71,6 +71,27 @@
         "missing": []
       },
       "timestamp": "2026-04-19T22:12:51.319608+00:00"
+    },
+    {
+      "name": "golden_targeted_qa",
+      "passed": true,
+      "failures": [],
+      "details": {
+        "checks": {
+          "structural_match": true,
+          "content_completeness": true,
+          "script_hygiene": true,
+          "glossary_integrity": true,
+          "no_regression": true
+        },
+        "chapter_count": 9,
+        "page_count": 14,
+        "glossary_terms_found": 14,
+        "devanagari_body_ratio": 0.0,
+        "glossary_terms_missing": [],
+        "glossary_entries_count": 46
+      },
+      "timestamp": "2026-04-19T22:24:06.555331+00:00"
     }
   ],
   "artifacts": {
@@ -85,8 +106,8 @@
   },
   "errors": [],
   "summary": {
-    "total_gates": 5,
-    "passed": 5,
+    "total_gates": 6,
+    "passed": 6,
     "failed": 0
   }
 }
