@@ -284,3 +284,23 @@ All stages follow `docs/api-contracts.md` contracts. All stages idempotent (re-r
 - Thufir's test-first stubs had different function signatures (dict-based, 2-arg) from the real implementation (typed stage outputs, 1-arg). Had to completely rewrite tests rather than fill in stubs.
 
 **Testing:** 34 gate-specific tests pass. Full suite: 279 pass, 4 xfail, 1 pre-existing env-dependent failure (test_settings).
+
+### 2026-04-19: First Full E2E Validation Run with Quality Gates
+
+**Run context:** Used cached data from book_id `d6671336-522a-48b6-82ee-624380d706b8` (10-page Hindi PDF). Stages ingest→assemble were reconstructed from PostgreSQL; export was run fresh.
+
+**Quality Gate Results — 4/4 core gates PASS:**
+1. ✅ **OCR Sanity** — 10 pages, no replacement chars, Devanagari density above threshold, confidence OK
+2. ✅ **Translation Completeness** — 10/10 chunks translated, 0 failures, 0 Devanagari passthrough
+3. ✅ **Glossary Integrity** — 51 entries, all NFC-normalized, no replacement chars, no Latin in Devanagari
+4. ✅ **Document Structure** — 10 chapters, 10 ToC entries matching, foreword 288 words (≥50), title present, sequential numbering
+5. ❌ **Artifact Availability** — False positive in local dev mode. Gate checks `uri.startswith("http")` which fails for local file paths. Both artifacts generated correctly: ePub 34KB, PDF 262KB (both >1KB threshold).
+
+**Artifacts generated:**
+- `Test_Hindi_Book_final.pdf` — 262KB, Devanagari font embedded, cover page, ToC, foreword, 10 chapters, glossary, page numbers
+- `Test_Hindi_Book_final.epub` — 34KB, same content structure
+- `validation-report.json` — Full gate results with details
+
+**Key finding:** The `artifact_availability_gate` URI check (`uri.startswith("http")`) is too strict for local dev. In cloud mode (blob upload), URIs are `https://...`. In local mode, paths are `/absolute/path/...`. The gate should either skip URI validation when URI is a local path, or use a separate check for local vs cloud artifacts. Filed as a known issue — not blocking.
+
+**Runner script:** `scripts/e2e_validation_run.py` — reconstructs stage outputs from DB, runs gates independently, generates artifacts locally (bypasses blob upload), writes validation report. Reusable for future E2E validation runs.

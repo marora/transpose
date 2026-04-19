@@ -1,0 +1,112 @@
+{
+  "book_id": "d6671336-522a-48b6-82ee-624380d706b8",
+  "timestamp": "2026-04-19T18:17:52.375903+00:00",
+  "overall": "FAIL",
+  "gates": [
+    {
+      "name": "ocr_sanity",
+      "passed": true,
+      "failures": [],
+      "details": {
+        "total_pages": 10,
+        "failing_pages": [],
+        "checks": {
+          "replacement_char_threshold": 0.05,
+          "devanagari_density_threshold": 0.05,
+          "min_confidence": 0.6
+        }
+      },
+      "timestamp": "2026-04-19T18:17:47.950850+00:00"
+    },
+    {
+      "name": "translation_completeness",
+      "passed": true,
+      "failures": [],
+      "details": {
+        "chunks_translated": 10,
+        "failed_count": 0,
+        "passthrough_count": 0,
+        "failing_chunks": [],
+        "marker_count": 0
+      },
+      "timestamp": "2026-04-19T18:17:48.810392+00:00"
+    },
+    {
+      "name": "glossary_integrity",
+      "passed": true,
+      "failures": [],
+      "details": {
+        "total_entries": 51,
+        "failing_entries": []
+      },
+      "timestamp": "2026-04-19T18:17:49.711912+00:00"
+    },
+    {
+      "name": "document_structure",
+      "passed": true,
+      "failures": [],
+      "details": {
+        "chapter_count": 10,
+        "toc_count": 10,
+        "has_foreword": true,
+        "has_title": true
+      },
+      "timestamp": "2026-04-19T18:17:50.078674+00:00"
+    },
+    {
+      "name": "artifact_availability",
+      "passed": false,
+      "failures": [
+        "epub artifact has invalid URI: /home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.epub",
+        "pdf artifact has invalid URI: /home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.pdf"
+      ],
+      "details": {
+        "artifacts": {
+          "epub": {
+            "size_bytes": 34561,
+            "uri": "/home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.epub"
+          },
+          "pdf": {
+            "size_bytes": 262155,
+            "uri": "/home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.pdf"
+          }
+        },
+        "missing": []
+      },
+      "timestamp": "2026-04-19T18:17:52.375830+00:00"
+    }
+  ],
+  "artifacts": {
+    "epub": {
+      "path": "/home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.epub",
+      "size_bytes": 34561
+    },
+    "pdf": {
+      "path": "/home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.pdf",
+      "size_bytes": 262155
+    }
+  },
+  "errors": [],
+  "summary": {
+    "total_gates": 5,
+    "passed": 4,
+    "failed": 1
+  },
+  "notes": {
+    "artifact_availability_context": "Gate 5 (artifact_availability) reports FAIL because it validates URIs start with http:// (designed for Azure Blob Storage). In local dev mode, artifacts are written to the filesystem. Both files exist and pass the size threshold (>1KB). This is a local-dev false positive, not a quality issue.",
+    "run_mode": "local_dev_with_cached_data",
+    "data_source": "Reconstructed stage outputs from PostgreSQL (book_id d6671336-522a-48b6-82ee-624380d706b8)",
+    "stages_from_cache": [
+      "ingest",
+      "ocr",
+      "chunk",
+      "translate",
+      "glossary",
+      "assemble"
+    ],
+    "stages_run_fresh": [
+      "export"
+    ],
+    "effective_overall": "PASS (4/4 quality gates + artifacts generated successfully)"
+  }
+}
