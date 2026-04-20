@@ -27,6 +27,7 @@ The infrastructure provisions the following Azure services:
 infra/
 ├── main.bicep              # Entry point — orchestrates all modules
 ├── main.bicepparam         # Parameter file with defaults
+├── main.json               # Compiled ARM template
 ├── modules/
 │   ├── monitoring.bicep          # Application Insights + Log Analytics
 │   ├── storage.bicep             # Blob Storage (source-pdfs, output)
@@ -34,7 +35,8 @@ infra/
 │   ├── database.bicep            # PostgreSQL Flexible Server (Entra auth, auto-pause)
 │   ├── cognitive-services.bicep  # Document Intelligence + OpenAI + GPT-4o deployment
 │   ├── identity.bicep            # User-Assigned Managed Identity + RBAC roles
-│   └── container-app.bicep       # Container Apps Environment + Container App
+│   ├── container-app.bicep       # Container Apps Environment + Container App
+│   └── acr.bicep                 # Azure Container Registry module
 ├── scripts/
 │   └── init-db.sql         # PostgreSQL schema initialization (includes pipeline_state)
 └── README.md               # This file
@@ -370,5 +372,5 @@ For issues or questions:
 ---
 
 **Infrastructure Owner:** Idaho (Cloud/Infrastructure Developer)  
-**Last Updated:** 2024  
+**Last Updated:** 2026  
 **Version:** 1.0.0

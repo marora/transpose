@@ -10,7 +10,7 @@
 
 ## System Overview
 
-Transpose is a **staged pipeline** — each stage is an independent module with defined inputs, outputs, and failure semantics. Stages communicate through a shared PostgreSQL state store. Redis handles pipeline orchestration state and caching.
+Transpose is a **staged pipeline** — each stage is an independent module with defined inputs, outputs, and failure semantics. Stages communicate through a shared PostgreSQL state store. Pipeline orchestration state (progress tracking, distributed locks) is also in PostgreSQL.
 
 The pipeline is **idempotent and resumable**. Any stage can be re-run from its last checkpoint without corrupting state. This is non-negotiable — books are large, LLM calls are expensive, and failures will happen.
 
@@ -44,7 +44,7 @@ The pipeline is **idempotent and resumable**. Any stage can be re-run from its l
 │                                                                        │
 └─────────────────────────────────────────────────────────────────────────┘
 
-State: PostgreSQL          Cache/Queue: Redis          Observability: App Insights
+State: PostgreSQL                                       Observability: App Insights
 ```
 
 ---
@@ -270,15 +270,26 @@ Manuscript
 └── created_at: datetime
 ```
 
-### Pipeline State (Redis)
+### Pipeline State (PostgreSQL)
 
+Pipeline orchestration state is tracked in the `pipeline_state` table:
+
+```sql
+-- Pipeline state table (replaces former Redis keys)
+CREATE TABLE pipeline_state (
+    book_id TEXT PRIMARY KEY,
+    stage TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    progress_completed INTEGER,
+    progress_total INTEGER,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 ```
-pipeline:{book_id}:status     → current stage name
-pipeline:{book_id}:progress   → {"stage": "ocr", "completed": 45, "total": 120}
-pipeline:{book_id}:lock       → distributed lock (prevent concurrent runs on same book)
-chunk_cache:{chunk_id}        → cached chunk text (TTL: 1 hour)
-rate_limit:openai             → sliding window counter for API rate limiting
-```
+
+- **Status tracking:** `pipeline_state.stage` / `pipeline_state.status` per book.
+- **Progress within a stage:** `progress_completed` / `progress_total` columns.
+- **Distributed locks:** PostgreSQL advisory locks (`pg_try_advisory_lock(hashtext(book_id))`).
+- All state is durable — losing a process loses no progress.
 
 ---
 
@@ -396,7 +407,7 @@ CREATE INDEX idx_books_status ON books(status);
 | **Azure Container Apps** | Compute runtime | — | — |
 | **Application Insights** | Traces, metrics, logs | Connection string | `azure-monitor-opentelemetry` |
 | **PostgreSQL Flexible Server** | Persistent state | Managed Identity (Entra auth) | `asyncpg` |
-| **Azure Cache for Redis** | Pipeline state, caching | Access key (via Key Vault) | `redis` (async) |
+
 
 **Auth principle:** Managed Identity everywhere. No connection strings or API keys in code or config. Key Vault only for third-party secrets or as a fallback.
 
@@ -450,6 +461,64 @@ All logs include: `book_id`, `stage`, `correlation_id`. JSON format. No PII in l
 
 ---
 
+## Quality Gates (`pipeline/gates.py`)
+
+Blocking checks that run between pipeline stages. If a gate fails, the pipeline halts with a `QualityGateError` — no stage runs until the previous gate passes.
+
+| Gate | Runs After | Checks |
+|------|-----------|--------|
+| **Gate 1: OCR Sanity** | OCR → Chunk | Garbled Unicode (U+FFFD ratio), Devanagari codepoint density (≥5%), per-page confidence (≥0.6) |
+| **Gate 2: Translation Completeness** | Translate → Glossary | Every chunk has a translation, failed-chunk ratio ≤10%, no raw Devanagari passthrough (>30% threshold) |
+| **Gate 3: Glossary Integrity** | Glossary → Assemble | Non-empty glossary, NFC-normalized `original_script`, no U+FFFD in any field, no Latin chars in Devanagari fields |
+| **Gate 4: Document Structure** | Assemble → Export | ToC count matches chapter count, Translator's Foreword present (≥50 words), title text present, sequential chapter numbering |
+| **Gate 5: Artifact Availability** | After Export | PDF and ePub both present and >1 KB, valid URIs (http/https/file/absolute paths verified) |
+| **Gate 6: Golden-Targeted QA** | Post-export | Compares candidate PDF against `tests/golden/golden-target.json` — structural match (chapter count, sections), content completeness (per-chapter word counts ±30%), script hygiene (<2% Devanagari in body), glossary term presence, page-count regression (≤1.5× source) |
+| **Gate 7: Production Readiness** | Post-export | Rendered output inspection — Devanagari rendering integrity (no IPA/digit substitutions), ToC page-number verification (present, monotonic, not all "1"), per-chapter word counts, cover-page validation, no empty pages |
+
+Each gate returns a `GateResult` with `gate_name`, `passed`, `failures[]`, `details{}`, and a UTC timestamp. Gate 6 also validates the golden target file itself before trusting it as a reference.
+
+---
+
+## HTTP API (`api.py`)
+
+Lightweight aiohttp-based API for triggering the pipeline remotely (designed for Azure Container Apps).
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health probe — returns `{"status": "healthy"}` |
+| `/translate` | POST | Accepts `{blob_uri, title, language?, author?, formats?}`, returns `{book_id, status: "accepted"}`, runs pipeline in background |
+| `/status/{book_id}` | GET | Returns pipeline status (in-memory tracker first, falls back to DB) |
+
+---
+
+## Service Context (`services/context.py`)
+
+Dependency-injection container that holds all initialized service clients. Pipeline stages receive a `ctx: ServiceContext` parameter — they never construct clients directly.
+
+Holds: `Database`, `PipelineState`, `BlobClient`, `OcrClient`, `LlmClient`. Call `ctx.connect()` to initialize, `ctx.close()` to tear down.
+
+---
+
+## Unicode Normalization (`utils/unicode.py`)
+
+`normalize_unicode(text)` applies NFC normalization at every layer boundary. Devanagari and Gurmukhi composed characters can arrive in multiple equivalent byte sequences (NFD vs NFC); NFC is the canonical form expected by fonts, search, and rendering engines.
+
+---
+
+## Cross-Page Paragraph Joining (`pipeline/chunk.py`)
+
+The chunker detects paragraphs that span page boundaries. When a page ends without terminal punctuation (`.`, `?`, `!`, `।`, `॥`) and the next page starts with a continuation pattern (lowercase letter or Devanagari character), the artificial page break is replaced with a single space so the downstream paragraph splitter keeps the sentence intact.
+
+---
+
+## Translator's Foreword & Title Handling (`pipeline/assemble.py`)
+
+- **Foreword auto-generation:** If a glossary exists, the assemble stage calls GPT-4o to generate a 250–400 word Translator's Foreword explaining the cultural translation philosophy and preserved terms. LLM sign-off placeholders are automatically cleaned.
+- **Duplicate chapter title stripping:** The LLM translation often starts with "Chapter N: Title" which would duplicate the `<h1>` rendered by assemble. The stage detects and strips leading chapter headings (including multi-line subtitle continuations with em-dashes).
+- **Book title derivation:** The manuscript title is extracted from the earliest translated chunk rather than using the ingested filename (which is often a placeholder).
+
+---
+
 ## Future Extensibility
 
 This architecture is designed to evolve:
@@ -457,7 +526,7 @@ This architecture is designed to evolve:
 1. **Additional source languages** — add language detection and language-specific chunking rules. Translation prompt is already parameterized by source language.
 2. **Layout preservation** — OCR bounding boxes are stored from day one. A future `Layout` stage can use them to preserve original formatting in output.
 3. **Human-in-the-loop review** — status flags (`needs_review`) on pages, terms, and translations enable a review UI without schema changes.
-4. **Parallel book processing** — Redis locks and per-book state allow multiple books to process concurrently.
+4. **Parallel book processing** — PostgreSQL advisory locks and per-book state allow multiple books to process concurrently.
 5. **Alternative LLMs** — translation service is behind an interface. Swap GPT-4o for another model without touching pipeline logic.
 6. **Streaming/event-driven** — stages currently run sequentially per book. Can be converted to event-driven (Service Bus/Event Grid) by publishing stage-completion events.
 7. **Quality scoring** — translation quality metrics (BLEU, human ratings) can attach to `Translation` records.
@@ -470,7 +539,7 @@ This architecture is designed to evolve:
 |----------|-----------|
 | Staged pipeline, not event-driven | Simpler to reason about, debug, and resume. Event-driven is Phase 2 if needed. |
 | PostgreSQL as source of truth | Relational model fits the hierarchical book→page→chunk→translation structure. JSONB for flexible metadata. |
-| Redis for orchestration only | Pipeline progress, locks, caches. Not a data store. Losing Redis loses nothing permanent. |
+| PostgreSQL for orchestration | Pipeline progress, advisory locks, stage state. Single data store — no separate cache layer to manage. |
 | Idempotent stages | Books are expensive to process. Must be able to resume from any point. |
 | JSON mode for LLM output | Structured extraction of translations + cultural terms in one call. More reliable than parsing free-form text. |
 | Seed glossary + LLM detection | Pure LLM detection is unreliable for rare terms. Seed list catches the known ones; LLM catches the rest. |

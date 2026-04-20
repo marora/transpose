@@ -11,6 +11,7 @@ Agentic pipeline for translating scanned or digital PDF books from Hindi/Punjabi
 5. **Builds a glossary** of preserved cultural terms with definitions
 6. **Assembles** a structured manuscript with chapters and glossary
 7. **Exports** publication-ready ePub and PDF
+8. **Quality Gates** — blocking checks between every stage validate OCR sanity, translation completeness, glossary integrity, document structure, artifact availability, and golden-target QA before the pipeline advances
 
 ## Architecture
 
@@ -21,8 +22,7 @@ See [docs/architecture.md](docs/architecture.md) for the full system design.
 - **Runtime:** Python 3.12+
 - **OCR:** Azure AI Document Intelligence
 - **Translation:** Azure OpenAI GPT-4o
-- **Database:** PostgreSQL (persistent state)
-- **Cache:** Redis (pipeline orchestration)
+- **Database:** PostgreSQL (persistent state + pipeline orchestration)
 - **Compute:** Azure Container Apps
 - **Auth:** Managed Identity + Key Vault
 - **Observability:** Application Insights (OpenTelemetry)

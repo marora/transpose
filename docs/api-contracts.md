@@ -300,6 +300,142 @@ class PipelineOutput:
 
 ---
 
+## Quality Gates (`pipeline/gates.py`)
+
+Quality gates are **blocking checks** between pipeline stages. Each gate validates the output of the previous stage before the next stage is allowed to run. If a gate fails, the pipeline halts with a `QualityGateError`.
+
+### Gate Result Contract
+
+```python
+@dataclass
+class GateResult:
+    """Outcome of a single quality gate check."""
+    gate_name: str
+    passed: bool
+    failures: list[str] = field(default_factory=list)
+    details: dict = field(default_factory=dict)
+    timestamp: str  # UTC ISO 8601
+
+
+class QualityGateError(Exception):
+    """Raised when a quality gate fails, blocking pipeline progression."""
+    gate_result: GateResult
+```
+
+### Gate 1: OCR Sanity
+
+**Runs after:** OCR → before Chunk
+
+```python
+def ocr_sanity_gate(ocr_output: OcrOutput) -> GateResult:
+```
+
+| Check | Threshold | Description |
+|-------|-----------|-------------|
+| Garbled Unicode | U+FFFD ratio ≤ 5% per page | Detects corrupt OCR output |
+| Devanagari density | ≥ 5% of non-space chars | Confirms Hindi source text was actually extracted |
+| OCR confidence | ≥ 0.6 per page | Rejects pages with unreadable scans |
+
+### Gate 2: Translation Completeness
+
+**Runs after:** Translate → before Glossary
+
+```python
+def translation_completeness_gate(translate_output: TranslateOutput) -> GateResult:
+```
+
+| Check | Threshold | Description |
+|-------|-----------|-------------|
+| Failed chunk ratio | ≤ 10% | Ensures most chunks translated successfully |
+| TRANSLATION FAILED markers | ≤ 10% of chunks | Catches LLM placeholder failures |
+| Devanagari passthrough | ≤ 30% Devanagari in translated text | Detects untranslated source text leak |
+
+### Gate 3: Glossary Integrity
+
+**Runs after:** Glossary → before Assemble
+
+```python
+def glossary_integrity_gate(glossary_output: GlossaryOutput) -> GateResult:
+```
+
+| Check | Description |
+|-------|-------------|
+| Non-empty glossary | At least one entry required |
+| NFC normalization | `original_script` fields must be NFC-normalized |
+| No U+FFFD | No replacement characters in term, original_script, or definition |
+| No Latin in Devanagari | No Latin characters mixed into `original_script` fields |
+
+### Gate 4: Document Structure
+
+**Runs after:** Assemble → before Export
+
+```python
+def document_structure_gate(manuscript: Manuscript) -> GateResult:
+```
+
+| Check | Threshold | Description |
+|-------|-----------|-------------|
+| ToC vs chapter count | Must match | Table of contents entries match actual chapters |
+| Foreword present | ≥ 50 words | Translator's Foreword exists and is substantive |
+| Title text | Non-empty | Manuscript has a title |
+| Sequential chapters | 1, 2, 3, ... | Chapter numbers are sequential |
+
+### Gate 5: Artifact Availability
+
+**Runs after:** Export
+
+```python
+def artifact_availability_gate(export_output: ExportOutput) -> GateResult:
+```
+
+| Check | Threshold | Description |
+|-------|-----------|-------------|
+| PDF present | > 1 KB | PDF artifact exists and is non-trivial |
+| ePub present | > 1 KB | ePub artifact exists and is non-trivial |
+| Valid URIs | http/https/file/absolute path verified | Artifact URIs resolve to real files |
+
+### Gate 6: Golden-Targeted QA
+
+**Runs after:** Export (compares rendered PDF against `tests/golden/golden-target.json`)
+
+```python
+def golden_targeted_qa_gate(
+    candidate_pdf_path: str,
+    golden_target_path: str = "tests/golden/golden-target.json",
+) -> GateResult:
+```
+
+| Check | Threshold | Description |
+|-------|-----------|-------------|
+| Structural match | Chapter count matches golden | Chapters present, sequential, required sections (cover, ToC, foreword, glossary) |
+| Content completeness | Per-chapter word counts ±30% | Catches content bleed, truncation, or inflation |
+| Script hygiene | < 2% Devanagari in body | No untranslated text in English body (glossary excluded) |
+| Glossary integrity | Required terms present, min entry count | Key cultural terms appear in output |
+| No regression | Page count ≤ 1.5× source | Prevents page-count inflation |
+
+The golden target file itself is validated before use (no U+FFFD, chapters present with titles/word counts, cover and ToC sections).
+
+### Gate 7: Production Readiness
+
+**Runs after:** Export (inspects rendered PDF for visual/structural defects)
+
+```python
+def validate_production_readiness(
+    candidate_pdf_path: str,
+    golden_target_path: str = "tests/golden/golden-target.json",
+) -> GateResult:
+```
+
+| Check | Description |
+|-------|-------------|
+| Devanagari rendering integrity | No IPA Extension chars (U+0250–02AF) in glossary, no digit substitutions in Devanagari words, known terms match expected Unicode sequences |
+| ToC verification | Page numbers present, > 0, not all identical, monotonically increasing |
+| Content completeness | Per-chapter word counts match golden target (with tolerance) |
+| Cover validation | First page has meaningful title text |
+| Structural integrity | Chapters present, ordered, no empty pages |
+
+---
+
 ## Contract Rules
 
 1. **Every stage function has the signature:** `async def run(input: StageInput) -> StageOutput`
@@ -308,3 +444,4 @@ class PipelineOutput:
 4. **All IDs are UUIDs.** No sequential IDs.
 5. **All timestamps are UTC.**
 6. **Stages are idempotent.** Re-running with the same input produces the same output (or skips already-done work).
+7. **Quality gates block stage transitions.** A gate failure halts the pipeline — the next stage does not run.
