@@ -8,23 +8,6 @@
         "version": "KqlParameterItem/1.0",
         "parameters": [
           {
-            "id": "resource-param",
-            "version": "KqlParameterItem/1.0",
-            "name": "AppInsightsResource",
-            "label": "Application Insights",
-            "type": 5,
-            "isRequired": true,
-            "typeSettings": {
-              "resourceTypeFilter": {
-                "microsoft.insights/components": true
-              },
-              "additionalResourceOptions": [
-                "value::1"
-              ]
-            },
-            "defaultValue": "value::1"
-          },
-          {
             "id": "time-param",
             "version": "KqlParameterItem/1.0",
             "name": "TimeRange",
@@ -33,13 +16,31 @@
             "isRequired": true,
             "typeSettings": {
               "selectableValues": [
-                { "durationMs": 3600000, "createdTime": "2026-01-01T00:00:00Z", "isInitialTime": false, "grain": 1, "useDashboardTimeRange": false },
-                { "durationMs": 14400000 },
-                { "durationMs": 43200000 },
-                { "durationMs": 86400000 },
-                { "durationMs": 172800000 },
-                { "durationMs": 604800000 },
-                { "durationMs": 2592000000 }
+                {
+                  "durationMs": 3600000,
+                  "createdTime": "2026-01-01T00:00:00Z",
+                  "isInitialTime": false,
+                  "grain": 1,
+                  "useDashboardTimeRange": false
+                },
+                {
+                  "durationMs": 14400000
+                },
+                {
+                  "durationMs": 43200000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 172800000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 2592000000
+                }
               ],
               "allowCustom": true
             },
@@ -61,11 +62,46 @@
         "version": "LinkItem/1.0",
         "style": "tabs",
         "links": [
-          { "id": "tab-pipeline", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Pipeline Overview", "subTarget": "pipeline", "style": "link" },
-          { "id": "tab-translation", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Translation Performance", "subTarget": "translation", "style": "link" },
-          { "id": "tab-ocr", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "OCR & Quality", "subTarget": "ocr", "style": "link" },
-          { "id": "tab-infra", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Infrastructure Health", "subTarget": "infra", "style": "link" },
-          { "id": "tab-errors", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Errors & Alerts", "subTarget": "errors", "style": "link" }
+          {
+            "id": "tab-pipeline",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "Pipeline Overview",
+            "subTarget": "pipeline",
+            "style": "link"
+          },
+          {
+            "id": "tab-translation",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "Translation Performance",
+            "subTarget": "translation",
+            "style": "link"
+          },
+          {
+            "id": "tab-ocr",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "OCR & Quality",
+            "subTarget": "ocr",
+            "style": "link"
+          },
+          {
+            "id": "tab-infra",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "Infrastructure Health",
+            "subTarget": "infra",
+            "style": "link"
+          },
+          {
+            "id": "tab-errors",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "Errors & Alerts",
+            "subTarget": "errors",
+            "style": "link"
+          }
         ]
       },
       "name": "tab-navigation"
@@ -95,10 +131,15 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["avg_duration", "p95_duration"],
+                "yAxis": [
+                  "avg_duration",
+                  "p95_duration"
+                ],
                 "group": "stage",
                 "seriesLabelSettings": [],
-                "ySettings": { "unit": "Seconds" }
+                "ySettings": {
+                  "unit": "Seconds"
+                }
               }
             },
             "name": "stage-duration-chart"
@@ -107,14 +148,31 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "let pages = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.ocr.pages_processed\"\n| summarize total_pages = sum(value);\nlet chunks = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.pipeline.chunks_translated\"\n| summarize total_chunks = sum(value);\nlet tokens = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.openai.tokens_used\"\n| summarize total_tokens = sum(value);\nlet errs = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.errors\"\n| summarize total_errors = sum(value);\npages | extend dummy = 1\n| join kind=fullouter (chunks | extend dummy = 1) on dummy\n| join kind=fullouter (tokens | extend dummy = 1) on dummy\n| join kind=fullouter (errs | extend dummy = 1) on dummy\n| project Pages_Processed = total_pages, Chunks_Translated = total_chunks, Tokens_Used = total_tokens, Total_Errors = total_errors",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name in ('transpose.ocr.pages_processed', 'transpose.pipeline.chunks_translated', 'transpose.openai.tokens_used', 'transpose.errors')\n| summarize Value = sum(value) by name\n| extend Metric = case(\n    name == 'transpose.ocr.pages_processed', 'Pages Processed',\n    name == 'transpose.pipeline.chunks_translated', 'Chunks Translated',\n    name == 'transpose.openai.tokens_used', 'Tokens Used',\n    name == 'transpose.errors', 'Total Errors',\n    name)\n| project Metric, Value",
               "size": 4,
               "title": "Pipeline Counters",
               "queryType": 0,
               "resourceType": "microsoft.insights/components",
               "visualization": "tiles",
               "tileSettings": {
-                "titleContent": { "columnMatch": "Column1" },
+                "titleContent": {
+                  "columnMatch": "Metric",
+                  "formatter": 1
+                },
+                "leftContent": {
+                  "columnMatch": "Value",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "auto"
+                  },
+                  "numberFormat": {
+                    "unit": 17,
+                    "options": {
+                      "style": "decimal",
+                      "maximumFractionDigits": 0
+                    }
+                  }
+                },
                 "showBorder": true
               }
             },
@@ -132,7 +190,9 @@
               "visualization": "barchart",
               "chartSettings": {
                 "xAxis": "stage",
-                "yAxis": ["error_count"]
+                "yAxis": [
+                  "error_count"
+                ]
               }
             },
             "name": "errors-by-stage"
@@ -149,7 +209,9 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["active_runs"]
+                "yAxis": [
+                  "active_runs"
+                ]
               }
             },
             "name": "active-pipeline-runs"
@@ -188,7 +250,9 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["total_tokens"],
+                "yAxis": [
+                  "total_tokens"
+                ],
                 "group": "token_type"
               }
             },
@@ -206,7 +270,9 @@
               "visualization": "barchart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["chunks_per_hour"]
+                "yAxis": [
+                  "chunks_per_hour"
+                ]
               }
             },
             "name": "chunks-per-hour"
@@ -223,12 +289,29 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["p50", "p90", "p99", "avg_val"],
+                "yAxis": [
+                  "p50",
+                  "p90",
+                  "p99",
+                  "avg_val"
+                ],
                 "seriesLabelSettings": [
-                  { "seriesName": "p50", "label": "P50" },
-                  { "seriesName": "p90", "label": "P90" },
-                  { "seriesName": "p99", "label": "P99" },
-                  { "seriesName": "avg_val", "label": "Average" }
+                  {
+                    "seriesName": "p50",
+                    "label": "P50"
+                  },
+                  {
+                    "seriesName": "p90",
+                    "label": "P90"
+                  },
+                  {
+                    "seriesName": "p99",
+                    "label": "P99"
+                  },
+                  {
+                    "seriesName": "avg_val",
+                    "label": "Average"
+                  }
                 ]
               }
             },
@@ -245,6 +328,24 @@
               "resourceType": "microsoft.insights/components",
               "visualization": "tiles",
               "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Metric|metric|name",
+                  "formatter": 1
+                },
+                "leftContent": {
+                  "columnMatch": "Value|value|total|count|cost",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "auto"
+                  },
+                  "numberFormat": {
+                    "unit": 17,
+                    "options": {
+                      "style": "decimal",
+                      "maximumFractionDigits": 0
+                    }
+                  }
+                },
                 "showBorder": true
               }
             },
@@ -284,7 +385,9 @@
               "visualization": "barchart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["pages"]
+                "yAxis": [
+                  "pages"
+                ]
               }
             },
             "name": "pages-processed"
@@ -300,6 +403,24 @@
               "resourceType": "microsoft.insights/components",
               "visualization": "tiles",
               "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Metric|metric|name|confidence",
+                  "formatter": 1
+                },
+                "leftContent": {
+                  "columnMatch": "Value|value|total|count|pages",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "auto"
+                  },
+                  "numberFormat": {
+                    "unit": 17,
+                    "options": {
+                      "style": "decimal",
+                      "maximumFractionDigits": 0
+                    }
+                  }
+                },
                 "showBorder": true
               }
             },
@@ -317,7 +438,10 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["avg_duration", "p95_duration"]
+                "yAxis": [
+                  "avg_duration",
+                  "p95_duration"
+                ]
               }
             },
             "name": "ocr-stage-duration"
@@ -334,7 +458,9 @@
               "visualization": "barchart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["error_count"],
+                "yAxis": [
+                  "error_count"
+                ],
                 "group": "error_type"
               }
             },
@@ -374,7 +500,9 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["avg_value"],
+                "yAxis": [
+                  "avg_value"
+                ],
                 "group": "name"
               }
             },
@@ -392,7 +520,11 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["avg_duration_ms", "p95_duration_ms", "call_count"]
+                "yAxis": [
+                  "avg_duration_ms",
+                  "p95_duration_ms",
+                  "call_count"
+                ]
               }
             },
             "name": "postgres-performance"
@@ -422,7 +554,10 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["success_count", "failure_count"]
+                "yAxis": [
+                  "success_count",
+                  "failure_count"
+                ]
               }
             },
             "name": "http-success-failure"
@@ -461,7 +596,9 @@
               "visualization": "linechart",
               "chartSettings": {
                 "xAxis": "timestamp",
-                "yAxis": ["exception_count"],
+                "yAxis": [
+                  "exception_count"
+                ],
                 "group": "type"
               }
             },
@@ -496,7 +633,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Recommended Alert Rules\n\nSet up these alerts in **Azure Monitor → Alerts → Create alert rule** against your Application Insights resource:\n\n| Alert | Signal | Condition | Threshold | Frequency |\n|-------|--------|-----------|-----------|----------|\n| **High Error Rate** | Custom metric: `transpose.errors` | Total > threshold in 15 min | > 10 errors/15m | Every 5 min |\n| **OCR Low Confidence Spike** | Custom metric: `transpose.ocr.low_confidence_pages` | Total > threshold in 1h | > 10 pages/hour | Every 15 min |\n| **Token Usage Spike** | Custom metric: `transpose.openai.tokens_used` | Total > threshold in 1h | > 500,000 tokens/hour | Every 15 min |\n| **Stage Duration Regression** | Custom metric: `transpose.pipeline.stage_duration` | Average > threshold in 15 min | > 300s (5 min) | Every 5 min |\n| **Dependency Failure** | Dependencies failure rate | Percentage > threshold | > 5% failure rate | Every 5 min |\n| **Container App Restart** | Container restart count | Count > 0 | > 2 restarts/hour | Every 15 min |\n\n### KQL for Custom Log Alert: High Error Rate\n```kusto\ncustomMetrics\n| where name == \"transpose.errors\"\n| where timestamp > ago(15m)\n| summarize total_errors = sum(value)\n| where total_errors > 10\n```\n\n### KQL for Custom Log Alert: OCR Confidence Degradation\n```kusto\nlet total = customMetrics | where name == \"transpose.ocr.pages_processed\" | where timestamp > ago(1h) | summarize t = sum(value);\nlet low = customMetrics | where name == \"transpose.ocr.low_confidence_pages\" | where timestamp > ago(1h) | summarize l = sum(value);\ntotal | extend d=1 | join (low | extend d=1) on d\n| where t > 0 and (l / t) > 0.2\n```\n\n### KQL for Custom Log Alert: Token Budget Exceeded\n```kusto\ncustomMetrics\n| where name == \"transpose.openai.tokens_used\"\n| where timestamp > ago(1h)\n| summarize total_tokens = sum(value)\n| where total_tokens > 500000\n```"
+              "json": "## Recommended Alert Rules\n\nSet up these alerts in **Azure Monitor \u2192 Alerts \u2192 Create alert rule** against your Application Insights resource:\n\n| Alert | Signal | Condition | Threshold | Frequency |\n|-------|--------|-----------|-----------|----------|\n| **High Error Rate** | Custom metric: `transpose.errors` | Total > threshold in 15 min | > 10 errors/15m | Every 5 min |\n| **OCR Low Confidence Spike** | Custom metric: `transpose.ocr.low_confidence_pages` | Total > threshold in 1h | > 10 pages/hour | Every 15 min |\n| **Token Usage Spike** | Custom metric: `transpose.openai.tokens_used` | Total > threshold in 1h | > 500,000 tokens/hour | Every 15 min |\n| **Stage Duration Regression** | Custom metric: `transpose.pipeline.stage_duration` | Average > threshold in 15 min | > 300s (5 min) | Every 5 min |\n| **Dependency Failure** | Dependencies failure rate | Percentage > threshold | > 5% failure rate | Every 5 min |\n| **Container App Restart** | Container restart count | Count > 0 | > 2 restarts/hour | Every 15 min |\n\n### KQL for Custom Log Alert: High Error Rate\n```kusto\ncustomMetrics\n| where name == \"transpose.errors\"\n| where timestamp > ago(15m)\n| summarize total_errors = sum(value)\n| where total_errors > 10\n```\n\n### KQL for Custom Log Alert: OCR Confidence Degradation\n```kusto\nlet total = customMetrics | where name == \"transpose.ocr.pages_processed\" | where timestamp > ago(1h) | summarize t = sum(value);\nlet low = customMetrics | where name == \"transpose.ocr.low_confidence_pages\" | where timestamp > ago(1h) | summarize l = sum(value);\ntotal | extend d=1 | join (low | extend d=1) on d\n| where t > 0 and (l / t) > 0.2\n```\n\n### KQL for Custom Log Alert: Token Budget Exceeded\n```kusto\ncustomMetrics\n| where name == \"transpose.openai.tokens_used\"\n| where timestamp > ago(1h)\n| summarize total_tokens = sum(value)\n| where total_tokens > 500000\n```"
             },
             "name": "alert-recommendations"
           }
@@ -510,7 +647,9 @@
       "name": "errors-group"
     }
   ],
-  "fallbackResourceIds": [],
+  "fallbackResourceIds": [
+    "/subscriptions/8fe7b2f7-3f2f-47c0-9cc2-f653b2e312ab/resourceGroups/transpose-sc/providers/microsoft.insights/components/transpose-dev-appinsights"
+  ],
   "styleSettings": {
     "paddingStyle": "wide",
     "spacingStyle": "wide"

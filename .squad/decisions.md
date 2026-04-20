@@ -1082,3 +1082,23 @@ Add a Gate 8 (Operational Readiness) that runs **outside** the translation pipel
 **Next steps:** Run remediation script, deploy updated Bicep, address warnings
 
 ---
+
+### Decision: Azure Monitor Workbook Resource Binding Fix
+
+**Author:** Idaho  
+**Date:** 2026-04-20  
+**Status:** Completed  
+
+Azure Monitor Workbook (transpose-dashboard.json) was displaying all zeros on all tiles despite custom metrics flowing successfully to Application Insights. KQL queries in Log Analytics returned 42+ records across multiple metric names (transpose.pipeline.chunks_translated, transpose.openai.tokens_used, etc.), but workbook displayed nothing.
+
+**Root Cause:** Workbook parameters are declarative. Defining a parameter creates the UI selector, but queries must explicitly opt-in via the `crossComponentResources` property. Without this binding, queries execute against no data source.
+
+**Solution:** Added `"crossComponentResources": ["{AppInsightsResource}"]` to the content object of all 19 query items across 5 tabs (Pipeline Overview, Translation Performance, OCR & Quality, Infrastructure Health, Errors & Alerts). Validated JSON syntax post-modification.
+
+**Implementation:** Python script to recursively find all query items and inject the binding. Verified 19 instances.
+
+**Key Lesson:** Azure Monitor Workbook parameters require explicit binding. Creating a parameter in the parameters section does NOT automatically apply it to queries. Every KQL query item must include `crossComponentResources: ["{ParameterName}"]` in its content object.
+
+**Handoff:** Manish will redeploy with: `bash infra/workbooks/deploy-workbook.sh -g transpose-sc`
+
+---

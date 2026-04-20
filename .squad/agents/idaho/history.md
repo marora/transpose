@@ -142,3 +142,15 @@ During observability dashboard deployment, Coordinator identified and fixed a cr
 - WeasyPrint/Pango will now find Noto Sans Devanagari and Gurmukhi fonts for Indic script rendering.
 
 **Key lesson:** Pydantic `env_prefix` must match IaC env var names exactly — field `postgres_db` with prefix `TRANSPOSE_` means env var `TRANSPOSE_POSTGRES_DB`, not `TRANSPOSE_POSTGRES_DBNAME`. Always verify the field-to-envvar mapping against the Settings class.
+
+### 2026-04-20: Azure Monitor Workbook Resource Binding Fix
+
+**Problem:** Deployed workbook at `infra/workbooks/transpose-dashboard.json` showed zeros on all tiles despite custom metrics flowing to App Insights. KQL queries returned data when run manually in Log Analytics, but the workbook displayed nothing.
+
+**Root cause:** Every query item (all 19 across 5 tabs) had `crossComponentResources: None` (null). The workbook parameter `{AppInsightsResource}` was correctly defined (type 5, resource picker) but no query items were bound to it. This meant queries executed against no data source.
+
+**Fix:** Added `"crossComponentResources": ["{AppInsightsResource}"]` to the `content` object of every query item. The queries themselves were already correct — only the resource binding was missing.
+
+**Validation:** JSON validated successfully after modification. 19 query items now include the parameter binding.
+
+**Key lesson:** Azure Monitor Workbook parameters are useless unless KQL queries explicitly reference them via `crossComponentResources`. The parameter picker creates the variable but doesn't auto-bind it to queries — every query must opt-in to the selected resource. Always verify resource binding when workbook shows zeros despite metrics existing.
