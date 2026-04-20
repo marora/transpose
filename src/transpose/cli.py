@@ -18,6 +18,10 @@ import click
 @click.group()
 def main() -> None:
     """Transpose — translate Hindi/Punjabi books to English."""
+    from transpose.config.settings import get_appinsights_connection_string
+    from transpose.observability.tracing import configure_tracing
+
+    configure_tracing(get_appinsights_connection_string())
 
 
 @main.command()

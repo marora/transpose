@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
+
+_LATIN_ONLY_RE = re.compile(r"^[A-Za-z\s\-']+$")
 
 
 def normalize_unicode(text: str) -> str:
@@ -13,3 +16,8 @@ def normalize_unicode(text: str) -> str:
     expected by fonts, search, and rendering engines.
     """
     return unicodedata.normalize("NFC", text) if text else text
+
+
+def is_latin_only(text: str) -> bool:
+    """Return True if text contains only Latin characters, spaces, hyphens, apostrophes."""
+    return bool(text and _LATIN_ONLY_RE.match(text))

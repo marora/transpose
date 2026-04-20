@@ -182,6 +182,11 @@ async def _run_pipeline_job(
 
 def create_app() -> web.Application:
     """Build the aiohttp application."""
+    from transpose.config.settings import get_appinsights_connection_string
+    from transpose.observability.tracing import configure_tracing
+
+    configure_tracing(get_appinsights_connection_string())
+
     app = web.Application()
     app.router.add_get("/health", health)
     app.router.add_post("/translate", translate)

@@ -1,5 +1,7 @@
 """Application settings — loaded from environment variables."""
 
+import os
+
 from pydantic_settings import BaseSettings
 
 
@@ -53,3 +55,18 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Load settings from environment."""
     return Settings()
+
+
+def get_appinsights_connection_string() -> str:
+    """Return the Application Insights connection string.
+
+    Checks the prefixed ``TRANSPOSE_APPLICATIONINSIGHTS_CONNECTION_STRING``
+    env var (via Pydantic settings) first, then falls back to the standard
+    ``APPLICATIONINSIGHTS_CONNECTION_STRING`` env var (set by Key Vault in
+    the Container App).
+    """
+    settings = get_settings()
+    conn = settings.applicationinsights_connection_string
+    if not conn:
+        conn = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+    return conn

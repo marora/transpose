@@ -506,3 +506,11 @@ Fixed all 3 P0 blockers from Stilgar's quality review. All visually verified aga
 **Key learning:** PyMuPDF text extraction garbles Devanagari conjunct glyphs (e.g. धर्म→ध2र्म or धमर्म). This is a text-extraction limitation, not a rendering defect. Gate 7 checks that use text extraction must apply tolerances for this artifact.
 
 **Testing:** 473 passed, 5 xfailed, 0 failures (pre-existing test_settings.py env var conflict excluded). Ruff clean.
+
+### Azure Monitor Telemetry Initialization (2026-04-24)
+
+Wired up `configure_tracing()` at both entry points (`api.py:create_app()` and `cli.py:main()`) so the Azure Monitor exporter is initialized once at process startup. Added `get_appinsights_connection_string()` helper in `settings.py` that checks `TRANSPOSE_APPLICATIONINSIGHTS_CONNECTION_STRING` (Pydantic) first, then falls back to bare `APPLICATIONINSIGHTS_CONNECTION_STRING` (Key Vault secret ref in Container App). The 6 OpenTelemetry metrics defined in `metrics.py` now actually flow to App Insights. No changes to metric definitions or pipeline stage instrumentation — those were already correct.
+
+**Files changed:** `src/transpose/api.py`, `src/transpose/cli.py`, `src/transpose/config/settings.py`
+
+**Testing:** 289 passed, 4 xfailed, 0 new failures (pre-existing test_settings.py env var conflict excluded).
