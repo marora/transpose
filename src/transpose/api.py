@@ -18,11 +18,14 @@ os.environ.setdefault("PGSSLCRLDIR", "")
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
 from uuid import UUID, uuid4
 
 from aiohttp import web
+
+from transpose.config.settings import get_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +36,44 @@ logger = logging.getLogger(__name__)
 # In-memory job tracker (book_id → status dict).
 # For single-replica Container Apps this is sufficient; multi-replica would use Redis/DB.
 _jobs: dict[str, dict] = {}
+
+
+# ---------------------------------------------------------------------------
+# API Key Authentication
+# ---------------------------------------------------------------------------
+
+# Paths that bypass authentication (health probes, status polling)
+_PUBLIC_PATHS = frozenset({"/health"})
+_PUBLIC_PREFIXES = ("/status/",)
+
+
+def _extract_api_key(request: web.Request) -> str | None:
+    """Extract API key from Authorization Bearer or X-API-Key header."""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return request.headers.get("X-API-Key", "").strip() or None
+
+
+@web.middleware
+async def api_key_middleware(request: web.Request, handler):
+    """Enforce API key authentication on protected endpoints."""
+    # Allow public paths through unconditionally
+    path = request.path
+    if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return await handler(request)
+
+    configured_key: str = request.app["api_key"]
+
+    # Permissive mode: no key configured → allow all requests
+    if not configured_key:
+        return await handler(request)
+
+    provided_key = _extract_api_key(request)
+    if not provided_key or not hmac.compare_digest(provided_key, configured_key):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    return await handler(request)
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +228,17 @@ def create_app() -> web.Application:
 
     configure_tracing(get_appinsights_connection_string())
 
-    app = web.Application()
+    settings = get_settings()
+
+    app = web.Application(middlewares=[api_key_middleware])
+    app["api_key"] = settings.api_key
+
+    if not settings.api_key:
+        logger.warning(
+            "TRANSPOSE_API_KEY is not set — API key authentication is DISABLED. "
+            "Set TRANSPOSE_API_KEY for production deployments."
+        )
+
     app.router.add_get("/health", health)
     app.router.add_post("/translate", translate)
     app.router.add_get("/status/{book_id}", get_status)

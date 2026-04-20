@@ -171,6 +171,29 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             )
 
             book_id = ingest_output.book_id
+
+            # Acquire distributed lock before proceeding to expensive stages
+            lock_acquired = await ctx.state.acquire_lock(str(book_id))
+            if not lock_acquired:
+                logger.warning(
+                    "Lock already held for book_id=%s — another pipeline run is in progress",
+                    book_id,
+                )
+                await ctx.state.set_pipeline_status(str(book_id), "locked")
+                return PipelineOutput(
+                    book_id=book_id,
+                    status=BookStatus.PROCESSING,
+                    artifacts=[],
+                    glossary_term_count=0,
+                    total_tokens_used=0,
+                    stages_completed=stages_completed,
+                    errors=[{
+                        "stage": "ingest",
+                        "error": "Pipeline already in progress for this book",
+                        "error_type": "LockConflict",
+                    }],
+                )
+
             await ctx.state.set_pipeline_status(str(book_id), "ingest")
 
             duration = (datetime.now() - start_time).total_seconds()

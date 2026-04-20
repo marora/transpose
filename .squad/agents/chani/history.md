@@ -514,3 +514,27 @@ Wired up `configure_tracing()` at both entry points (`api.py:create_app()` and `
 **Files changed:** `src/transpose/api.py`, `src/transpose/cli.py`, `src/transpose/config/settings.py`
 
 **Testing:** 289 passed, 4 xfailed, 0 new failures (pre-existing test_settings.py env var conflict excluded).
+
+### Pipeline Wiring & Dead Code Audit (2026-04-24)
+
+Full audit of every Python module in `src/transpose/` for disconnected code — triggered by the `configure_tracing()` bug.
+
+**🔴 Critical findings:**
+1. **`acquire_lock()` never called** — `PipelineState.acquire_lock()` exists in `cache.py` but `runner.py` never calls it (only calls `release_lock()`). No concurrency protection for same-book runs.
+2. **8 settings fields are orphaned** — `keyvault_url`, `ocr_concurrency`, `translate_concurrency`, `chunk_target_tokens`, `chunk_overlap_tokens`, `low_confidence_threshold`, `max_retries`, `retry_base_delay` are defined in `settings.py` but never read by any pipeline code. Operators changing these env vars get zero effect.
+3. **`Database.update_book_page_count()` and `Database.get_cultural_terms_for_book()`** — public methods never called from pipeline code.
+4. **`SectionType.HEADING` and `SectionType.VERSE`** — enum values never assigned anywhere.
+
+**🟢 Verified wired:** All 7 pipeline stages called in runner. All 7 quality gates wired. All 6 metrics recorded. All 5 services initialized and cleaned up. Tracing wired at both entry points. All async functions properly awaited.
+
+**Full report:** `.squad/decisions/inbox/chani-pipeline-audit.md`
+
+## Session 2026-04-20: Wire acquire_lock() + API Key Auth (B1, B8)
+
+**B1 — Distributed lock wired in runner.py:** After ingest produces `book_id`, runner now calls `await ctx.state.acquire_lock(str(book_id))`. If lock already held → returns `PipelineOutput` with `BookStatus.PROCESSING` and `LockConflict` error, no expensive stages run. Existing `release_lock()` in success/failure paths unchanged.
+
+**B8 — API key auth on /translate:** Added `api_key_middleware` to `api.py`. Validates `Authorization: Bearer <key>` or `X-API-Key` header against `TRANSPOSE_API_KEY` (Settings field, env var). Permissive mode when unset. `/health` and `/status/{book_id}` bypass auth. Uses `hmac.compare_digest` for timing-safe comparison.
+
+**Files changed:** `src/transpose/pipeline/runner.py`, `src/transpose/api.py`, `src/transpose/config/settings.py`
+
+**Testing:** 291 tests pass, ruff clean.

@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     max_retries: int = 3
     retry_base_delay: float = 1.0
 
+    # API authentication (empty = permissive mode for local dev)
+    api_key: str = ""
+
 
 def get_settings() -> Settings:
     """Load settings from environment."""
