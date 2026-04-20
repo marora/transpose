@@ -33,8 +33,8 @@
     {
       "number": 1,
       "title": "Dharma and Karma",
-      "full_title": "Dharma and Karma — The Message of the Gita",
-      "word_count_approx": 218,
+      "full_title": "Chapter 1: Dharma and Karma — The Message of the Gita",
+      "word_count_approx": 189,
       "word_count_tolerance": 0.30,
       "key_phrases": ["Shrimad Bhagavad Gita", "Kurukshetra", "nishkama karma", "selfless action"],
       "preserved_terms": ["dharma", "karma"]
@@ -42,8 +42,8 @@
     {
       "number": 2,
       "title": "Yoga and Meditation",
-      "full_title": "Yoga and Meditation — Physical and Spiritual Discipline",
-      "word_count_approx": 208,
+      "full_title": "Chapter 2: Yoga and Meditation — Physical and Spiritual Discipline",
+      "word_count_approx": 190,
       "word_count_tolerance": 0.30,
       "key_phrases": ["pranayama", "samadhi", "spiritual discipline", "eight limbs"],
       "preserved_terms": ["yoga", "pranayama", "samadhi"]
@@ -51,8 +51,8 @@
     {
       "number": 3,
       "title": "Sikh Tradition",
-      "full_title": "Sikh Tradition — Sangat, Langar, and Seva",
-      "word_count_approx": 198,
+      "full_title": "Chapter 3: Sikh Tradition — Sangat, Langar, and Seva",
+      "word_count_approx": 184,
       "word_count_tolerance": 0.30,
       "key_phrases": ["Guru Nanak", "Sikhism", "universal God", "sacred congregation"],
       "preserved_terms": ["sangat", "langar", "seva", "gurdwara", "waheguru"]
@@ -60,8 +60,8 @@
     {
       "number": 4,
       "title": "Moksha and Vedanta Philosophy",
-      "full_title": "Moksha and Vedanta Philosophy",
-      "word_count_approx": 189,
+      "full_title": "Chapter 4: Moksha and Vedanta Philosophy",
+      "word_count_approx": 171,
       "word_count_tolerance": 0.30,
       "key_phrases": ["liberation", "rebirth", "karma", "fruits of action"],
       "preserved_terms": ["moksha", "karma", "samsara"]
@@ -69,8 +69,8 @@
     {
       "number": 5,
       "title": "Hindi Literature",
-      "full_title": "Hindi Literature — From Kabir to Premchand",
-      "word_count_approx": 157,
+      "full_title": "Chapter 5: Hindi Literature — From Kabir to Premchand",
+      "word_count_approx": 175,
       "word_count_tolerance": 0.30,
       "key_phrases": ["Kabir", "Premchand", "Romanticism", "social justice"],
       "preserved_terms": ["dharma", "karma", "bhakti"]
@@ -78,8 +78,8 @@
     {
       "number": 6,
       "title": "Bollywood and Indian Cinema",
-      "full_title": "Bollywood and Indian Cinema",
-      "word_count_approx": 152,
+      "full_title": "Chapter 6: Bollywood and Indian Cinema",
+      "word_count_approx": 169,
       "word_count_tolerance": 0.30,
       "key_phrases": ["film industry", "cinema", "Indian"],
       "preserved_terms": []
@@ -87,7 +87,7 @@
     {
       "number": 7,
       "title": "Festivals and Traditions",
-      "full_title": "Festivals and Traditions",
+      "full_title": "Chapter 7: Festivals and Traditions",
       "word_count_approx": 150,
       "word_count_tolerance": 0.30,
       "key_phrases": ["Diwali", "Holi", "festivals", "agrarian traditions"],
@@ -96,8 +96,8 @@
     {
       "number": 8,
       "title": "Ayurveda and Ancient Medicine",
-      "full_title": "Ayurveda and Ancient Medicine",
-      "word_count_approx": 160,
+      "full_title": "Chapter 8: Ayurveda and Ancient Medicine",
+      "word_count_approx": 174,
       "word_count_tolerance": 0.30,
       "key_phrases": ["Ayurveda", "guru tradition", "yoga", "meditation"],
       "preserved_terms": ["yoga", "guru", "prana"]
@@ -105,8 +105,8 @@
     {
       "number": 9,
       "title": "Conclusion",
-      "full_title": "Conclusion — The Continuity of Indian Culture",
-      "word_count_approx": 191,
+      "full_title": "Chapter 9: Conclusion — The Continuity of Indian Culture",
+      "word_count_approx": 178,
       "word_count_tolerance": 0.30,
       "key_phrases": ["Indian culture", "continuity", "dharma", "tradition"],
       "preserved_terms": ["dharma", "karma", "yoga"]

@@ -516,3 +516,27 @@ All 6 gates PASS:
 - Content is scholarly English aligned with `golden-target.json` chapter structure.
 - `.gitignore` updated with `!tests/golden/golden-target-english.pdf` exception since `*.pdf` is globally ignored.
 - Gate 6 doesn't need updating — it validates against the JSON, not the PDF. The PDF is for human visual comparison.
+
+### 2026-04-20: Issue #14 — Golden Target PDF Fix + Pipeline ToC/Heading Fixes
+
+**Two-track fix for Issue #14:**
+
+**Track A — Golden Target English PDF:**
+- Added `target-counter(attr(href url), page)` CSS for ToC page numbers in `scripts/generate_golden_target_pdf.py`
+- Added `<a href="#chapter-N">` anchor links in ToC entries and `id="chapter-N"` on chapter `<h1>` tags
+- Regenerated `tests/golden/golden-target-english.pdf` (179 KB, 11 pages with page-numbered ToC)
+- Updated `golden-target.json`: word counts aligned to actual content, `full_title` fields prefixed with "Chapter N:"
+- Updated `tests/golden/README.md` with change log documenting all modifications
+
+**Track B — Pipeline Output Fixes:**
+- **`assemble.py` — Full chapter headings:** Fixed `_extract_chapter_title()` — the regex `r"^(Chapter \d+:.*?)(?:\s*—|$)"` used non-greedy `.*?` which truncated titles at em-dash. Changed to greedy `r"^(Chapter \d+:.+)"` to preserve full titles like "Chapter 1: Dharma and Karma — The Message of the Gita". Also removed `re.sub(r"\s*—.*$", "", line)` from the title-case fallback path.
+- **`assemble.py` — Chapter anchor IDs:** Added `id='chapter-{chapter_num}'` to chapter `<h1>` tags in assembled HTML.
+- **`export.py` — ToC page numbers:** Added `target-counter()` CSS and `<a href="#chapter-N">` anchor links in ToC entries. CSS uses `display: flex; justify-content: space-between;` to position title left and page number right.
+
+**WeasyPrint `target-counter()` pattern:**
+- Requires `<a href="#target-id">` wrapping the ToC entry text
+- CSS: `.toc-entry a::after { content: target-counter(attr(href url), page); }`
+- Target element must have matching `id` attribute
+- WeasyPrint resolves the page number at PDF render time
+
+**Testing:** 282 unit tests pass (4 xfail), 76 regression tests pass (1 skipped). Ruff clean. Pre-existing `test_settings` env failure unrelated.

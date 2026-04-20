@@ -352,6 +352,16 @@ async def _generate_pdf(manuscript, glossary, book) -> bytes:
             font-size: 14pt;
             page-break-inside: avoid;
         }}
+        .toc-entry a {{
+            text-decoration: none;
+            color: inherit;
+            display: flex;
+            justify-content: space-between;
+        }}
+        .toc-entry a::after {{
+            content: target-counter(attr(href url), page);
+            font-style: normal;
+        }}
         .glossary-term {{
             font-weight: bold;
         }}
@@ -402,8 +412,12 @@ async def _generate_pdf(manuscript, glossary, book) -> bytes:
         html_content += "<h1>Table of Contents</h1>\n"
         html_content += "<ul class='toc'>\n"
         for toc_entry in manuscript.table_of_contents:
+            chapter_num = toc_entry.get('chapter', '')
+            chapter_id = f"chapter-{chapter_num}"
             html_content += "<li class='toc-entry'>"
+            html_content += f"<a href='#{chapter_id}'>"
             html_content += f"<span class='toc-title'>{_escape_html(toc_entry['title'])}</span>"
+            html_content += "</a>"
             html_content += "</li>\n"
         html_content += "</ul>\n"
         html_content += "</div>\n"

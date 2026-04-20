@@ -262,9 +262,10 @@ def build_html() -> str:
     parts.append("<h1>Table of Contents</h1>")
     parts.append("<ul class='toc'>")
     for ch in CHAPTERS:
+        ch_id = f"chapter-{ch['number']}"
         parts.append(
-            f"<li class='toc-entry'><span class='toc-title'>"
-            f"Chapter {ch['number']}: {_esc(ch['title'])}</span></li>"
+            f"<li class='toc-entry'><a href='#{ch_id}'><span class='toc-title'>"
+            f"Chapter {ch['number']}: {_esc(ch['title'])}</span></a></li>"
         )
     parts.append("</ul></div>")
 
@@ -273,7 +274,8 @@ def build_html() -> str:
 
     # -- Chapters --
     for ch in CHAPTERS:
-        parts.append(f"<h1>Chapter {ch['number']}: {_esc(ch['title'])}</h1>")
+        ch_id = f"chapter-{ch['number']}"
+        parts.append(f"<h1 id='{ch_id}'>Chapter {ch['number']}: {_esc(ch['title'])}</h1>")
         for para in ch["content"].split("\n\n"):
             stripped = para.strip()
             if stripped:
@@ -371,6 +373,16 @@ def build_css(font_path: Path) -> str:
         padding: 0.5em 0;
         border-bottom: 1px dotted #ccc;
         font-size: 14pt;
+    }}
+    .toc-entry a {{
+        text-decoration: none;
+        color: inherit;
+        display: flex;
+        justify-content: space-between;
+    }}
+    .toc-entry a::after {{
+        content: target-counter(attr(href url), page);
+        font-style: normal;
     }}
     """
 

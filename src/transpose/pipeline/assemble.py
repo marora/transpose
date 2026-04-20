@@ -91,9 +91,10 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         # The original chapter_ref is in Devanagari; we need the English title
         english_title = _extract_chapter_title(chapter_chunks, chapter_ref)
         
-        # Build chapter HTML (use English title in h1)
+        # Build chapter HTML (use English title in h1, with anchor ID for ToC links)
+        chapter_id = f"chapter-{chapter_num}"
         content_html = "<div class='chapter'>\n"
-        content_html += f"<h1>{_escape_html(english_title)}</h1>\n"
+        content_html += f"<h1 id='{chapter_id}'>{_escape_html(english_title)}</h1>\n"
 
         for item_idx, item in enumerate(chapter_chunks):
             chunk = item["chunk"]
@@ -211,17 +212,20 @@ def _extract_chapter_title(chapter_chunks: list[dict], fallback: str) -> str:
         if not line:
             continue
             
-        # Match "Chapter N: Title" or "Introduction" or similar
-        chapter_match = re.match(r"^(Chapter \d+:.*?)(?:\s*—|$)", line, re.IGNORECASE)
+        # Match "Chapter N: Title — Subtitle" (keep full title including em-dash)
+        chapter_match = re.match(r"^(Chapter \d+:.+)", line, re.IGNORECASE)
         if chapter_match:
-            return chapter_match.group(1).strip()
+            title = chapter_match.group(1).strip()
+            if len(title) < 150:
+                return title
         
         # Check if it's a standalone title-like line (all caps or title case)
-        if re.match(r"^[A-Z][^a-z]*$", line) or re.match(r"^[A-Z][a-zA-Z\s:—-]+$", line):
-            # Remove common separator patterns
-            title = re.sub(r"\s*—.*$", "", line)
-            if len(title) < 100:  # Reasonable title length
-                return title.strip()
+        is_title_like = (
+            re.match(r"^[A-Z][^a-z]*$", line)
+            or re.match(r"^[A-Z][a-zA-Z\s:—-]+$", line)
+        )
+        if is_title_like and len(line) < 150:
+            return line.strip()
     
     # Fallback: use first non-empty line
     for line in lines[:5]:
