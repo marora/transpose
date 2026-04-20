@@ -682,3 +682,14 @@ Deep comparative quality review of `tests/fixtures/test-hindi-10page.pdf` → `T
 **Files:** Full analysis in `.squad/decisions/inbox/stilgar-visual-inspection-r2.md` (archived).
 
 ---
+
+### Decision: User Directive — Never Revert Without Approval
+**Author:** Manish (via Copilot)  
+**Date:** 2026-04-20  
+**Status:** Active  
+
+Never revert code changes without explicit user approval. Always ask before discarding any work product, even if it appears out-of-scope. Prevents loss of valuable work.
+
+**Applies to:** All agents.
+
+---
