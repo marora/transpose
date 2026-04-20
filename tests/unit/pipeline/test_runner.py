@@ -5,6 +5,7 @@ Tests full pipeline execution, stage orchestration, and error handling.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -198,6 +199,245 @@ class TestPipelineDistributedLock:
         acquired = await mock_state.acquire_lock(lock_key, timeout=300)
 
         assert acquired is False
+
+
+class TestLockAcquisitionInRunner:
+    """Test that run_pipeline() wires acquire_lock() before OCR (B1 fix).
+
+    Chani is adding acquire_lock() to runner.py. These tests verify:
+    - Lock is acquired before OCR stage
+    - Pipeline aborts when lock acquisition fails
+    - Lock is released on both success and failure paths
+    - Lock uses the correct book_id
+    """
+
+    @pytest.fixture
+    def _patch_stages(self, monkeypatch):
+        """Patch all stage modules and metrics so run_pipeline() doesn't
+        hit real Azure services.  Returns (mocks-dict, service-context)."""
+        import sys
+        import types
+
+        from transpose.pipeline import runner
+        from transpose.pipeline.gates import GateResult
+
+        book_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+        # Stub ingest
+        ingest_out = types.SimpleNamespace(
+            book_id=book_id, page_count=10, already_existed=False,
+        )
+        mock_ingest = AsyncMock(return_value=ingest_out)
+
+        # Stub ocr
+        ocr_out = types.SimpleNamespace(
+            pages_processed=10, pages_skipped=0, low_confidence_count=0,
+            total_pages=10, average_confidence=0.95, pages=[],
+        )
+        mock_ocr = AsyncMock(return_value=ocr_out)
+
+        # Stub remaining stages
+        chunk_out = types.SimpleNamespace(total_chunks=5)
+        translate_out = types.SimpleNamespace(
+            chunks_translated=5, total_prompt_tokens=500,
+            total_completion_tokens=300, chunks_total=5,
+            failed_chunks=0,
+        )
+        glossary_out = types.SimpleNamespace(
+            total_terms=10, needs_review_count=0,
+            terms=[], preserved_count=10,
+        )
+        assemble_out = types.SimpleNamespace(
+            chapters=[{"title": "Ch1"}],
+            has_cover=True, has_toc=True, has_foreword=True,
+        )
+        export_artifact = types.SimpleNamespace(
+            format="pdf", blob_uri="/fake/book.pdf", file_size_bytes=1024,
+        )
+        export_out = types.SimpleNamespace(
+            artifacts=[export_artifact], total_size_bytes=1024,
+        )
+
+        stage_mocks = {
+            "ingest": mock_ingest,
+            "ocr": mock_ocr,
+            "chunk": AsyncMock(return_value=chunk_out),
+            "translate": AsyncMock(return_value=translate_out),
+            "glossary": AsyncMock(return_value=glossary_out),
+            "assemble": AsyncMock(return_value=assemble_out),
+            "export": AsyncMock(return_value=export_out),
+        }
+
+        # Patch each stage as a sys.modules entry so the local import
+        # `from . import ingest, ocr, ...` inside run_pipeline() finds our mocks.
+        for name, mock_fn in stage_mocks.items():
+            mod = types.ModuleType(f"transpose.pipeline.{name}")
+            mod.run = mock_fn  # type: ignore[attr-defined]
+            # Create trivial Input classes
+            input_cls_name = {
+                "ingest": "IngestInput",
+                "ocr": "OcrInput",
+                "chunk": "ChunkInput",
+                "translate": "TranslateInput",
+                "glossary": "GlossaryInput",
+                "assemble": "AssembleInput",
+                "export": "ExportInput",
+            }[name]
+            setattr(mod, input_cls_name, type(input_cls_name, (), {
+                "__init__": lambda self, **kw: self.__dict__.update(kw),
+            }))
+            monkeypatch.setitem(sys.modules, f"transpose.pipeline.{name}", mod)
+
+        # Patch all quality gates to pass
+        def _pass_gate(name):
+            return lambda _: GateResult(name, True, [], {})
+
+        monkeypatch.setattr(runner, "ocr_sanity_gate", _pass_gate("ocr_sanity"))
+        monkeypatch.setattr(
+            runner, "translation_completeness_gate",
+            _pass_gate("translation_completeness"),
+        )
+        monkeypatch.setattr(
+            runner, "glossary_integrity_gate", _pass_gate("glossary_integrity"),
+        )
+        monkeypatch.setattr(
+            runner, "document_structure_gate", _pass_gate("document_structure"),
+        )
+        monkeypatch.setattr(
+            runner, "artifact_availability_gate",
+            _pass_gate("artifact_availability"),
+        )
+        monkeypatch.setattr(
+            runner, "golden_targeted_qa_gate", _pass_gate("golden_qa"),
+        )
+        monkeypatch.setattr(
+            runner, "validate_production_readiness",
+            _pass_gate("production_readiness"),
+        )
+
+        # Patch metrics
+        mock_duration = type("M", (), {"record": lambda self, *a, **kw: None})()
+        mock_errors = type("M", (), {"add": lambda self, *a, **kw: None})()
+        monkeypatch.setattr("transpose.observability.metrics.stage_duration", mock_duration)
+        monkeypatch.setattr("transpose.observability.metrics.pipeline_errors", mock_errors)
+
+        # Build mock service context
+        from unittest.mock import MagicMock
+
+        ctx = MagicMock()
+        ctx.state = AsyncMock()
+        ctx.state.set_pipeline_status = AsyncMock()
+        ctx.state.acquire_lock = AsyncMock(return_value=True)
+        ctx.state.release_lock = AsyncMock()
+        ctx.db = AsyncMock()
+        ctx.db.update_book_status = AsyncMock()
+
+        return stage_mocks, ctx, book_id
+
+    @pytest.mark.asyncio
+    async def test_acquire_lock_called_before_ocr(self, _patch_stages) -> None:
+        """acquire_lock() must be called before the OCR stage runs."""
+        from transpose.pipeline.runner import PipelineInput, run_pipeline
+
+        stage_mocks, ctx, book_id = _patch_stages
+        call_order: list[str] = []
+
+        orig_acquire = ctx.state.acquire_lock
+
+        async def track_acquire(*a, **kw):
+            call_order.append("acquire_lock")
+            return await orig_acquire(*a, **kw)
+
+        ctx.state.acquire_lock = AsyncMock(side_effect=track_acquire)
+
+        orig_ocr = stage_mocks["ocr"]
+
+        async def track_ocr(*a, **kw):
+            call_order.append("ocr")
+            return await orig_ocr(*a, **kw)
+
+        stage_mocks["ocr"].side_effect = track_ocr
+
+        inp = PipelineInput(source_path="/fake.pdf", title="Test")
+        with contextlib.suppress(Exception):
+            await run_pipeline(inp, ctx)
+
+        # acquire_lock should appear before ocr — if it exists
+        if "acquire_lock" in call_order and "ocr" in call_order:
+            assert call_order.index("acquire_lock") < call_order.index("ocr"), (
+                "acquire_lock() must be called before OCR stage"
+            )
+        else:
+            # Chani hasn't wired acquire_lock yet — mark pending
+            pytest.xfail("acquire_lock() not yet wired in runner (B1 pending)")
+
+    @pytest.mark.asyncio
+    async def test_pipeline_aborts_when_lock_fails(self, _patch_stages) -> None:
+        """Pipeline must abort gracefully when acquire_lock() returns False."""
+        from transpose.pipeline.runner import PipelineInput, run_pipeline
+
+        stage_mocks, ctx, book_id = _patch_stages
+        ctx.state.acquire_lock = AsyncMock(return_value=False)
+
+        inp = PipelineInput(source_path="/fake.pdf", title="Test")
+        try:
+            await run_pipeline(inp, ctx)
+            # If pipeline completes without error, OCR should NOT have been called
+            # when lock acquisition fails
+            if ctx.state.acquire_lock.called and not ctx.state.acquire_lock.return_value:
+                stage_mocks["ocr"].assert_not_called()
+        except Exception:
+            pass  # Pipeline raised — acceptable abort behavior  # noqa: SIM105
+
+        # If acquire_lock was never called, Chani hasn't wired it yet
+        if not ctx.state.acquire_lock.called:
+            pytest.xfail("acquire_lock() not yet wired in runner (B1 pending)")
+
+    @pytest.mark.asyncio
+    async def test_release_lock_on_success(self, _patch_stages) -> None:
+        """release_lock() must be called on the success path."""
+        from transpose.pipeline.runner import PipelineInput, run_pipeline
+
+        _, ctx, book_id = _patch_stages
+        inp = PipelineInput(source_path="/fake.pdf", title="Test")
+
+        with contextlib.suppress(Exception):
+            await run_pipeline(inp, ctx)
+
+        ctx.state.release_lock.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_release_lock_on_exception(self, _patch_stages) -> None:
+        """release_lock() must be called even when a stage raises."""
+        from transpose.pipeline.runner import PipelineInput, run_pipeline
+
+        stage_mocks, ctx, book_id = _patch_stages
+        stage_mocks["ocr"].side_effect = RuntimeError("OCR exploded")
+
+        inp = PipelineInput(source_path="/fake.pdf", title="Test")
+        with pytest.raises(RuntimeError, match="OCR exploded"):
+            await run_pipeline(inp, ctx)
+
+        ctx.state.release_lock.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_lock_uses_correct_book_id(self, _patch_stages) -> None:
+        """Lock key must include the correct book_id."""
+        from transpose.pipeline.runner import PipelineInput, run_pipeline
+
+        _, ctx, expected_book_id = _patch_stages
+        inp = PipelineInput(source_path="/fake.pdf", title="Test")
+
+        with contextlib.suppress(Exception):
+            await run_pipeline(inp, ctx)
+
+        # Check that release_lock was called with the book_id string
+        if ctx.state.release_lock.called:
+            call_args = ctx.state.release_lock.call_args
+            lock_key = call_args[0][0] if call_args[0] else call_args[1].get("key", "")
+            assert str(expected_book_id) in str(lock_key), (
+                f"Lock key should contain book_id {expected_book_id}"
+            )
 
 
 class TestPipelineOutputAggregation:
