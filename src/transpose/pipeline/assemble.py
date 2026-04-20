@@ -126,10 +126,14 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         # Add to TOC (with English title)
         toc.append({"chapter": chapter_num, "title": english_title})
 
+    # Derive the manuscript title from the translated content, not the
+    # ingested filename which is often a placeholder like "Test Hindi Book".
+    translated_title = _extract_book_title(translations, book.title, chunks)
+
     # Create manuscript
     manuscript = Manuscript(
         book_id=input.book_id,
-        title=book.title,
+        title=translated_title,
         author=book.author,
         chapters=chapters,
         glossary_id=glossary_id or book.id,  # fallback to book ID
@@ -149,7 +153,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
             for e in sorted(glossary.entries, key=lambda e: e.occurrence_count, reverse=True)
         ]
         try:
-            foreword_text = await _generate_foreword(ctx, book.title, cultural_terms)
+            foreword_text = await _generate_foreword(ctx, translated_title, cultural_terms)
             foreword_text = _clean_foreword(foreword_text)
             manuscript.metadata["foreword"] = foreword_text
             logger.info("Generated Translator's Foreword (%d chars)", len(foreword_text))
@@ -176,7 +180,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
     return AssembleOutput(
         book_id=input.book_id,
         manuscript_id=manuscript.id,
-        title=book.title,
+        title=translated_title,
         author=book.author,
         chapters=output_chapters,
         glossary_id=glossary_id,
@@ -185,74 +189,167 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
     )
 
 
+def _extract_book_title(translations: list, fallback: str, chunks: list | None = None) -> str:
+    """Derive the book title from the earliest translated chunk.
+
+    The first translated chunk typically contains the source PDF's title page
+    or opening heading.  We look for a prominent title-like line that is NOT
+    a chapter heading (``Chapter N: ...``).  If nothing suitable is found we
+    fall back to ``book.title`` (which may be a filename placeholder).
+    """
+    import re
+
+    if not translations:
+        return fallback
+
+    # Build a chunk-id → sequence map so we iterate in document order.
+    chunk_seq: dict = {}
+    if chunks:
+        for c in chunks:
+            chunk_seq[c.id] = getattr(c, "sequence", 0)
+
+    sorted_translations = sorted(
+        translations,
+        key=lambda t: chunk_seq.get(t.chunk_id, 0),
+    )
+
+    for t in sorted_translations[:3]:
+        text = t.translated_text
+        if not text:
+            continue
+        for line in text.split("\n")[:5]:
+            line = line.strip()
+            if not line or len(line) < 5:
+                continue
+            # Skip chapter headings — we want the BOOK title
+            if re.match(r"^Chapter\s+\d+", line, re.IGNORECASE):
+                continue
+            # Skip "Introduction" standalone
+            if re.match(r"^Introduction$", line, re.IGNORECASE):
+                continue
+
+            # If the line contains multiple em-dashes, the title + subtitle
+            # are in the first two segments; the rest is description.
+            segments = [s.strip() for s in line.split("\u2014")]
+            if len(segments) >= 2:
+                candidate = " \u2014 ".join(segments[:2])
+                if len(candidate) < 120:
+                    return candidate
+
+            # Accept short lines that look like titles
+            if len(line) < 120 and re.match(r"^[A-Z]", line):
+                return line
+
+    return fallback
+
+
 def _extract_chapter_title(chapter_chunks: list[dict], fallback: str) -> str:
     """Extract English chapter title from translated content.
-    
+
     Looks for patterns like "Chapter N: Title" or just uses first line.
+    Handles multi-line titles where the subtitle (after an em-dash) is on
+    a separate line, e.g.::
+
+        Chapter 1: Dharma and Karma
+        — The Message of the Gita
+
     Falls back to the provided fallback if extraction fails.
     """
     import re
-    
+
     if not chapter_chunks:
         return fallback
-    
+
     # Get first translation
     first_translation = chapter_chunks[0].get("translation")
     if not first_translation:
         return fallback
-    
+
     text = first_translation.translated_text
     if not text:
         return fallback
-    
-    # Try to extract "Chapter N: Title" or "Introduction" pattern
+
     lines = text.split("\n")
-    for line in lines[:3]:  # Check first 3 lines
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Match "Chapter N: Title — Subtitle" (keep full title including em-dash)
+    non_empty = [(i, line.strip()) for i, line in enumerate(lines) if line.strip()]
+
+    for pos, (orig_idx, line) in enumerate(non_empty[:3]):
+        # Match "Chapter N: Title — Subtitle" (single-line form)
         chapter_match = re.match(r"^(Chapter \d+:.+)", line, re.IGNORECASE)
         if chapter_match:
             title = chapter_match.group(1).strip()
-            if len(title) < 150:
+            # Check if the NEXT non-empty line is a subtitle continuation
+            # (starts with em-dash, en-dash, or long dash)
+            title = _join_subtitle_line(title, non_empty, pos)
+            if len(title) < 200:
                 return title
-        
+
         # Check if it's a standalone title-like line (all caps or title case)
         is_title_like = (
             re.match(r"^[A-Z][^a-z]*$", line)
-            or re.match(r"^[A-Z][a-zA-Z\s:—-]+$", line)
+            or re.match(r"^[A-Z][a-zA-Z\s:—\u2013\u2014-]+$", line)
         )
-        if is_title_like and len(line) < 150:
-            return line.strip()
-    
-    # Fallback: use first non-empty line
-    for line in lines[:5]:
-        line = line.strip()
-        if line and len(line) < 100:
+        if is_title_like and len(line) < 200:
             return line
-    
+
+    # Fallback: use first non-empty line
+    for _idx, line in non_empty[:5]:
+        if len(line) < 100:
+            return line
+
     return fallback
 
 
-def _strip_leading_chapter_title(text: str) -> str:
-    """Remove a leading chapter-title line from translated text.
+def _join_subtitle_line(
+    title: str, non_empty: list[tuple[int, str]], current_pos: int
+) -> str:
+    """Append a subtitle continuation line if the next line starts with a dash.
 
-    The LLM translation often starts with a line like
-    ``Chapter 2: Yoga and Meditation — Physical and Spiritual Discipline``
+    Handles the common LLM pattern where the subtitle is on a separate line::
+
+        Chapter 2: Yoga and Meditation
+        — Physical and Spiritual Discipline
+    """
+    if current_pos + 1 < len(non_empty):
+        _next_idx, next_line = non_empty[current_pos + 1]
+        # em-dash (—), en-dash (–), or hyphen-minus (-)
+        if next_line and next_line[0] in ("\u2014", "\u2013", "-"):
+            title = title + " " + next_line
+    return title
+
+
+def _strip_leading_chapter_title(text: str) -> str:
+    """Remove a leading chapter-title line (and optional subtitle) from translated text.
+
+    The LLM translation often starts with one or two lines like::
+
+        Chapter 2: Yoga and Meditation
+        — Physical and Spiritual Discipline
+
     which would duplicate the ``<h1>`` already rendered by the assemble stage.
-    This helper strips that first line when it matches a chapter-heading
-    pattern, returning the remaining content.
+    This helper strips those leading lines, returning the remaining content.
     """
     import re
 
-    lines = text.split("\n", 1)
-    first = lines[0].strip()
+    lines = text.split("\n")
+    first = lines[0].strip() if lines else ""
     # Matches "Chapter N: ..." or "Introduction"
-    if re.match(r"^(Chapter\s+\d+\b|Introduction\b)", first, re.IGNORECASE):
-        return lines[1].lstrip("\n") if len(lines) > 1 else ""
-    return text
+    if not re.match(r"^(Chapter\s+\d+\b|Introduction\b)", first, re.IGNORECASE):
+        return text
+
+    # Strip the chapter title line
+    remaining = lines[1:]
+    # Also strip a subtitle continuation line (starts with em-/en-dash)
+    while remaining:
+        candidate = remaining[0].strip()
+        if not candidate:
+            remaining = remaining[1:]
+            continue
+        if candidate and candidate[0] in ("\u2014", "\u2013", "-"):
+            remaining = remaining[1:]
+        else:
+            break
+
+    return "\n".join(remaining).lstrip("\n") if remaining else ""
 
 
 def _clean_foreword(text: str) -> str:

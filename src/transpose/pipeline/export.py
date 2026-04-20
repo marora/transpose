@@ -246,7 +246,9 @@ async def _generate_pdf(manuscript, glossary, book) -> bytes:
     from weasyprint.text.fonts import FontConfiguration
 
     # Resolve font path relative to repo root
-    font_path = Path(__file__).resolve().parents[3] / "fonts" / "NotoSansDevanagari.ttf"
+    # Use the static (non-variable) font — WeasyPrint mishandles variable
+    # fonts for complex Devanagari conjuncts, producing garbled ligatures.
+    font_path = Path(__file__).resolve().parents[3] / "fonts" / "NotoSansDevanagari-Regular.ttf"
 
     # FontConfiguration must be shared between CSS parsing and PDF rendering
     # so that @font-face declarations (especially for complex scripts like

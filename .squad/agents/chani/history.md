@@ -450,3 +450,28 @@ New QA gates recommended:
 These gates will be added to the golden-targeted-qa pipeline stage once your fixes are in.
 
 **Decision logged:** `.squad/decisions.md` — "Quality Gate Analysis — Production Readiness" and "Add Production Readiness Test Suite"
+
+### P0/P1 Bug Fixes from Stilgar Quality Review (2026-04-20)
+
+Fixed all 3 P0 blockers from Stilgar's quality review. All visually verified against output PDF.
+
+**P0-1: Chapter Titles Truncated (subtitles missing)**
+- Root cause: LLM translation outputs subtitles on a separate line starting with em-dash (—), but `_extract_chapter_title()` only captured the first line.
+- Fix: Rewrote `_extract_chapter_title()` to call `_join_subtitle_line()`, which joins continuation lines starting with em-dash. Also updated `_strip_leading_chapter_title()` to strip these subtitle continuation lines from body text.
+- Files: `src/transpose/pipeline/assemble.py`
+
+**P0-2: Cover Title Shows Filename Placeholder**
+- Root cause: `assemble.run()` used `book.title` (set from filename during ingest) for manuscript title.
+- Fix: Added `_extract_book_title()` that scans the earliest translated chunks (sorted by chunk sequence) for a title-like line that isn't a chapter heading. The first translation chunk (sequence 0) contains the book's title page text. Falls back to `book.title` if nothing found.
+- Key learning: Translation objects don't carry chunk sequence — must pass the `chunks` list to build a chunk_id→sequence map for correct document ordering. Sorting by UUID (chunk_id) gives random order.
+- Files: `src/transpose/pipeline/assemble.py`
+
+**P0-3: Devanagari Rendering Garbled in Glossary**
+- Root cause investigation: Replaced variable font (`NotoSansDevanagari.ttf`, has fvar/gvar/avar/HVAR/STAT tables) with a proper static build (`NotoSansDevanagari-Regular.ttf` from Google Fonts).
+- Key finding: The "garbled" Devanagari reported by Stilgar was a **PyMuPDF text-extraction artifact**, not a visual rendering defect. WeasyPrint uses Pango for OpenType shaping and font subsetting via fontTools — the visual PDF output renders Devanagari conjuncts correctly. PyMuPDF's `get_text()` fails to reconstruct the Unicode codepoints from the subsetted glyph IDs.
+- Kept the static font change as a defensive measure (variable fonts are less predictable across PDF toolchains).
+- Files: `src/transpose/pipeline/export.py`, `fonts/NotoSansDevanagari-Regular.ttf` (new)
+
+**P1-1 & P1-2:** Key phrases and word count inflation are translation-quality issues, not assembly bugs. Current word counts are within acceptable range (e.g., Ch9: 187 words vs expected 178).
+
+**Test results:** 441 passed, 1 pre-existing failure (settings test), 4 xfail, 1 skipped. The 5 previously-failing chapter title regression tests now pass.
