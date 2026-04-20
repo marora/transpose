@@ -153,6 +153,24 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         except ValueError:
             logger.warning(f"Unknown stage: {input.resume_from}, starting from beginning")
 
+    # When resuming past ingest, look up the existing book_id from the source PDF hash
+    if start_index > STAGE_ORDER.index("ingest") and input.source_path:
+        import hashlib
+        from pathlib import Path
+
+        pdf_path = Path(input.source_path)
+        if pdf_path.exists():
+            source_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+            existing = await ctx.db.get_book_by_hash(source_hash)
+            if existing:
+                book_id = existing.id
+                logger.info(f"Resumed with book_id={book_id} from hash {source_hash}")
+            else:
+                raise ValueError(
+                    f"Cannot resume: no book found for source hash {source_hash}. "
+                    "Run from the beginning first."
+                )
+
     try:
         # Stage 1: Ingest
         if start_index <= STAGE_ORDER.index("ingest"):

@@ -6,6 +6,7 @@ import re
 import unicodedata
 
 _LATIN_ONLY_RE = re.compile(r"^[A-Za-z\s\-']+$")
+_LATIN_CHARS_RE = re.compile(r"[A-Za-z]")
 
 
 def normalize_unicode(text: str) -> str:
@@ -21,3 +22,17 @@ def normalize_unicode(text: str) -> str:
 def is_latin_only(text: str) -> bool:
     """Return True if text contains only Latin characters, spaces, hyphens, apostrophes."""
     return bool(text and _LATIN_ONLY_RE.match(text))
+
+
+def strip_latin_from_indic(text: str) -> str:
+    """Remove stray Latin characters from an Indic script string.
+
+    LLM/OCR sometimes injects Latin chars (e.g. 'L यान' instead of 'ध्यान').
+    Returns the cleaned string with Latin chars removed and whitespace collapsed.
+    """
+    if not text:
+        return text
+    cleaned = _LATIN_CHARS_RE.sub("", text).strip()
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned

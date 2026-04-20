@@ -436,14 +436,15 @@ class TestDocumentStructureGate:
         assert result.passed is False
         assert any("ToC" in f for f in result.failures)
 
-    def test_fails_with_missing_foreword(self) -> None:
+    def test_warns_with_missing_foreword(self) -> None:
         chapters = [StubChapter(number=1)]
         output = StubAssembleOutput(
             title="Test Book", chapters=chapters, metadata={}
         )
         result = document_structure_gate(output)
-        assert result.passed is False
-        assert any("foreword" in f for f in result.failures)
+        assert result.passed is True
+        assert result.details.get("foreword_warning")
+        assert "foreword" in result.details["foreword_warning"]
 
     def test_fails_with_no_title(self) -> None:
         chapters = [StubChapter(number=1)]
@@ -490,19 +491,19 @@ class TestArtifactAvailabilityGate:
         result = artifact_availability_gate(output)
         assert result.passed is True
 
-    def test_fails_with_missing_pdf(self) -> None:
+    def test_passes_with_only_epub(self) -> None:
         artifacts = [StubExportArtifact(format="epub", file_size_bytes=30000)]
         output = StubExportOutput(artifacts=artifacts)
         result = artifact_availability_gate(output)
-        assert result.passed is False
-        assert any("pdf" in f for f in result.failures)
+        assert result.passed is True
+        assert "pdf" in result.details["missing"]
 
-    def test_fails_with_missing_epub(self) -> None:
+    def test_passes_with_only_pdf(self) -> None:
         artifacts = [StubExportArtifact(format="pdf", file_size_bytes=50000)]
         output = StubExportOutput(artifacts=artifacts)
         result = artifact_availability_gate(output)
-        assert result.passed is False
-        assert any("epub" in f for f in result.failures)
+        assert result.passed is True
+        assert "epub" in result.details["missing"]
 
     def test_fails_with_zero_size(self) -> None:
         artifacts = [
@@ -518,7 +519,7 @@ class TestArtifactAvailabilityGate:
         output = StubExportOutput(artifacts=[])
         result = artifact_availability_gate(output)
         assert result.passed is False
-        assert len(result.failures) >= 2
+        assert any("no artifacts" in f for f in result.failures)
 
     def test_fails_with_invalid_uri(self) -> None:
         artifacts = [

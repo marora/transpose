@@ -49,7 +49,7 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
     from transpose.models.enums import TermSource
     from transpose.models.glossary import Glossary
     from transpose.models.translation import CulturalTerm
-    from transpose.utils.unicode import is_latin_only, normalize_unicode
+    from transpose.utils.unicode import is_latin_only, normalize_unicode, strip_latin_from_indic
 
     logger = logging.getLogger(__name__)
 
@@ -93,9 +93,11 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
             # over LLM-detected forms which may be wrong (e.g. sangat).
             # Clear Latin-only original_script (e.g. "meditation") — the field
             # is for Indic script only; English loanwords don't belong here.
+            # Strip stray Latin chars from mixed scripts (e.g. "L यान" → "यान").
             if extracted_term.original_script and not data["original_script"]:
                 script = normalize_unicode(extracted_term.original_script)
-                if not is_latin_only(script):
+                script = "" if is_latin_only(script) else strip_latin_from_indic(script)
+                if script:
                     data["original_script"] = script
             if term_key in seed_terms and seed_terms[term_key][0]:
                 data["original_script"] = normalize_unicode(seed_terms[term_key][0])
