@@ -77,6 +77,20 @@ Also updated "Last Updated" date from 2024 to 2026.
 - **Updated `infra/README.md`**: Replaced inline KQL snippets with pointer to `docs/observability.md` plus quick-start workbook import instructions.
 - **Design decision:** Token cost estimation uses GPT-4o pricing ($2.50/1M input, $10.00/1M output). Workbook uses conditional visibility groups for tab navigation. Alert thresholds tuned for 75-page book workloads.
 
+### Session 2026-04-20: Production Blocker Fix (B2, B3, B5)
+
+**Committed:** 14f20ed  
+**Team:** Production-blocker remediation session with Chani, Thufir
+
+**Deliverables:**
+- **B2 — Bicep env var alignment:** Renamed all Container App-deployed env vars to use `TRANSPOSE_*` prefix (e.g., `POSTGRES_HOST` → `TRANSPOSE_POSTGRES_HOST`). This matches pydantic Settings `env_prefix` and eliminates the confusion of two competing env var sets. All values now come from Managed Identity (no passwords).
+- **B3 — Plaintext App Insights removed:** Container App no longer has the redundant plaintext `TRANSPOSE_APPLICATIONINSIGHTS_CONNECTION_STRING` env var. Secret reference is the single source of truth.
+- **B5 — Indic fonts in Docker:** Added `COPY fonts/ /usr/local/share/fonts/transpose/` in Dockerfile (after dependencies) and ran `fc-cache -f -v` to register fonts. WeasyPrint now finds `NotoSansDevanagari-Regular.ttf` and `NotoSansGurmukhi.ttf` for correct PDF rendering.
+- **Remediation script:** Created `infra/scripts/remediate-env-vars.sh` for one-time Container App cleanup: removes manually-added `TRANSPOSE_*` env vars, removes old unprefixed vars, runs `az postgres flexible-server update --password-auth Disabled`. Must be run once after deploying updated Bicep.
+- **Impact:** App now boots with correct Managed Identity config. PostgreSQL password auth disabled (after remediation). Devanagari/Gurmukhi renders correctly in PDFs.
+
+**Notes:** B1 (acquire_lock wiring) and B4 (in-memory job cleanup) handled by Chani. PostgreSQL password auth is currently still enabled in live environment — remediation script will disable it. `.env` file with plaintext password exists locally but is in `.gitignore` (not committed).
+
 
 ## Coordinator Fix (2026-04-20T20-43Z)
 

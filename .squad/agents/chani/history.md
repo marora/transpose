@@ -538,3 +538,46 @@ Full audit of every Python module in `src/transpose/` for disconnected code — 
 **Files changed:** `src/transpose/pipeline/runner.py`, `src/transpose/api.py`, `src/transpose/config/settings.py`
 
 **Testing:** 291 tests pass, ruff clean.
+
+### Session 2026-04-20: Production Blocker Fix — B1 + B8 (Chani's Work)
+
+**Committed:** da1019d  
+**Team:** Production-blocker remediation with Idaho, Thufir
+
+**Deliverables:**
+
+1. **B1 — acquire_lock() wired in runner.py:**
+   - After ingest produces `book_id`, runner now calls `await ctx.state.acquire_lock(str(book_id))` before OCR stage
+   - If lock already held (concurrent duplicate request), pipeline returns early with `BookStatus.PROCESSING` and `LockConflict` error — skips all expensive stages
+   - Lock release happens in both success and failure paths (lines 377, 402, 438)
+   - Added logic to handle `False` return from `acquire_lock()` by aborting pipeline with clear error
+   - All lock acquisition tests now pass (previously xfailed)
+
+2. **B8 — API key auth middleware on /translate:**
+   - Added `api_key_middleware(request, handler)` to validate incoming requests
+   - Checks for `Authorization: Bearer <key>` or `X-API-Key` header
+   - Compares against `TRANSPOSE_API_KEY` env var (from Settings, resolved with fallback)
+   - Uses `hmac.compare_digest()` for timing-safe string comparison (prevents timing attacks)
+   - Permissive mode when `TRANSPOSE_API_KEY` is unset (local dev)
+   - `/health` and `/status/{book_id}` endpoints remain public for Container Apps health probes
+   - `/translate` endpoint now returns 401 Unauthorized if auth fails
+
+3. **Settings field added:**
+   - `api_key` field in `Settings` (optional, defaults to empty for local dev)
+   - Resolved from `TRANSPOSE_API_KEY` env var
+
+4. **Testing:**
+   - 8 new lock acquisition tests (test_acquire_lock_called_before_ocr, test_pipeline_aborts_when_lock_fails, etc.)
+   - 9 new API auth tests (bearer token, X-API-Key header, missing auth, invalid key, timing-safe comparison, public endpoints, permissive mode)
+   - 17 total tests added
+   - All 481 tests passing
+   - Lock tests moved from xfail to passing
+   - Auth tests validated both real and simulated middleware behavior
+
+**Impact:**
+- Concurrent pipeline runs on same book now protected — no more race conditions or duplicate translations
+- `/translate` endpoint is now authenticated in production deployments
+- API key must be configured via `TRANSPOSE_API_KEY` env var (Idaho will set via Key Vault reference)
+- Health probes remain public for Container Apps liveness/readiness checks
+
+**Collaboration notes:** Thufir's test-isolation fix in `test_settings.py` was critical for auth testing — allows tests to instantiate Settings without env file pollution. Idaho's env var prefix alignment ensures the `api_key` field reads from the correct env var name.

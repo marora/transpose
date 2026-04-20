@@ -773,3 +773,312 @@ LLM-detected `original_script` values in the DB are sometimes hallucinated (e.g.
 - 473 tests pass, 5 xfailed (pre-existing), 0 failures
 
 ---
+
+### Decision: Distributed Lock Wiring + API Key Auth
+
+**Author:** Chani  
+**Date:** 2026-04-20  
+**Status:** Active
+
+**B1 — acquire_lock() wired in runner.py:** After ingest produces the `book_id`, the runner now calls `acquire_lock(book_id)` before OCR. If the lock is already held (concurrent duplicate request), the pipeline returns early with `BookStatus.PROCESSING` and a `LockConflict` error — no expensive stages run. Existing `release_lock()` calls in success/failure paths remain unchanged.
+
+**B8 — API key auth on /translate:** `api.py` now has an `api_key_middleware` that validates `Authorization: Bearer <key>` or `X-API-Key` headers against `TRANSPOSE_API_KEY` (env var via Settings). Permissive mode when the env var is unset (local dev). `/health` and `/status/{book_id}` remain unauthenticated for health probes. Uses `hmac.compare_digest` for timing-safe comparison.
+
+**Impact:** All pipeline stages, API handlers, and tests. Idaho should ensure `TRANSPOSE_API_KEY` is set in Container Apps environment (Key Vault reference recommended).
+
+---
+
+### Decision: Security Remediation — Env Var Prefix Alignment + Font Support
+
+**Author:** Idaho  
+**Date:** 2026-04-20  
+**Status:** Active
+
+## Context
+
+The Container App had TWO competing sets of environment variables: Bicep-deployed unprefixed vars (`POSTGRES_HOST`, `OPENAI_ENDPOINT`) and manually-added `TRANSPOSE_*` vars (including a plaintext password). Since pydantic Settings uses `env_prefix = "TRANSPOSE_"`, the app was reading the manual set — bypassing all Managed Identity configuration.
+
+## Decisions
+
+1. **Bicep env vars now use `TRANSPOSE_*` prefix** matching pydantic's `env_prefix`. All values come from Managed Identity (no passwords). This eliminates the need for any manually-added env vars.
+
+2. **No `TRANSPOSE_POSTGRES_PASSWORD` in IaC** — Managed Identity auth means no password. The old plaintext password must be cleaned up via the remediation script.
+
+3. **Remediation script at `infra/scripts/remediate-env-vars.sh`** handles one-time cleanup: removes manual env vars, removes old unprefixed vars, disables PostgreSQL password auth. Must be run once after deploying updated Bicep.
+
+4. **Indic fonts baked into Docker image** (`COPY fonts/ /usr/local/share/fonts/transpose/` + `fc-cache`) so WeasyPrint renders Devanagari and Gurmukhi correctly in PDF output.
+
+5. **`AZURE_CLIENT_ID` stays unprefixed** — it's consumed by Azure Identity SDK, not by pydantic Settings.
+
+## Impact
+
+- **Idaho:** Bicep and Dockerfile changes are mine. Remediation script is mine.
+- **Chani:** No code changes needed — pydantic Settings already expects `TRANSPOSE_*` prefix. Verify PDF font rendering works in integration tests.
+- **Thufir:** May want to add a test that fonts directory is non-empty or that fc-cache ran.
+- **All:** Next deployment MUST be followed by running the remediation script.
+
+---
+
+### Decision: Test Isolation for pydantic-settings
+
+**Author:** Thufir  
+**Date:** 2026-04-20  
+**Status:** Active
+
+## Context
+
+`tests/unit/test_settings.py::test_defaults` has been failing since the `.env` file was added to the repo root. The `Settings` class uses `env_file=".env"` in `model_config`, which causes pydantic-settings to read the file and override code defaults during tests.
+
+## Decision
+
+Use `Settings(_env_file=None)` in all test code that needs to verify code defaults. Additionally, temporarily strip `TRANSPOSE_*` environment variables during default-checking tests to prevent CI env vars from leaking in.
+
+Helper function `_clean_settings()` encapsulates this pattern.
+
+## Impact
+
+- All agents writing tests that instantiate `Settings` should use `_env_file=None` unless specifically testing `.env` file loading behavior.
+- This pattern applies to any pydantic-settings class in the project.
+
+## Team Notes
+
+- The `.env` file contains real Azure credentials — it should be in `.gitignore` (it appears to be tracked). Idaho may want to address this.
+- Lock acquisition tests (`test_acquire_lock_called_before_ocr`, `test_pipeline_aborts_when_lock_fails`) are xfailing until Chani wires `acquire_lock()` in runner.py. They will automatically pass once the B1 fix lands.
+- API auth tests use a simulated middleware matching the B8 spec. Once Chani commits the real middleware, `_make_app()` will detect it and use the real implementation transparently.
+
+---
+
+### Decision: Quality & Testing Audit Results
+
+**Author:** Thufir  
+**Date:** 2026-04-20  
+**Status:** For Review  
+
+**Suite:** 481 collected, 474 passed, 1 failed, 1 skipped, 5 xfailed
+
+## Quality Gates Status
+
+The pipeline has 7 quality gates defined in `src/transpose/pipeline/gates.py`. All 7 are invoked by `runner.py` via the `_run_gate()` helper, which logs results and raises `QualityGateError` on failure — halting the pipeline immediately.
+
+**Gate Failure Handling:** `_run_gate()` logs pass/fail, appends to `gate_results`, raises `QualityGateError` on failure. The runner's except block writes a partial validation report, updates book status to FAILED, records `pipeline_errors` metric, releases the lock, and re-raises.
+
+**Observability gap:** Gate results are logged via `logger.info`/`logger.error` but do not emit App Insights custom events directly. They rely on the runner's `pipeline_errors` counter for failure tracking.
+
+## Test Coverage Summary
+
+**Critical Test Gaps:**
+
+1. **No API endpoint tests** — HTTP API has 3 endpoints (`/health`, `/translate`, `/status/{book_id}`) with zero tests for input validation, error handling, background task launching.
+2. **No service client tests** — `blob_client.py`, `llm_client.py`, `ocr_client.py` wrap Azure SDKs with zero tests for connection failures, timeouts, auth errors, retry behavior.
+3. **No ServiceContext tests** — Service container owns all service lifecycles. No tests for connection initialization, partial failures, context reuse.
+4. **No CLI tests** — Click CLI entry point with no tests.
+
+## Well-Tested Areas
+
+- All 7 pipeline stages have dedicated unit test files (9-41 tests each)
+- All 7 quality gates are tested at unit level (38 tests) and regression level (84 tests)
+- Golden reference framework — comprehensive source fingerprint validation, target integrity, tolerance boundaries
+- Cultural term preservation — 16 parametrized tests (P0 requirement)
+- Visual regression — 12 PyMuPDF-based PDF inspection tests
+- Production readiness — 61 tests covering chapter titles, content coverage, garbled text, ToC accuracy, glossary consistency
+
+## Recommended Gating Before Production
+
+Before production, write tests for `api.py` (HTTP endpoint validation) and the 3 service clients (connection failures, retry behavior, auth errors). The `test_settings.py` fix is trivial (test isolation). Everything else is hardening, not blocking.
+
+---
+
+### Decision: Infrastructure, Security & Configuration Audit
+
+**Author:** Idaho  
+**Date:** 2026-04-20  
+**Status:** Findings Documented  
+
+## Blockers — Must Fix Before Production
+
+### B1: PostgreSQL Password Auth Enabled in Production
+
+**Severity:** CRITICAL — Password auth must be disabled. Plaintext password in Container App env var is a lateral-movement vector.
+
+**Fix:** Run `az postgres flexible-server update -g transpose-sc -n transpose-dev-psql --password-auth Disabled` and clean up env vars.
+
+### B2: Duplicate/Conflicting Env Vars on Container App
+
+**Severity:** CRITICAL — App's `env_prefix = "TRANSPOSE_"` reads wrong set of env vars, bypassing Managed Identity setup.
+
+**Fix:** Rename all Bicep-deployed env vars to `TRANSPOSE_*` prefix; remove manually-added duplicates.
+
+### B3: App Insights Connection String Stored as Plaintext
+
+**Severity:** HIGH — Connection string appears as plaintext env var AND secret reference.
+
+**Fix:** Remove plaintext env var; use secret reference only.
+
+### B4: No CI/CD Pipeline for Deployment
+
+**Severity:** HIGH — No automated build/push/deploy. All deployments are manual `az` CLI operations.
+
+**Fix:** Create `.github/workflows/deploy.yml` with build → push → deploy.
+
+## Warnings — Should Fix Soon
+
+- **W1:** Container App has external ingress (public internet) — should be private or IP-restricted for prod
+- **W2:** No alert rules configured — no proactive alerting for errors, latency, restarts
+- **W3:** No budget alerts — GPT-4o usage is pay-per-token; runaway loops could generate costs
+- **W4:** No scaling rules defined — `minReplicas: 0` causes cold starts; no auto-scaling for load
+- **W5:** ACR not wired into main.bicep — cannot fully recreate environment from IaC alone
+- **W6:** EventGrid system topic not in IaC — created manually
+- **W7:** Log retention only 30 days — should be 90 for production/compliance
+- **W8:** No database migration versioning — schema changes can't be tracked or rolled back
+
+## Verified Good
+
+✅ Managed Identity architecture, Dockerfile security, health probes, TLS enforcement, storage security, Key Vault config, observability foundation, PostgreSQL Entra auth, secrets not in git, Bicep module architecture.
+
+## IaC Gap Analysis & Operational Readiness
+
+**Can the environment be recreated from IaC alone?** NO. ACR is missing from the orchestrator, and Container App would deploy with wrong env var set.
+
+**Priority Remediation Order:**
+1. Immediately: Remove plaintext password env vars, disable PostgreSQL password auth
+2. This week: Wire ACR into main.bicep, fix env var prefix mismatch
+3. Before prod: Add alert rules, budget alerts, CD pipeline, migration framework
+4. Prod hardening: VNet integration, private endpoints, min replicas = 1, 90-day log retention
+
+---
+
+### Decision: Pipeline Wiring & Dead Code Audit
+
+**Author:** Chani  
+**Date:** 2026-04-20  
+**Status:** Findings Documented  
+
+## Disconnected (defined but never called)
+
+### 1. `PipelineState.acquire_lock()` — Distributed lock never acquired
+
+**Issue:** Runner calls `release_lock()` at end of both success and failure paths but **never calls `acquire_lock()` at start**. Concurrent pipeline runs on same book have zero protection.
+
+**Fix:** Add `await ctx.state.acquire_lock(str(book_id))` at start of `run_pipeline()` after ingest creates book_id.
+
+### 2. Dead Code & Orphaned Config Values
+
+- `Database.update_book_page_count()` — Never called
+- `Database.get_cultural_terms_for_book()` — Never called in src/
+- 8 orphaned settings fields (`keyvault_url`, `ocr_concurrency`, `translate_concurrency`, `chunk_target_tokens`, `chunk_overlap_tokens`, `low_confidence_threshold`, `max_retries`, `retry_base_delay`) — Never wired. Changing these env vars does NOTHING.
+- `SectionType.HEADING` and `SectionType.VERSE` enum values — Never used
+
+### 3. Suspicious (possibly unused)
+
+- `asyncio.create_task()` fire-and-forget in api.py — Task reference not stored; unhandled exceptions could be lost
+- Duplicate `_escape_html()` helper in assemble.py and export.py — Should be in utils/
+
+## Verified Wired (all connections confirmed)
+
+✅ Tracing & observability (all 6 metrics recorded)  
+✅ Pipeline flow (all 7 stages called)  
+✅ Quality gates (all 7 gates called)  
+✅ Service initialization & cleanup (all 5 services)  
+✅ Utility functions & async correctness
+
+## Priority Recommendations
+
+| # | Severity | Finding | Fix Effort |
+|---|----------|---------|------------|
+| 1 | **P0** | `acquire_lock()` never called — no concurrency protection | 30 min |
+| 2 | **P1** | 8 settings fields disconnected from pipeline code | 2 hours |
+| 3 | **P2** | `update_book_page_count()` dead code | 5 min |
+| 4 | **P2** | `get_cultural_terms_for_book()` dead code | 5 min |
+| 5 | **P3** | Dead enum values (`HEADING`, `VERSE`) | 5 min |
+| 6 | **P3** | Duplicate `_escape_html()` | 15 min |
+
+---
+
+### Decision: Telemetry Initialization Pattern
+
+**Author:** Chani  
+**Date:** 2026-04-20  
+**Status:** Implemented
+
+Azure Monitor telemetry (`configure_azure_monitor()`) is initialized once at process startup in both entry points:
+- `api.py:create_app()` for the HTTP server
+- `cli.py:main()` for CLI invocations
+
+## Connection String Resolution
+
+`get_appinsights_connection_string()` in `settings.py` resolves the connection string with fallback:
+1. `TRANSPOSE_APPLICATIONINSIGHTS_CONNECTION_STRING` (Pydantic `env_prefix` convention)
+2. `APPLICATIONINSIGHTS_CONNECTION_STRING` (bare env var from Key Vault secret reference)
+
+This matters because the Container App has both: the Key Vault secret ref sets the non-prefixed name, while the hardcoded env var uses the prefixed name. Either path works.
+
+## Impact
+
+All 6 OpenTelemetry metrics (`stage_duration`, `chunks_translated`, `tokens_used`, `pages_processed`, `low_confidence_pages`, `pipeline_errors`) and distributed traces now flow to the `transpose-dev-appinsights` resource.
+
+---
+
+### Decision: Production Readiness Audit — Architecture Wiring Review
+
+**Author:** Stilgar  
+**Date:** 2026-04-20  
+**Status:** Findings Documented  
+
+## Blockers (4 found)
+
+### B1: `acquire_lock()` defined but never called in pipeline runner
+
+- **Impact:** Distributed lock ineffective; concurrent runs can race
+- **Fix:** Wire in runner before OCR
+
+### B2: `keyvault_url` config field defined but never used
+
+- **Impact:** Key Vault integration is dead; secrets rely on direct env vars
+- **Fix:** Either implement Key Vault loader or remove dead config field
+
+### B3: `pipeline_state.book_id` UUID mismatch (UUID in schema, str in code)
+
+- **Impact:** Fragile — any non-UUID string causes hard crash; potential SQL injection edge case
+- **Fix:** Accept UUID types in PipelineState methods, pass book_id directly
+
+### B4: In-memory `_jobs` dict in API has no cleanup or persistence
+
+- **Impact:** Grows without bound; scale-to-zero loses all status; in-flight books stuck "running" forever
+- **Fix:** Write status updates to DB in real-time
+
+## Warnings (7 found)
+
+- **W1:** No DB schema migration system
+- **W2:** Fonts directory not referenced in Dockerfile
+- **W3:** Missing production metrics (books completed, API latency, export sizes)
+- **W4:** Error handling in `api._run_pipeline_job` swallows exceptions
+- **W5:** Health endpoint doesn't verify dependencies
+- **W6:** `asyncio.create_task` fire-and-forget with no task reference
+- **W7:** No rate limiting or request validation on `/translate`
+
+## Verified Working (14 items)
+
+✅ `configure_tracing()` wired, pipeline stages ordered, gates invoked, services initialized, models used, database schema consistent, idempotency enforced, Managed Identity used, NFC normalization applied, CI workflow exists, validation report written.
+
+## Production Readiness Gate Proposal
+
+Add a Gate 8 (Operational Readiness) that runs **outside** the translation pipeline as a startup/preflight check with 8 sub-checks: telemetry flowing, database connectivity, blob storage accessible, OpenAI endpoint reachable, required env vars set, fonts available, schema version correct, golden target present.
+
+---
+
+### Decision: Production Blocker Fix — Complete Session
+
+**Author:** Scribe (Session Log)  
+**Date:** 2026-04-20  
+**Status:** COMPLETED
+
+**Team Execution:**
+- **Idaho (Infrastructure)** — Commit 14f20ed: Fixed Bicep env var naming, removed plaintext App Insights, baked fonts in Docker, created remediation script
+- **Chani (Pipeline & API)** — Commit da1019d: Wired acquire_lock(), added API key middleware, updated 4 test files
+- **Thufir (Testing & QA)** — Commit b6b67a2: Wrote 8 lock tests + 9 auth tests, fixed test isolation bug, all 481 tests passing
+
+**Immediate blockers fixed:** 4 of 4 (B1, B2–B3, B5)  
+**Deferred:** B4 (in-memory jobs) → opened as GitHub issue  
+**Next steps:** Run remediation script, deploy updated Bicep, address warnings
+
+---
