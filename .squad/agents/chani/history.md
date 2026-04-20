@@ -540,3 +540,17 @@ All 6 gates PASS:
 - WeasyPrint resolves the page number at PDF render time
 
 **Testing:** 282 unit tests pass (4 xfail), 76 regression tests pass (1 skipped). Ruff clean. Pre-existing `test_settings` env failure unrelated.
+
+## Session 2026-04-20: Golden Target Fixes + Gate 6 Validation Hardening (Issue #14)
+
+**Delivered:** Regenerated golden-target-english.pdf with ToC page numbers and full chapter headings. Fixed chapter heading truncation regex in assemble.py. Updated golden-target.json with accurate word counts. Committed as 60a3135.
+
+**Key accomplishments:**
+- ToC page numbers via WeasyPrint `target-counter(attr(href url), page)` CSS function
+- Fixed `_extract_chapter_title()` non-greedy regex to include em-dash subtitles (e.g., "Dharma and Karma — The Message of the Gita")
+- Chapter anchor IDs (`id="chapter-N"`) added to all `<h1>` tags for ToC cross-referencing
+- Golden target PDF now stable artifact — do not regenerate automatically
+
+**Cross-Agent:** Thufir hardened Gate 6 with `validate_golden_target()` to catch corruption before candidate comparison. Gate 6 now returns FAIL with `golden_target_validation_errors` if baseline is corrupt. 19 integrity tests + 15 gate tests pass.
+
+**Status:** Issue #14 closed. Ready for origin/master.

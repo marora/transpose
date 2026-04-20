@@ -272,3 +272,17 @@ Known WeasyPrint issue: ToUnicode CMap produces garbled text extraction for Deva
 
 **Key insight:** The golden target was being trusted blindly as the reference standard. If it had garbled text or empty chapters, Gate 6 would pass bad candidates against a bad baseline. Now the gate validates its own reference before using it — trust nothing.
 
+
+## Session 2026-04-20: Golden Target Validation Hardening (Issue #14)
+
+**Delivered:** Implemented validate_golden_target() in gates.py to catch corruption before Gate 6 uses golden target as reference. Created 19-test integrity suite in test_golden_target_integrity.py. Updated 15 gate tests to read golden values dynamically. Committed as 2c07766. 380 total tests pass.
+
+**Key accomplishments:**
+- `validate_golden_target()` checks for U+FFFD replacement characters, empty titles, zero word counts, missing cover/ToC sections
+- Gate 6 returns FAIL immediately with `golden_target_validation_errors` in details if baseline fails validation
+- Standalone integrity test suite validates golden-target.json independently of gate logic
+- Boundary tests now read from golden-target.json dynamically — no more hardcoded word count drift
+
+**Cross-Agent:** Chani regenerated golden-target-english.pdf with ToC page numbers and full chapter headings. Fixed chapter heading regex in assemble.py. Updated golden-target.json with accurate word counts reflecting new chapter format.
+
+**Status:** Issue #14 closed. All 380 tests pass. Ready for origin/master.
