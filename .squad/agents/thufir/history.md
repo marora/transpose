@@ -286,3 +286,40 @@ Known WeasyPrint issue: ToUnicode CMap produces garbled text extraction for Deva
 **Cross-Agent:** Chani regenerated golden-target-english.pdf with ToC page numbers and full chapter headings. Fixed chapter heading regex in assemble.py. Updated golden-target.json with accurate word counts reflecting new chapter format.
 
 **Status:** Issue #14 closed. All 380 tests pass. Ready for origin/master.
+
+### Session 2026-04-21: Production Readiness QA Gap Analysis
+
+**Delivered:** `tests/regression/test_production_readiness.py` — 61 new tests across 8 test classes covering quality dimensions that Gate 6 misses.
+
+**Root Cause:** Manish reported chapter titles are partial. Confirmed: 5 of 9 chapters in the pipeline output PDF have truncated titles — the subtitle after the em-dash is completely missing. Gate 6 only checks chapter count via `Chapter N:` regex, never compares actual title text against `golden-target.json` `full_title` fields.
+
+**Concrete Findings:**
+- Ch1: "Dharma and Karma" → should be "Dharma and Karma — The Message of the Gita"
+- Ch2: "Yoga and Meditation" → should be "— Physical and Spiritual Discipline"
+- Ch3: "Sikh Tradition" → should be "— Sangat, Langar, and Seva"
+- Ch5: "Hindi Literature" → should be "— From Kabir to Premchand"
+- Ch9: "Conclusion" → should be "— The Continuity of Indian Culture"
+- Golden reference PDF has full titles. Pipeline PDF strips subtitles.
+
+**8 Test Classes Implemented:**
+1. **ChapterTitleCompleteness** (11 tests) — Extracts body chapter headings, compares word overlap against golden `full_title`. 5 correctly FAIL.
+2. **ContentCoverage** (10 tests) — Per-chapter word counts vs golden target, ≥80% threshold. All PASS.
+3. **ScriptHygiene** (2 tests) — Devanagari ratio in body, sentence fragment detection. All PASS.
+4. **StructuralAlignment** (7 tests) — Chapter count, ordering, cover/ToC/foreword/glossary presence. All PASS.
+5. **GarbledTextDetection** (5 tests) — U+FFFD, null bytes, encoding errors, symbol sequences, OCR fragments. All PASS.
+6. **TocAccuracy** (11 tests) — ToC entries match body chapters, entry count, short titles present. All PASS.
+7. **GlossaryConsistency** (12 tests) — Required terms, garbled text, min entries, mixed-script, 8 parametrized term checks. All PASS.
+8. **ParagraphIntegrity** (3 tests) — Short paragraph detection, long paragraph detection, chapter content non-empty. All PASS.
+
+**What existing gates were missing:**
+- Chapter title completeness (subtitles after em-dash)
+- ToC-to-body title matching
+- Garbled text detection in final PDF output
+- Paragraph integrity checks
+- OCR fragment detection in output
+
+**Full suite result:** 436 passed, 5 intentional failures (title truncation), 1 pre-existing env failure, 1 skipped, 4 xfailed. All ruff clean.
+
+**Decision filed:** `.squad/decisions/inbox/thufir-production-readiness-gate.md` — recommends production readiness tests as release gate (not pipeline gate), Chani to fix title truncation bug.
+
+**Key insight:** Gate 6 validates *structure* (chapter count, word counts, ratios) but not *content fidelity* (actual title text, subtitle presence). The pipeline passes all structural gates while producing truncated titles — the tests need to compare strings, not just count things.
