@@ -97,3 +97,16 @@
 - **docs/project-structure.md:** Complete file tree rewrite — added api.py, gates.py, context.py, utils/, scripts/, fonts/, tests/golden/, tests/regression/, new unit/integration tests. Removed non-existent files (test_pipeline_e2e.py, test_azure_services.py, alembic/).
 - **docs/api-contracts.md:** Added comprehensive Quality Gates section with contracts for all 7 gates (GateResult model, per-gate signature, check tables with thresholds). Added rule #7: "Quality gates block stage transitions."
 - **Lesson:** Docs drifted because the serverless pivot (commit 7b2b83d) and gate system additions didn't update docs in the same commits. Proposed docs-update convention to prevent recurrence.
+
+### 2026-04-21 — Production Readiness Audit
+
+- **Full report:** `.squad/decisions/inbox/stilgar-prod-readiness-audit.md`
+- **4 blockers found:**
+  1. `acquire_lock()` defined in `cache.py:55` but never called in `runner.py` — distributed lock is inert, concurrent runs can corrupt data.
+  2. `keyvault_url` config field exists but no code reads from Key Vault — secrets management is dead code.
+  3. `pipeline_state.book_id` is UUID in SQL schema but passed as `str` in Python — fragile implicit cast.
+  4. In-memory `_jobs` dict in `api.py` grows unbounded, lost on restart, no DB persistence during execution.
+- **7 warnings:** No migration framework, fonts not in Docker image (Devanagari garbling root cause), shallow health endpoint, no auth/rate limiting on `/translate`, silent error swallowing, fire-and-forget tasks, missing production metrics.
+- **14 items verified working:** Tracing wired, all 7 stages connected, all 7 gates invoked, all 6 metrics used, all models active, all services initialized, DB schema matches code, idempotency enforced, Managed Identity throughout, NFC normalization consistent, seed glossary loaded, health probes in Bicep, CI gates workflow exists, validation reports generated.
+- **Proposed Gate 8 (Operational Readiness):** Preflight checks at container startup — DB connectivity, blob access, OpenAI reachability, env vars set, fonts present, schema version, golden target valid. Runs at startup, not per-book.
+- **Key lesson:** "Configure but never call" is a recurring pattern. `configure_tracing()` was fixed; `acquire_lock()` and `keyvault_url` are the same class of bug. Audit-by-grep-for-unused-definitions should be a standard review step.

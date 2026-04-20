@@ -34,9 +34,6 @@ param openAIDeploymentName string
 @description('Storage Account Blob Endpoint')
 param storageAccountBlobEndpoint string
 
-@description('Storage Account Name')
-param storageAccountName string
-
 @description('PostgreSQL Server FQDN')
 param postgresFqdn string
 
@@ -118,49 +115,48 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
             memory: '2Gi'
           }
           env: [
+            // Azure Identity SDK needs this to select the correct Managed Identity
             {
               name: 'AZURE_CLIENT_ID'
               value: managedIdentityClientId
             }
+            // All TRANSPOSE_* env vars match pydantic Settings fields (env_prefix = "TRANSPOSE_")
             {
-              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-              secretRef: 'appinsights-connection-string'
-            }
-            {
-              name: 'DOCUMENT_INTELLIGENCE_ENDPOINT'
-              value: documentIntelligenceEndpoint
-            }
-            {
-              name: 'OPENAI_ENDPOINT'
-              value: openAIEndpoint
-            }
-            {
-              name: 'OPENAI_DEPLOYMENT_NAME'
-              value: openAIDeploymentName
-            }
-            {
-              name: 'STORAGE_ACCOUNT_BLOB_ENDPOINT'
-              value: storageAccountBlobEndpoint
-            }
-            {
-              name: 'STORAGE_ACCOUNT_NAME'
-              value: storageAccountName
-            }
-            {
-              name: 'POSTGRES_HOST'
+              name: 'TRANSPOSE_POSTGRES_HOST'
               value: postgresFqdn
             }
             {
-              name: 'POSTGRES_DATABASE'
+              name: 'TRANSPOSE_POSTGRES_DB'
               value: postgresDatabaseName
             }
             {
-              name: 'POSTGRES_USER'
+              name: 'TRANSPOSE_POSTGRES_USER'
               value: managedIdentityClientId
             }
+            // No TRANSPOSE_POSTGRES_PASSWORD — Managed Identity auth, no password needed
             {
-              name: 'KEY_VAULT_URI'
+              name: 'TRANSPOSE_OPENAI_ENDPOINT'
+              value: openAIEndpoint
+            }
+            {
+              name: 'TRANSPOSE_OPENAI_DEPLOYMENT'
+              value: openAIDeploymentName
+            }
+            {
+              name: 'TRANSPOSE_DOC_INTELLIGENCE_ENDPOINT'
+              value: documentIntelligenceEndpoint
+            }
+            {
+              name: 'TRANSPOSE_BLOB_STORAGE_ACCOUNT_URL'
+              value: storageAccountBlobEndpoint
+            }
+            {
+              name: 'TRANSPOSE_KEYVAULT_URL'
               value: keyVaultUri
+            }
+            {
+              name: 'TRANSPOSE_APPLICATIONINSIGHTS_CONNECTION_STRING'
+              secretRef: 'appinsights-connection-string'
             }
           ]
           probes: [

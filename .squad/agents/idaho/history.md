@@ -89,3 +89,42 @@ During observability dashboard deployment, Coordinator identified and fixed a cr
 **Commit:** 1f5fb69
 
 **Lesson:** ARM resource scoping matters. Workbooks are RG-level resources, not nested under App Insights components. Update ARM API paths accordingly in future observability tooling.
+
+### 2026-04-20: Full Infrastructure Audit
+
+**Delivered:** Comprehensive audit of all 15 Azure resources vs IaC, security posture, and operational readiness.
+
+**Critical findings:**
+1. **IaC drift:** PostgreSQL has `passwordAuth: Enabled` (Bicep says Disabled). Container App ingress is `external: true` (Bicep says false). Both drifted from manual `az` CLI changes.
+2. **Plaintext password in Container App:** `TRANSPOSE_POSTGRES_PASSWORD` set as plain env var (not Key Vault ref). Entire second set of `TRANSPOSE_*` env vars was manually applied, overriding the Managed Identity config from Bicep.
+3. **No CD pipeline:** Only quality-gates.yml exists. All deploys manual — root cause of the config drift.
+4. **No alert rules or budget alerts:** Observability is passive only (workbook exists but no proactive alerting).
+5. **ACR not wired in main.bicep:** Module exists but not referenced from orchestrator.
+
+**Verified good:** Dockerfile security (non-root, multi-stage, no secrets in layers), TLS enforcement everywhere, Managed Identity RBAC roles correct, health probes configured, storage account locked down, Key Vault RBAC-based, telemetry now connected.
+
+**Key lesson:** Manual `az containerapp update` commands are the #1 source of drift. The dual env var set (Bicep-deployed vs manually-added TRANSPOSE_*) means the app was actually using password auth despite the entire Managed Identity infrastructure being correctly provisioned. A CD pipeline would prevent this class of error.
+
+### 2026: Security Remediation — Env Var Prefix + Fonts
+
+**Delivered:** Fixed the env var prefix mismatch, eliminated plaintext password from IaC path, added Indic font support to Docker image.
+
+**Bicep changes (`infra/modules/container-app.bicep`):**
+- All env vars renamed from unprefixed (`POSTGRES_HOST`, `OPENAI_ENDPOINT`, etc.) to `TRANSPOSE_*` prefix matching pydantic `env_prefix = "TRANSPOSE_"` in `settings.py`.
+- Mapped to correct pydantic field names: `TRANSPOSE_POSTGRES_DB` (not DBNAME), `TRANSPOSE_OPENAI_DEPLOYMENT` (not DEPLOYMENT_NAME), `TRANSPOSE_KEYVAULT_URL` (not KEY_VAULT_URI).
+- Explicitly no `TRANSPOSE_POSTGRES_PASSWORD` — Managed Identity auth only.
+- Removed unused `storageAccountName` param (only `storageAccountBlobEndpoint` needed).
+- `AZURE_CLIENT_ID` kept unprefixed — it's for Azure Identity SDK, not pydantic.
+
+**Remediation script (`infra/scripts/remediate-env-vars.sh`):**
+- Removes manually-added plaintext `TRANSPOSE_*` env vars (including the password).
+- Removes old unprefixed env vars superseded by the Bicep update.
+- Disables PostgreSQL password auth (Entra-only).
+- Run once after deploying the updated Bicep.
+
+**Dockerfile:**
+- Added `fontconfig` to apt packages.
+- Added `COPY fonts/ /usr/local/share/fonts/transpose/` + `RUN fc-cache -f` for Devanagari/Gurmukhi fonts.
+- WeasyPrint/Pango will now find Noto Sans Devanagari and Gurmukhi fonts for Indic script rendering.
+
+**Key lesson:** Pydantic `env_prefix` must match IaC env var names exactly — field `postgres_db` with prefix `TRANSPOSE_` means env var `TRANSPOSE_POSTGRES_DB`, not `TRANSPOSE_POSTGRES_DBNAME`. Always verify the field-to-envvar mapping against the Settings class.

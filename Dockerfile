@@ -34,7 +34,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
     shared-mime-info \
+    fontconfig \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Devanagari and Gurmukhi fonts for Indic script PDF rendering
+COPY fonts/ /usr/local/share/fonts/transpose/
+RUN fc-cache -f
 
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages

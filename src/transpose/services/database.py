@@ -435,6 +435,9 @@ class Database:
                 INSERT INTO glossaries (
                     id, book_id, entries, version, generated_at
                 ) VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (book_id, version) DO UPDATE SET
+                    entries = EXCLUDED.entries,
+                    generated_at = EXCLUDED.generated_at
                 """,
                 glossary.id,
                 glossary.book_id,

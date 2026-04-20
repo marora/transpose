@@ -137,7 +137,6 @@ module containerApp './modules/container-app.bicep' = {
     openAIEndpoint: cognitiveServices.outputs.openAIEndpoint
     openAIDeploymentName: cognitiveServices.outputs.gpt4oDeploymentName
     storageAccountBlobEndpoint: storage.outputs.blobEndpoint
-    storageAccountName: storage.outputs.storageAccountName
     postgresFqdn: database.outputs.postgresFqdn
     postgresDatabaseName: database.outputs.postgresDatabaseName
     keyVaultUri: keyVault.outputs.keyVaultUri
