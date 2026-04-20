@@ -284,27 +284,35 @@ For production deployments:
 
 ## Monitoring and Observability
 
-All resources are instrumented with Application Insights and Log Analytics.
+All resources are instrumented with Application Insights and Log Analytics via OpenTelemetry (`azure-monitor-opentelemetry`).
 
-**Key queries:**
+**Full documentation:** See [`docs/observability.md`](../docs/observability.md) for:
+- Azure Portal navigation (2026 UI)
+- KQL queries for all custom metrics
+- Alert setup and thresholds
+- Troubleshooting runbooks
 
-```kusto
-// Pipeline stage duration
-customMetrics
-| where name == "transpose.pipeline.stage_duration"
-| summarize avg(value), max(value), min(value) by tostring(customDimensions.stage)
+### Quick Start: Import the Dashboard Workbook
 
-// OpenAI token usage
-customMetrics
-| where name == "transpose.openai.tokens_used"
-| summarize sum(value) by bin(timestamp, 1h)
-
-// Error rate by stage
-exceptions
-| summarize count() by tostring(customDimensions.stage), bin(timestamp, 1h)
+```bash
+# Deploy the pre-built Azure Monitor Workbook
+cd infra/workbooks
+./deploy-workbook.sh -g transpose-dev
 ```
 
-**Dashboards:** Import the Application Insights workbook from `.squad/observability/` (if available).
+Or import manually: Azure Portal → App Insights → **Monitoring** → **Workbooks** → New → Advanced Editor → paste contents of `infra/workbooks/transpose-dashboard.json`.
+
+The workbook provides five tabs: Pipeline Overview, Translation Performance, OCR & Quality, Infrastructure Health, and Errors & Alerts.
+
+### Quick KQL Check
+
+```kusto
+// Pipeline health summary (run in App Insights → Monitoring → Logs)
+customMetrics
+| where name startswith "transpose."
+| summarize total = sum(value), latest = max(timestamp) by name
+| order by latest desc
+```
 
 ## Troubleshooting
 

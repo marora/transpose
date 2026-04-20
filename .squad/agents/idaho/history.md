@@ -67,3 +67,13 @@ Updated `infra/README.md` Directory Structure section to include:
 
 Also updated "Last Updated" date from 2024 to 2026.
 
+### 2026: Azure Monitor Workbook Dashboard
+
+**Delivered:** Full observability dashboard and documentation overhaul.
+
+- **Workbook template** (`infra/workbooks/transpose-dashboard.json`): 5-tab Azure Monitor Workbook covering Pipeline Overview, Translation Performance, OCR & Quality, Infrastructure Health, and Errors & Alerts. All KQL queries target `customMetrics`, `requests`, `dependencies`, `exceptions`, and `performanceCounters` tables. Parameterized with `TimeRange` and `AppInsightsResource` selectors.
+- **Deploy script** (`infra/workbooks/deploy-workbook.sh`): Uses `az rest` PUT against the ARM API (`Microsoft.Insights/workbooks`) with a deterministic workbook GUID for idempotent re-deploys.
+- **Observability docs** (`docs/observability.md`): Comprehensive guide covering 2026 Portal navigation (Investigate menu, not old Performance blade), all KQL queries, alert rule setup with thresholds, and troubleshooting runbooks (stuck pipeline, high latency, OOM, OCR garbage, DB connection failures).
+- **Updated `infra/README.md`**: Replaced inline KQL snippets with pointer to `docs/observability.md` plus quick-start workbook import instructions.
+- **Design decision:** Token cost estimation uses GPT-4o pricing ($2.50/1M input, $10.00/1M output). Workbook uses conditional visibility groups for tab navigation. Alert thresholds tuned for 75-page book workloads.
+

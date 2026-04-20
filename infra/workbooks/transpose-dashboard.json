@@ -1,0 +1,518 @@
+{
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "resource-param",
+            "version": "KqlParameterItem/1.0",
+            "name": "AppInsightsResource",
+            "label": "Application Insights",
+            "type": 5,
+            "isRequired": true,
+            "typeSettings": {
+              "resourceTypeFilter": {
+                "microsoft.insights/components": true
+              },
+              "additionalResourceOptions": [
+                "value::1"
+              ]
+            },
+            "defaultValue": "value::1"
+          },
+          {
+            "id": "time-param",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time Range",
+            "type": 4,
+            "isRequired": true,
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000, "createdTime": "2026-01-01T00:00:00Z", "isInitialTime": false, "grain": 1, "useDashboardTimeRange": false },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 172800000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 }
+              ],
+              "allowCustom": true
+            },
+            "defaultValue": "Last 24 hours",
+            "value": {
+              "durationMs": 86400000
+            }
+          }
+        ],
+        "style": "above",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 11,
+      "content": {
+        "version": "LinkItem/1.0",
+        "style": "tabs",
+        "links": [
+          { "id": "tab-pipeline", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Pipeline Overview", "subTarget": "pipeline", "style": "link" },
+          { "id": "tab-translation", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Translation Performance", "subTarget": "translation", "style": "link" },
+          { "id": "tab-ocr", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "OCR & Quality", "subTarget": "ocr", "style": "link" },
+          { "id": "tab-infra", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Infrastructure Health", "subTarget": "infra", "style": "link" },
+          { "id": "tab-errors", "cellValue": "tab", "linkTarget": "parameter", "linkLabel": "Errors & Alerts", "subTarget": "errors", "style": "link" }
+        ]
+      },
+      "name": "tab-navigation"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Pipeline Overview\nReal-time view of the Transpose translation pipeline health and throughput."
+            },
+            "name": "pipeline-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.pipeline.stage_duration\"\n| extend stage = tostring(customDimensions.stage)\n| summarize avg_duration = avg(value), p95_duration = percentile(value, 95) by stage, bin(timestamp, 5m)\n| order by timestamp asc\n| project timestamp, stage, avg_duration, p95_duration",
+              "size": 0,
+              "title": "Pipeline Stage Duration Over Time",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["avg_duration", "p95_duration"],
+                "group": "stage",
+                "seriesLabelSettings": [],
+                "ySettings": { "unit": "Seconds" }
+              }
+            },
+            "name": "stage-duration-chart"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let pages = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.ocr.pages_processed\"\n| summarize total_pages = sum(value);\nlet chunks = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.pipeline.chunks_translated\"\n| summarize total_chunks = sum(value);\nlet tokens = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.openai.tokens_used\"\n| summarize total_tokens = sum(value);\nlet errs = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.errors\"\n| summarize total_errors = sum(value);\npages | extend dummy = 1\n| join kind=fullouter (chunks | extend dummy = 1) on dummy\n| join kind=fullouter (tokens | extend dummy = 1) on dummy\n| join kind=fullouter (errs | extend dummy = 1) on dummy\n| project Pages_Processed = total_pages, Chunks_Translated = total_chunks, Tokens_Used = total_tokens, Total_Errors = total_errors",
+              "size": 4,
+              "title": "Pipeline Counters",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Column1" },
+                "showBorder": true
+              }
+            },
+            "name": "pipeline-counters"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.errors\"\n| extend stage = tostring(customDimensions.stage)\n| summarize error_count = sum(value) by stage\n| order by error_count desc",
+              "size": 1,
+              "title": "Errors by Pipeline Stage",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "stage",
+                "yAxis": ["error_count"]
+              }
+            },
+            "name": "errors-by-stage"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "requests\n| where timestamp {TimeRange}\n| where name has \"pipeline\" or name has \"translate\" or name has \"ingest\"\n| summarize active_runs = dcount(operation_Id), avg_duration = avg(duration), success_rate = round(100.0 * countif(success == true) / count(), 1) by bin(timestamp, 15m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Active Pipeline Runs (from Traces/Requests)",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["active_runs"]
+              }
+            },
+            "name": "active-pipeline-runs"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "pipeline"
+      },
+      "name": "pipeline-group"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Translation Performance\nOpenAI GPT-4o usage, translation throughput, and cost estimation."
+            },
+            "name": "translation-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.openai.tokens_used\"\n| extend token_type = tostring(customDimensions.type)\n| summarize total_tokens = sum(value) by bin(timestamp, 1h), token_type\n| order by timestamp asc",
+              "size": 0,
+              "title": "OpenAI Token Usage Over Time",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["total_tokens"],
+                "group": "token_type"
+              }
+            },
+            "name": "token-usage-chart"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.pipeline.chunks_translated\"\n| summarize chunks_per_hour = sum(value) by bin(timestamp, 1h)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Chunks Translated Per Hour",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["chunks_per_hour"]
+              }
+            },
+            "name": "chunks-per-hour"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.pipeline.stage_duration\"\n| extend stage = tostring(customDimensions.stage)\n| where stage == \"translate\"\n| summarize p50 = percentile(value, 50), p90 = percentile(value, 90), p99 = percentile(value, 99), avg_val = avg(value) by bin(timestamp, 15m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Translation Stage Latency Distribution",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["p50", "p90", "p99", "avg_val"],
+                "seriesLabelSettings": [
+                  { "seriesName": "p50", "label": "P50" },
+                  { "seriesName": "p90", "label": "P90" },
+                  { "seriesName": "p99", "label": "P99" },
+                  { "seriesName": "avg_val", "label": "Average" }
+                ]
+              }
+            },
+            "name": "translation-latency-dist"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Token cost estimation: $2.50/1M input tokens, $10.00/1M output tokens\nlet input_tokens = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.openai.tokens_used\"\n| where tostring(customDimensions.type) == \"prompt\" or tostring(customDimensions.type) == \"input\"\n| summarize total_input = sum(value);\nlet output_tokens = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.openai.tokens_used\"\n| where tostring(customDimensions.type) == \"completion\" or tostring(customDimensions.type) == \"output\"\n| summarize total_output = sum(value);\nlet all_tokens = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.openai.tokens_used\"\n| summarize total_all = sum(value);\ninput_tokens | extend d=1\n| join kind=fullouter (output_tokens | extend d=1) on d\n| join kind=fullouter (all_tokens | extend d=1) on d\n| project\n    Input_Tokens = coalesce(total_input, 0.0),\n    Output_Tokens = coalesce(total_output, 0.0),\n    Total_Tokens = coalesce(total_all, 0.0),\n    Input_Cost_USD = round(coalesce(total_input, 0.0) / 1000000.0 * 2.50, 4),\n    Output_Cost_USD = round(coalesce(total_output, 0.0) / 1000000.0 * 10.00, 4),\n    Total_Cost_USD = round(coalesce(total_input, 0.0) / 1000000.0 * 2.50 + coalesce(total_output, 0.0) / 1000000.0 * 10.00, 4)",
+              "size": 4,
+              "title": "Token Cost Estimation (GPT-4o)",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "tiles",
+              "tileSettings": {
+                "showBorder": true
+              }
+            },
+            "name": "token-cost-estimation"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "translation"
+      },
+      "name": "translation-group"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## OCR & Quality\nDocument Intelligence OCR throughput and confidence monitoring."
+            },
+            "name": "ocr-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.ocr.pages_processed\"\n| summarize pages = sum(value) by bin(timestamp, 1h)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Pages Processed Over Time",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["pages"]
+              }
+            },
+            "name": "pages-processed"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "let total = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.ocr.pages_processed\"\n| summarize total_pages = sum(value);\nlet low_conf = customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.ocr.low_confidence_pages\"\n| summarize low_conf_pages = sum(value);\ntotal | extend d=1\n| join kind=fullouter (low_conf | extend d=1) on d\n| project\n    Total_Pages = coalesce(total_pages, 0.0),\n    Low_Confidence_Pages = coalesce(low_conf_pages, 0.0),\n    Low_Confidence_Ratio = iff(coalesce(total_pages, 0.0) > 0, round(coalesce(low_conf_pages, 0.0) / coalesce(total_pages, 0.0) * 100.0, 1), 0.0)",
+              "size": 4,
+              "title": "OCR Confidence Summary",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "tiles",
+              "tileSettings": {
+                "showBorder": true
+              }
+            },
+            "name": "ocr-confidence-summary"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.pipeline.stage_duration\"\n| extend stage = tostring(customDimensions.stage)\n| where stage == \"ocr\"\n| summarize avg_duration = avg(value), p95_duration = percentile(value, 95) by bin(timestamp, 15m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "OCR Stage Duration",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["avg_duration", "p95_duration"]
+              }
+            },
+            "name": "ocr-stage-duration"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.errors\"\n| extend stage = tostring(customDimensions.stage)\n| where stage == \"ocr\"\n| extend error_type = tostring(customDimensions.error_type)\n| summarize error_count = sum(value) by bin(timestamp, 1h), error_type\n| order by timestamp asc",
+              "size": 0,
+              "title": "OCR Failures / Retries",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["error_count"],
+                "group": "error_type"
+              }
+            },
+            "name": "ocr-failures"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "ocr"
+      },
+      "name": "ocr-group"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Infrastructure Health\nContainer App resources, PostgreSQL, and dependency performance."
+            },
+            "name": "infra-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Container App CPU and Memory from performanceCounters or customMetrics\n// These are emitted by the azure-monitor-opentelemetry SDK\nperformanceCounters\n| where timestamp {TimeRange}\n| where category == \"Process\" or name has \"cpu\" or name has \"memory\" or name has \"CPU\" or name has \"Memory\"\n| summarize avg_value = avg(value) by name, bin(timestamp, 5m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Container App Process Metrics",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["avg_value"],
+                "group": "name"
+              }
+            },
+            "name": "container-process-metrics"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where type == \"PostgreSQL\" or target has \"postgres\" or target has \"psql\"\n| summarize\n    call_count = count(),\n    avg_duration_ms = avg(duration),\n    p95_duration_ms = percentile(duration, 95),\n    failure_rate = round(100.0 * countif(success == false) / count(), 1)\n  by bin(timestamp, 15m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "PostgreSQL Query Performance",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["avg_duration_ms", "p95_duration_ms", "call_count"]
+              }
+            },
+            "name": "postgres-performance"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| summarize\n    call_count = count(),\n    avg_duration_ms = round(avg(duration), 1),\n    failure_count = countif(success == false),\n    success_rate = round(100.0 * countif(success == true) / count(), 1)\n  by type, target\n| order by call_count desc",
+              "size": 1,
+              "title": "Dependency Call Summary",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "table"
+            },
+            "name": "dependency-summary"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "requests\n| where timestamp {TimeRange}\n| summarize\n    total = count(),\n    success_count = countif(success == true),\n    failure_count = countif(success == false),\n    avg_duration_ms = round(avg(duration), 1)\n  by bin(timestamp, 15m)\n| extend success_rate = round(100.0 * success_count / total, 1)\n| order by timestamp asc",
+              "size": 0,
+              "title": "HTTP Request Success/Failure Rate",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["success_count", "failure_count"]
+              }
+            },
+            "name": "http-success-failure"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "infra"
+      },
+      "name": "infra-group"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Errors & Alerts\nException tracking, failure analysis, and recommended alert configuration."
+            },
+            "name": "errors-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "exceptions\n| where timestamp {TimeRange}\n| summarize exception_count = count() by bin(timestamp, 15m), type\n| order by timestamp asc",
+              "size": 0,
+              "title": "Exception Timeline",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["exception_count"],
+                "group": "type"
+              }
+            },
+            "name": "exception-timeline"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "customMetrics\n| where timestamp {TimeRange}\n| where name == \"transpose.errors\"\n| extend stage = tostring(customDimensions.stage), error_type = tostring(customDimensions.error_type)\n| summarize error_count = sum(value) by stage, error_type\n| order by error_count desc",
+              "size": 1,
+              "title": "Top Errors by Stage and Type",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "table"
+            },
+            "name": "top-errors-table"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "dependencies\n| where timestamp {TimeRange}\n| where success == false\n| summarize failure_count = count() by type, target, resultCode\n| order by failure_count desc\n| take 20",
+              "size": 1,
+              "title": "Failed Dependency Calls",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "visualization": "table"
+            },
+            "name": "failed-dependencies"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "## Recommended Alert Rules\n\nSet up these alerts in **Azure Monitor → Alerts → Create alert rule** against your Application Insights resource:\n\n| Alert | Signal | Condition | Threshold | Frequency |\n|-------|--------|-----------|-----------|----------|\n| **High Error Rate** | Custom metric: `transpose.errors` | Total > threshold in 15 min | > 10 errors/15m | Every 5 min |\n| **OCR Low Confidence Spike** | Custom metric: `transpose.ocr.low_confidence_pages` | Total > threshold in 1h | > 10 pages/hour | Every 15 min |\n| **Token Usage Spike** | Custom metric: `transpose.openai.tokens_used` | Total > threshold in 1h | > 500,000 tokens/hour | Every 15 min |\n| **Stage Duration Regression** | Custom metric: `transpose.pipeline.stage_duration` | Average > threshold in 15 min | > 300s (5 min) | Every 5 min |\n| **Dependency Failure** | Dependencies failure rate | Percentage > threshold | > 5% failure rate | Every 5 min |\n| **Container App Restart** | Container restart count | Count > 0 | > 2 restarts/hour | Every 15 min |\n\n### KQL for Custom Log Alert: High Error Rate\n```kusto\ncustomMetrics\n| where name == \"transpose.errors\"\n| where timestamp > ago(15m)\n| summarize total_errors = sum(value)\n| where total_errors > 10\n```\n\n### KQL for Custom Log Alert: OCR Confidence Degradation\n```kusto\nlet total = customMetrics | where name == \"transpose.ocr.pages_processed\" | where timestamp > ago(1h) | summarize t = sum(value);\nlet low = customMetrics | where name == \"transpose.ocr.low_confidence_pages\" | where timestamp > ago(1h) | summarize l = sum(value);\ntotal | extend d=1 | join (low | extend d=1) on d\n| where t > 0 and (l / t) > 0.2\n```\n\n### KQL for Custom Log Alert: Token Budget Exceeded\n```kusto\ncustomMetrics\n| where name == \"transpose.openai.tokens_used\"\n| where timestamp > ago(1h)\n| summarize total_tokens = sum(value)\n| where total_tokens > 500000\n```"
+            },
+            "name": "alert-recommendations"
+          }
+        ]
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "errors"
+      },
+      "name": "errors-group"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "styleSettings": {
+    "paddingStyle": "wide",
+    "spacingStyle": "wide"
+  }
+}
