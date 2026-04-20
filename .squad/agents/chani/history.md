@@ -554,3 +554,101 @@ All 6 gates PASS:
 **Cross-Agent:** Thufir hardened Gate 6 with `validate_golden_target()` to catch corruption before candidate comparison. Gate 6 now returns FAIL with `golden_target_validation_errors` if baseline is corrupt. 19 integrity tests + 15 gate tests pass.
 
 **Status:** Issue #14 closed. Ready for origin/master.
+
+### 2026-04-20: Fresh E2E Pipeline Run — Visual Inspection Artifacts
+
+**Context:** Manish requested a fresh end-to-end run to visually inspect output PDFs with all latest fixes (golden target, ToC page numbers, full chapter headings).
+
+**Run method:** `scripts/e2e_validation_run.py` — reconstructs OCR/translate/glossary/assemble from PostgreSQL, runs export stage fresh to generate new PDF/ePub.
+
+**All 6 quality gates PASS:**
+1. ✅ OCR Sanity — 10 pages, no garbled chars
+2. ✅ Translation Completeness — 10/10 chunks translated
+3. ✅ Glossary Integrity — 51 terms, NFC-normalized
+4. ✅ Document Structure — 10 chapters, ToC matches, foreword present
+5. ✅ Artifact Availability — PDF + ePub local paths valid
+6. ✅ Golden-Targeted QA — 9 chapters, 14 glossary terms, 14 pages, 0% Devanagari bleed
+
+**Artifacts generated:**
+- `Test_Hindi_Book_final.pdf` — 208KB, 14 pages
+- `Test_Hindi_Book_final.epub` — 17KB
+- `validation-report.json` — all gates documented
+
+**Test suite:** 380 passed, 1 skipped, 4 xfail, 1 pre-existing env failure (test_settings). No regressions.
+
+**Learning:** The e2e_validation_run.py script is the reliable go-to for generating fresh visual inspection artifacts. It takes ~4 seconds end-to-end since it reconstructs from DB cache and only re-runs export.
+
+### 2026-04-20: Deep Comparative QA Review — Stilgar & Thufir Findings
+
+**Context:** Stilgar performed deep comparative review of Test_Hindi_Book_final.pdf vs Hindi source and golden reference English PDF. Thufir analyzed whether existing quality gates catch the issues.
+
+**Stilgar Findings: 7 Issues (3 P0, 2 P1, 2 P2)**
+
+**P0 Issues (BLOCKING):**
+1. **Chapter Titles Truncated** — All 9 chapter titles missing subtitles after em-dash. E.g., "Chapter 1: Dharma and Karma — The Message of the Gita" appears as "Chapter 1: Dharma and Karma" in PDF. Root cause hypothesis: heading extraction hits character limit or strips text after dash during assembly/export stage.
+2. **Cover Title Placeholder** — Cover page shows "Test Hindi Book" (filename) instead of translated title "Hindi Literature and Culture — Test Booklet". Root cause: cover generation uses metadata field or filename instead of OCR'd/translated source title.
+3. **Devanagari Garbled in Glossary** — Glossary terms contain Unicode substitution artifacts replacing Devanagari codepoints. E.g., `आयुTर्वेद` (should be `आयुर्वेद`), `भȫèक्ति` (should be `भक्ति`), `कुण्डȥलनी` (should be `कुण्डलिनी`). Root cause: font embedding or PDF export uses font lacking Devanagari conjuncts; WeasyPrint substitutes with Latin-extended artifacts (T, Ȩõ, ȫè, ȥ).
+
+**P1 Issues (SIGNIFICANT):**
+4. **Key Phrases Missing** — Four chapters missing contextual phrases from Hindi source that are in golden reference. Ch2: "spiritual discipline", "eight limbs"; Ch4: "fruits of action"; Ch8: "guru tradition", "meditation"; Ch9: "continuity". Root cause: translation stage summarizes too aggressively or loses content during chunking.
+5. **Word Count Inflation** — Output 60% larger than source (1.60× ratio) vs golden at 1.05×. Threshold is 1.50×. Ch9 shows 718 words vs ~178 expected. Root cause: content bleeds (Translator's Foreword text appears in Ch9 stream); HTML/CSS layout doesn't properly separate chapter boundaries.
+
+**P2 Issues (MINOR):**
+6. **ToC Missing Page Numbers** — Golden reference includes page numbers in ToC; pipeline output doesn't.
+7. **Golden JSON Incomplete** — Sections arrays empty (no sub-heading/paragraph-level validation), no cover title field, no Devanagari rendering validation criteria.
+
+**Thufir Gate Analysis:**
+
+Gate 6 (`golden_targeted_qa_gate`) PASSES all checks because it validates *structural presence* not *content fidelity*:
+- ✅ Chapter count: 9 chapters detected (correct)
+- ✅ Word count ratio: 14 pages vs 1.5× bound (passes)
+- ✅ Devanagari density: <2% in body (passes; glossary isn't body)
+- ✅ Glossary terms: 14/14 required terms present (passes)
+- ✅ Page count: ≤1.5× (passes)
+
+What Gate 6 MISSES:
+- No full title validation (compares `title` field only, not `full_title`)
+- No cover page content check (just `has_title=true`)
+- No PDF-rendered Devanagari integrity (validates data normalization, not output glyphs)
+- No per-chapter word count (only total ratio)
+- No key phrase coverage
+- No ToC page number check
+
+**Action Required for Your Implementation:**
+
+Your code is not broken. The **presentation layer** (PDF assembly and export) is where the issues sit:
+
+1. **Chapter Titles:** In `assemble.py`, the `_extract_chapter_title()` regex or the HTML heading construction is truncating at the em-dash. Review the regex pattern that builds chapter titles and ensure full subtitle preservation.
+2. **Cover Title:** In `assemble.py` or `export.py`, cover generation uses a placeholder/filename instead of the translated title from the translation stage output. Use the translated title from the pipeline state.
+3. **Devanagari Garbling:** In `export.py`, the font configuration or CSS may not be embedding the correct Devanagari font with full conjunct support. Verify WeasyPrint's `@font-face` is using a font with complete Devanagari coverage (e.g., Noto Sans Devanagari has full conjunct support).
+4. **Content Bleed:** In `assemble.py`, the chapter boundary detection or HTML construction may be concatenating content from multiple sources (Foreword, Ch9). Verify chapter boundaries are explicitly delimited in the HTML.
+5. **Word Inflation:** Once content bleed is fixed, per-chapter word counts should normalize.
+
+**Thufir's Production Readiness Test Suite:**
+
+Thufir built `tests/regression/test_production_readiness.py` (61 tests) as a release-blocking (not pipeline-blocking) regression suite. 56 tests pass; 5 correctly fail on the truncation bug:
+- Chapter 1, 3, 5, 9 full title validation
+- Glossary Devanagari integrity
+
+Once you fix the P0 issues, all 61 tests should pass.
+
+**Priority Fix Order:**
+1. Devanagari rendering (font configuration in export.py)
+2. Chapter title truncation (regex in assemble.py)
+3. Cover title placeholder (use translated source title, not filename)
+4. Content bleed (chapter boundary detection in assemble.py)
+5. Key phrase coverage (may resolve with title fix; verify after)
+
+**Gate Enhancements Planned:**
+
+New QA gates recommended:
+- **Title Fidelity Gate:** Compare chapter headings vs golden JSON `full_title` (fuzzy ≥90%)
+- **Cover Validation Gate:** Validate cover title is translated, not filename
+- **Devanagari Rendering Integrity Gate:** Validate U+0900–0x097F range, flag Latin artifacts
+- **Key Phrase Coverage Gate:** All `key_phrases` present in each chapter
+- **Per-Chapter Word Count Gate:** Chapter-level validation against `word_count_approx`
+- **ToC Completeness Gate:** Page numbers and full titles
+
+These gates will be added to the golden-targeted-qa pipeline stage once your fixes are in.
+
+**Decision logged:** `.squad/decisions.md` — "Quality Gate Analysis — Production Readiness" and "Add Production Readiness Test Suite"

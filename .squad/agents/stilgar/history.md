@@ -65,3 +65,16 @@
 **Blockers eliminated:** All core pipeline issues (OCR, translation, glossary, structure) now have objective proof. Chani's regression tests prevent future regressions (page inflation test fails at 1.5× multiplier, would have caught 38-page bug immediately).
 
 **Next:** CI enforcement (`.github/workflows/quality-gates.yml`) blocks PRs from merging without gate validation + proof artifacts.
+
+### 2026-04-20 — Deep Comparative Quality Review
+
+- **Verdict:** Pipeline output NOT production-ready. 3 P0 blockers, 2 P1 significant, 2 P2 minor.
+- **P0-1:** All 9 chapter titles truncated — subtitles after em-dash dropped in both ToC and body headers. Heading extraction strips post-dash content.
+- **P0-2:** Cover title is filename placeholder ("Test Hindi Book") instead of translated source title ("Hindi Literature and Culture — Test Booklet").
+- **P0-3:** Devanagari in glossary garbled — font embedding issue in WeasyPrint PDF export produces substitution artifacts (e.g., `भȫèक्ति` instead of `भक्ति`, `T` replacing `व` throughout).
+- **P1-1:** Key phrases missing from 4 chapters (Ch2: "eight limbs", Ch4: "fruits of action", Ch8: "guru tradition"/"meditation", Ch9: "continuity").
+- **P1-2:** Word count 60% inflated vs source (1.60× vs golden's 1.05×). Ch9 at 4× expected — content bleed from Foreword into chapter text stream.
+- **Critical gap in existing gates:** All 5 current quality gates check structural presence (is a title there? are there 9 chapters?) but NOT content fidelity (is the title correct? are chapters complete?). Every P0 passed existing gates.
+- **Recommended 6 new QA checks:** Title Fidelity, Enhanced Cover Validation, Devanagari Rendering Integrity, Key Phrase Coverage, Per-Chapter Word Count, ToC Completeness.
+- **Golden JSON assessment:** Directionally correct but missing section-level data, cover title field, and Devanagari validation criteria. Needs enrichment.
+- **Full report:** `.squad/decisions/inbox/stilgar-qa-findings.md`

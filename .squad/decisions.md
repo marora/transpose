@@ -536,3 +536,95 @@ Gate 6 now **validates the golden target before using it**:
 - `src/transpose/pipeline/gates.py` — `validate_golden_target()` function
 - `tests/regression/test_golden_target_integrity.py` — 19 standalone tests
 - `tests/regression/test_golden_targeted_qa.py` — 15 new gate tests
+
+---
+
+### Decision: Quality Gate Analysis — Production Readiness (P0/P1 Issues)
+
+**Author:** Stilgar (Lead/Architect)  
+**Date:** 2026-04-20  
+**Status:** Findings Documented; Priority Fixes Queued  
+
+Deep comparative quality review revealed **7 issues**: 3 P0 (blocking), 2 P1 (significant), 2 P2 (minor). Current gates validate structural presence but not content fidelity.
+
+**P0 Issues (Blocking):**
+1. **Chapter Titles Truncated** — All 9 chapter titles missing subtitles after em-dash. Example: "Chapter 1: Dharma and Karma — The Message of the Gita" becomes "Chapter 1: Dharma and Karma". Root cause: heading extraction strips text after dash or hits character limit during assembly/export.
+2. **Cover Title Placeholder** — Cover uses filename placeholder ("Test Hindi Book") instead of translated source title ("Hindi Literature and Culture — Test Booklet"). Root cause: cover generation uses ingest filename or metadata field instead of OCR'd/translated title.
+3. **Devanagari Garbled in Glossary** — Glossary contains Unicode substitution artifacts (T, Ȩõ, ȫè replacing Devanagari codepoints). Examples: `आयुTर्वेद` (should be `आयुर्वेद`), `भȫèक्ति` (should be `भक्ति`). Root cause: font embedding or PDF export uses font lacking Devanagari conjuncts; WeasyPrint substitutes missing glyphs with Latin-extended artifacts.
+
+**P1 Issues (Significant):**
+4. **Key Phrases Missing** — Four chapters missing context phrases that exist in Hindi source and golden reference. Ch2: "spiritual discipline", "eight limbs"; Ch4: "fruits of action"; Ch8: "guru tradition", "meditation"; Ch9: "continuity". Root cause: translation stage summarizes aggressively or loses content during chunking.
+5. **Word Count Inflation** — Output 60% larger than source (1.60× ratio) vs golden target at 1.05× (threshold: 1.50×). Ch9 shows 718 words output vs ~178 expected. Root cause: content from Translator's Foreword bleeds into Ch9 text stream; HTML/CSS layout doesn't properly separate boundaries.
+
+**P2 Issues (Minor):**
+6. **ToC Missing Page Numbers** — Golden target ToC includes page numbers; pipeline output doesn't. Impact: minor for digital; expected for print-ready.
+7. **Golden JSON Incomplete** — Sections arrays empty (no sub-heading/paragraph-level validation possible). No cover title field. No Devanagari rendering validation criteria.
+
+**What Existing Gates Miss:**
+- Gate 6 validates chapter count (present?), word count (within ratio?), Devanagari density (>2%?), glossary terms (present?). Passes all checks above because body content is correct — only presentation/assembly is broken.
+- No comparison of chapter title against `full_title` in golden JSON.
+- No cover page title validation (just `has_title=true`).
+- No Devanagari rendering integrity (PDF output validation, not data validation).
+- No key phrase content coverage verification.
+- No per-chapter word count validation (only total ratio).
+- No ToC completeness check.
+
+**Recommended New Gates:**
+1. **Title Fidelity Gate** — Extract chapter headings from output PDF, compare against golden JSON `full_title` using fuzzy match (≥90%). Catches P0-1.
+2. **Cover Page Validation Gate** — Compare cover title text against translated source title; reject filenames. Catches P0-2.
+3. **Devanagari Rendering Integrity Gate** — Validate all Devanagari text in PDF output; flag U+0900–U+097F violations and Latin-extended artifacts. Catches P0-3.
+4. **Key Phrase Coverage Gate** — Each chapter must contain all `key_phrases` from golden JSON (case-insensitive substring). Catches P1-1.
+5. **Per-Chapter Word Count Gate** — Validate each chapter against golden JSON `word_count_approx` with tolerance. Catches P1-2 (Ch9 at 4× expected).
+6. **ToC Completeness Gate** — Validate ToC includes page numbers and full chapter titles matching body headers. Catches P2-1.
+
+**Priority Fixes:**
+1. P0-3 (Devanagari rendering) — font/encoding in WeasyPrint export
+2. P0-1 (Chapter titles) — heading extraction preserves full title including subtitle
+3. P0-2 (Cover title) — use translated source title, not filename
+4. P1-2 (Word inflation) — investigate Ch9 content bleed, fix layout boundaries
+5. P1-1 (Key phrases) — may resolve with title fix; verify after
+
+**Verdict:** NOT production-ready. Translation quality of body text is solid. Presentation layer (PDF assembly + export) is the blocker.
+
+**Files:**
+- `.squad/decisions/inbox/stilgar-qa-findings.md` — Full comparative review with examples
+
+---
+
+### Decision: Add Production Readiness Test Suite
+
+**Author:** Thufir (QA/Testing)  
+**Date:** 2026-04-20  
+**Status:** Proposed  
+
+Current pipeline gate (Gate 6) validates structural presence but not content quality. Built `tests/regression/test_production_readiness.py` with 61 tests across 8 dimensions as a **release-blocking** (not pipeline-blocking) regression suite.
+
+**Test Coverage:**
+- **Title Fidelity** — All chapter full titles match golden JSON (fuzzy ≥90%)
+- **Cover Validation** — Cover title translated (not filename)
+- **Devanagari Rendering** — No garbled Unicode in glossary/text (U+FFFD, Latin artifacts)
+- **Key Phrase Coverage** — All `key_phrases` present in chapters
+- **Word Count Ratio** — Per-chapter validation against `word_count_approx`
+- **ToC Completeness** — Page numbers, full titles, consistency with body
+- **Structural Integrity** — No broken content blocks, all chapters present
+- **Artifact Validation** — All outputs exist, readable, no corruption
+
+**Test Status:**
+- 56 tests pass ✅
+- 5 tests correctly fail on truncation bug (P0-1)
+  - Chapter 1 full title missing
+  - Chapter 3 full title missing
+  - Chapter 5 full title missing
+  - Chapter 9 full title missing
+  - Glossary Devanagari validation
+
+**Recommendation:**
+- Tests should run in CI with `@pytest.mark.production` marker
+- Release gating: `pytest -m production` must pass (not pipeline gate)
+- Different cadence: Gate 6 runs on every pipeline execution; production tests run pre-release
+- Once P0 issues fixed, all 61 tests should pass
+
+**Key Files:**
+- `tests/regression/test_production_readiness.py` — 61 tests, 8 test classes
+
+---
