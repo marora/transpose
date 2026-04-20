@@ -23,6 +23,7 @@ from transpose.pipeline.gates import (
     golden_targeted_qa_gate,
     ocr_sanity_gate,
     translation_completeness_gate,
+    validate_production_readiness,
 )
 
 logger = logging.getLogger(__name__)
@@ -352,6 +353,13 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             if pdf_artifact_path:
                 _run_gate(
                     lambda _inp: golden_targeted_qa_gate(pdf_artifact_path),
+                    None,
+                    gate_results,
+                )
+
+                # --- Gate 7: Production Readiness ---
+                _run_gate(
+                    lambda _inp: validate_production_readiness(pdf_artifact_path),
                     None,
                     gate_results,
                 )

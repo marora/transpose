@@ -88,9 +88,13 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
             data = term_data[term_key]
             data["occurrences"] += 1
 
-            # Keep original script (prefer non-empty), NFC-normalize Indic text
+            # Keep original script (prefer non-empty), NFC-normalize Indic text.
+            # Seed glossary entries have curated scripts — always prefer them
+            # over LLM-detected forms which may be wrong (e.g. sangat).
             if extracted_term.original_script and not data["original_script"]:
                 data["original_script"] = normalize_unicode(extracted_term.original_script)
+            if term_key in seed_terms and seed_terms[term_key][0]:
+                data["original_script"] = normalize_unicode(seed_terms[term_key][0])
 
             # Collect definitions
             if extracted_term.definition and extracted_term.definition not in data["definitions"]:

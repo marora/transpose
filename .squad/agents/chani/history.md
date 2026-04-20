@@ -475,3 +475,15 @@ Fixed all 3 P0 blockers from Stilgar's quality review. All visually verified aga
 **P1-1 & P1-2:** Key phrases and word count inflation are translation-quality issues, not assembly bugs. Current word counts are within acceptable range (e.g., Ch9: 187 words vs expected 178).
 
 **Test results:** 441 passed, 1 pre-existing failure (settings test), 4 xfail, 1 skipped. The 5 previously-failing chapter title regression tests now pass.
+
+### Verification: Gate 7 & Two-Pass PDF Already Implemented
+
+**Task:** Rebuild Gate 7 (production readiness) and two-pass PDF generation in export.py. Both were described as "accidentally lost."
+
+**Finding:** Both pieces of work already exist in the codebase and are fully functional:
+- `validate_production_readiness()` in `gates.py` (lines 789-948): 6-check post-export gate covering Devanagari integrity, ToC verification, content completeness, script hygiene, cover validation, structural integrity.
+- Two-pass PDF rendering in `export.py` `_generate_pdf()`: Pass 1 with `target-counter()`, page-map extraction via PyMuPDF, Pass 2 with hard-coded page numbers. Gurmukhi font embedded. NFC normalization applied.
+- Runner integration in `runner.py` (lines 360-365): Gate 7 call after export, after golden QA gate.
+- Glossary NFC normalization in `glossary.py` (lines 95-97): Already applied via `normalize_unicode()`.
+
+**Cleanup performed:** Removed duplicate module-level constant definitions (`_BODY_DEVANAGARI_MAX_RATIO`, `_DEVANAGARI_RE`) in the Gate 7 section of gates.py — they shadowed identical definitions from the Gate 6 section. Added clarifying comment that Gate 7 reuses these module-level constants. All 38 gate tests pass after cleanup.

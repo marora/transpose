@@ -226,7 +226,8 @@ async def _capture_export_html(
 ) -> tuple[str, str]:
     """Call _generate_pdf and capture the HTML/CSS strings before rendering.
 
-    Patches WeasyPrint so no actual PDF is produced.
+    Patches WeasyPrint so no actual PDF is produced, and stubs out the
+    chapter-page-number extraction (which needs a real PDF).
     Returns ``(html, css)`` tuple.
     """
     captured: dict[str, str] = {"html": "", "css": ""}
@@ -251,6 +252,10 @@ async def _capture_export_html(
         patch("weasyprint.HTML", _MockHTML),
         patch("weasyprint.CSS", _MockCSS),
         patch("weasyprint.text.fonts.FontConfiguration", MagicMock),
+        patch(
+            "transpose.pipeline.export._extract_chapter_page_numbers",
+            return_value={1: 1, 2: 3, 3: 5},
+        ),
     ):
         await _generate_pdf(manuscript, glossary, book)
 
@@ -533,3 +538,140 @@ class TestTranslatorsForewordIntegration:
         ms = _make_manuscript()
         html, _css = await _capture_export_html(ms, glossary=None)
         assert "foreword-page" not in html
+
+
+# ---------------------------------------------------------------------------
+# NFC Normalization
+# ---------------------------------------------------------------------------
+
+
+class TestNfcNormalization:
+    """All text must be NFC-normalized before PDF rendering."""
+
+    @pytest.mark.asyncio
+    async def test_nfc_normalization_applied_before_rendering(self) -> None:
+        """_generate_pdf must NFC-normalize the full HTML string.
+
+        We inject a non-NFC Devanagari sequence (decomposed ka + virama)
+        and verify the rendered HTML contains the NFC-composed form.
+        """
+        import unicodedata
+
+        # NFD form: DEVANAGARI LETTER KA + VIRAMA (decomposed)
+        nfd_text = "\u0915\u094D"  # क + ्
+
+        ms = _make_manuscript(
+            chapters=[
+                Chapter(
+                    number=1,
+                    title="Chapter 1: Test",
+                    content_html=f"<h1>Chapter 1: Test</h1><p>The word {nfd_text} appears.</p>",
+                ),
+            ],
+        )
+        html, _css = await _capture_export_html(ms)
+        # The rendered HTML should have NFC-normalized text
+        assert unicodedata.is_normalized("NFC", html), (
+            "HTML passed to WeasyPrint is not NFC-normalized"
+        )
+
+    @pytest.mark.asyncio
+    async def test_nfc_normalization_on_both_passes(self) -> None:
+        """Both pass-1 and pass-2 HTML must be NFC-normalized.
+
+        The normalize_unicode call in _generate_pdf runs on both passes.
+        We verify by checking the captured HTML is NFC.
+        """
+        import unicodedata
+
+        ms = _make_manuscript()
+        html, _css = await _capture_export_html(ms)
+        assert unicodedata.is_normalized("NFC", html)
+
+
+# ---------------------------------------------------------------------------
+# Gurmukhi Font Path Resolution
+# ---------------------------------------------------------------------------
+
+
+class TestGurmukhiFontResolution:
+    """Gurmukhi font-face CSS is only emitted when the font file exists."""
+
+    @pytest.mark.asyncio
+    async def test_gurmukhi_font_face_when_font_exists(self) -> None:
+        """If NotoSansGurmukhi.ttf exists, CSS must include @font-face for it."""
+        from pathlib import Path
+
+        fonts_dir = Path(__file__).resolve().parents[3] / "fonts"
+        gurmukhi_font = fonts_dir / "NotoSansGurmukhi.ttf"
+
+        ms = _make_manuscript()
+        _html, css = await _capture_export_html(ms)
+
+        if gurmukhi_font.exists():
+            assert "Noto Sans Gurmukhi" in css, (
+                "Gurmukhi font file exists but @font-face not in CSS"
+            )
+            assert "U+0A00-0A7F" in css, (
+                "Gurmukhi unicode-range not specified"
+            )
+        else:
+            # When font is absent, CSS should not reference it
+            assert "Noto Sans Gurmukhi" not in css or "font-face" not in css.split("Gurmukhi")[0], (
+                "Gurmukhi @font-face emitted but font file is missing"
+            )
+
+    @pytest.mark.asyncio
+    async def test_devanagari_font_always_present(self) -> None:
+        """Devanagari @font-face is always included regardless of Gurmukhi."""
+        ms = _make_manuscript()
+        _html, css = await _capture_export_html(ms)
+        assert "Noto Sans Devanagari" in css
+
+
+# ---------------------------------------------------------------------------
+# Two-Pass Rendering
+# ---------------------------------------------------------------------------
+
+
+class TestTwoPassRendering:
+    """The two-pass approach must produce valid PDF output."""
+
+    @pytest.mark.asyncio
+    async def test_two_pass_produces_nonempty_html(self) -> None:
+        """Both passes should produce non-empty HTML."""
+        ms = _make_manuscript(
+            table_of_contents=[
+                {"title": "Chapter 1: Arjuna's Despair", "number": 1},
+                {"title": "Chapter 2: The Yoga of Knowledge", "number": 2},
+            ],
+        )
+        html, css = await _capture_export_html(ms)
+        assert len(html) > 100, "Rendered HTML is suspiciously short"
+        assert len(css) > 100, "Rendered CSS is suspiciously short"
+
+    @pytest.mark.asyncio
+    async def test_pass1_uses_target_counter(self) -> None:
+        """Pass 1 CSS should use target-counter for ToC page resolution.
+
+        We can verify this indirectly: the CSS capture comes from pass 2
+        (which has content: none), confirming the two-pass path ran.
+        """
+        ms = _make_manuscript(
+            table_of_contents=[
+                {"title": "Chapter 1: Test", "number": 1},
+            ],
+        )
+        _html, css = await _capture_export_html(ms)
+        # Pass 2 CSS has "content: none" for ToC ::after (hard-coded numbers)
+        assert "content: none" in css or "content:none" in css, (
+            "Pass 2 CSS should suppress target-counter (replaced by hard-coded numbers)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_html_contains_chapter_content(self) -> None:
+        """The final HTML must contain all chapter content."""
+        ms = _make_manuscript()
+        html, _css = await _capture_export_html(ms)
+        assert "Kurukshetra" in html, "Chapter 1 content missing from HTML"
+        assert "dharma" in html, "Chapter 2 content missing from HTML"

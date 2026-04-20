@@ -1,6 +1,6 @@
 {
   "book_id": "d6671336-522a-48b6-82ee-624380d706b8",
-  "timestamp": "2026-04-19T22:24:06.555388+00:00",
+  "timestamp": "2026-04-20T18:01:48.171481+00:00",
   "overall": "PASS",
   "gates": [
     {
@@ -16,7 +16,7 @@
           "min_confidence": 0.6
         }
       },
-      "timestamp": "2026-04-19T22:12:47.254192+00:00"
+      "timestamp": "2026-04-20T18:01:43.335983+00:00"
     },
     {
       "name": "translation_completeness",
@@ -29,7 +29,7 @@
         "failing_chunks": [],
         "marker_count": 0
       },
-      "timestamp": "2026-04-19T22:12:48.177415+00:00"
+      "timestamp": "2026-04-20T18:01:44.232015+00:00"
     },
     {
       "name": "glossary_integrity",
@@ -39,7 +39,7 @@
         "total_entries": 51,
         "failing_entries": []
       },
-      "timestamp": "2026-04-19T22:12:49.020600+00:00"
+      "timestamp": "2026-04-20T18:01:45.119643+00:00"
     },
     {
       "name": "document_structure",
@@ -51,7 +51,7 @@
         "has_foreword": true,
         "has_title": true
       },
-      "timestamp": "2026-04-19T22:12:49.352207+00:00"
+      "timestamp": "2026-04-20T18:01:45.534746+00:00"
     },
     {
       "name": "artifact_availability",
@@ -60,54 +60,33 @@
       "details": {
         "artifacts": {
           "epub": {
-            "size_bytes": 16995,
+            "size_bytes": 17403,
             "uri": "/home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.epub"
           },
           "pdf": {
-            "size_bytes": 212784,
+            "size_bytes": 215608,
             "uri": "/home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.pdf"
           }
         },
         "missing": []
       },
-      "timestamp": "2026-04-19T22:12:51.319608+00:00"
-    },
-    {
-      "name": "golden_targeted_qa",
-      "passed": true,
-      "failures": [],
-      "details": {
-        "checks": {
-          "structural_match": true,
-          "content_completeness": true,
-          "script_hygiene": true,
-          "glossary_integrity": true,
-          "no_regression": true
-        },
-        "chapter_count": 9,
-        "page_count": 14,
-        "glossary_terms_found": 14,
-        "devanagari_body_ratio": 0.0,
-        "glossary_terms_missing": [],
-        "glossary_entries_count": 46
-      },
-      "timestamp": "2026-04-19T22:24:06.555331+00:00"
+      "timestamp": "2026-04-20T18:01:48.171433+00:00"
     }
   ],
   "artifacts": {
     "epub": {
       "path": "/home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.epub",
-      "size_bytes": 16995
+      "size_bytes": 17403
     },
     "pdf": {
       "path": "/home/maniarora/source/work/local/transpose/Test_Hindi_Book_final.pdf",
-      "size_bytes": 212784
+      "size_bytes": 215608
     }
   },
   "errors": [],
   "summary": {
-    "total_gates": 6,
-    "passed": 6,
+    "total_gates": 5,
+    "passed": 5,
     "failed": 0
   }
 }

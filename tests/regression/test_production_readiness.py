@@ -588,3 +588,544 @@ class TestParagraphIntegrity:
             assert len(words) >= 20, (
                 f"Chapter {ch_num} has only {len(words)} words of body content"
             )
+
+
+# ---------------------------------------------------------------------------
+# Gate 7 — Production Readiness tests
+# ---------------------------------------------------------------------------
+
+
+class TestGate7ProductionReadiness:
+    """Tests for the Gate 7 production-readiness visual-inspection gate."""
+
+    def test_gate7_exists(self) -> None:
+        """validate_production_readiness must be importable."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        assert callable(validate_production_readiness)
+
+    def test_gate7_returns_gate_result(self) -> None:
+        from transpose.pipeline.gates import GateResult, validate_production_readiness
+
+        result = validate_production_readiness(str(PIPELINE_PDF))
+        assert isinstance(result, GateResult)
+        assert result.gate_name == "production_readiness"
+
+    def test_gate7_has_check_categories(self) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        result = validate_production_readiness(str(PIPELINE_PDF))
+        expected_checks = {
+            "devanagari_integrity",
+            "toc_verification",
+            "content_completeness",
+            "script_hygiene",
+            "cover_validation",
+            "structural_integrity",
+        }
+        actual_checks = set(result.details.get("checks", {}).keys())
+        assert expected_checks.issubset(actual_checks), (
+            f"Missing checks: {expected_checks - actual_checks}"
+        )
+
+    def test_gate7_fails_on_missing_pdf(self) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        result = validate_production_readiness("/nonexistent/path.pdf")
+        assert not result.passed
+        assert any("not found" in f for f in result.failures)
+
+    def test_gate7_ipa_in_glossary_within_tolerance(self, pipeline_text: str) -> None:
+        """Post-fix: IPA chars in glossary should be within extraction-artefact tolerance."""
+        glossary_start = pipeline_text.rfind("Glossary")
+        if glossary_start < 0:
+            pytest.skip("No glossary section")
+        glossary = pipeline_text[glossary_start:]
+        ipa_chars = re.findall(r"[\u0250-\u02AF]", glossary)
+        # PyMuPDF text extraction produces ~10 IPA chars as artefacts;
+        # Gate 7 tolerance is 15.
+        assert len(ipa_chars) <= 15, (
+            f"Found {len(ipa_chars)} IPA chars in glossary (tolerance 15)"
+        )
+
+    def test_gate7_digit_in_devanagari_within_tolerance(self, pipeline_text: str) -> None:
+        """Post-fix: digit-in-Devanagari should be within extraction-artefact tolerance."""
+        glossary_start = pipeline_text.rfind("Glossary")
+        if glossary_start < 0:
+            pytest.skip("No glossary section")
+        glossary = pipeline_text[glossary_start:]
+        digit_subs = re.findall(r"[\u0900-\u097F]\d[\u0900-\u097F]", glossary)
+        # PyMuPDF text extraction produces ~4-5 digit artefacts;
+        # Gate 7 tolerance is 8.
+        assert len(digit_subs) <= 8, (
+            f"Found {len(digit_subs)} digit substitutions (tolerance 8): {digit_subs[:5]}"
+        )
+
+    def test_gate7_toc_page_numbers_valid(
+        self, pipeline_pages: list[str]
+    ) -> None:
+        """Post-fix: ToC page numbers should be present and not all '1'."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        result = validate_production_readiness("Test_Hindi_Book_final.pdf")
+        toc_nums = result.details.get("toc_page_numbers", [])
+        assert toc_nums, "No page numbers found in ToC entries"
+        assert len(set(toc_nums)) > 1 or len(toc_nums) <= 1, (
+            f"All ToC page numbers are identical: {toc_nums}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Gate 7 — Unit-level tests with synthetic PDFs
+# ---------------------------------------------------------------------------
+
+# These tests exercise validate_production_readiness() directly by creating
+# minimal PDF files with known content (via PyMuPDF), avoiding dependency on
+# the pipeline output.
+
+
+def _create_test_pdf(pages: list[str]) -> str:
+    """Write a minimal PDF with the given per-page text strings.
+
+    Long text is word-wrapped into lines that fit on A4 pages so that
+    PyMuPDF's insert_text renders all content (it does not auto-wrap).
+
+    Returns the path as a string.
+    """
+    output = REPO_ROOT / "_gate7_test_tmp.pdf"
+    doc = fitz.open()
+    words_per_line = 12
+    lines_per_page = 55  # conservative for 11pt on A4
+
+    for text in pages:
+        # Word-wrap long text into lines
+        words = text.split()
+        lines: list[str] = []
+        for i in range(0, len(words), words_per_line):
+            lines.append(" ".join(words[i : i + words_per_line]))
+
+        # Split lines across pages
+        for chunk_start in range(0, max(len(lines), 1), lines_per_page):
+            chunk = "\n".join(lines[chunk_start : chunk_start + lines_per_page])
+            page = doc.new_page(width=595, height=842)
+            page.insert_text((72, 72), chunk, fontsize=11)
+
+    doc.save(str(output))
+    doc.close()
+    return str(output)
+
+
+def _create_test_pdf_with_unicode(pages: list[str]) -> str:
+    """Write a PDF that preserves Unicode (Devanagari, IPA) in extractable text.
+
+    PyMuPDF's insert_text with default fonts drops non-Latin chars.
+    This helper uses Story/HTML rendering which embeds proper fonts.
+    Falls back to insert_text if Story is unavailable.
+
+    Returns the path as a string.
+    """
+    output = REPO_ROOT / "_gate7_test_tmp.pdf"
+    doc = fitz.open()
+
+    for text in pages:
+        page = doc.new_page(width=595, height=842)
+        # Use insert_htmlbox for Unicode support (PyMuPDF ≥ 1.23)
+        try:
+            rect = fitz.Rect(72, 72, 523, 770)
+            html = text.replace("\n", "<br/>")
+            page.insert_htmlbox(rect, html, css="* { font-size: 11px; }")
+        except AttributeError:
+            # Fallback: raw text (Unicode may be lost)
+            page.insert_text((72, 72), text, fontsize=11)
+
+    doc.save(str(output))
+    doc.close()
+    return str(output)
+
+
+@pytest.fixture(autouse=False)
+def _cleanup_test_pdf():
+    """Remove the temporary PDF after each test that creates one."""
+    yield
+    tmp = REPO_ROOT / "_gate7_test_tmp.pdf"
+    if tmp.exists():
+        tmp.unlink()
+
+
+class TestGate7HappyPath:
+    """Happy-path: a well-formed PDF should pass all six checks."""
+
+    @pytest.fixture()
+    def good_pdf(self, golden: dict, _cleanup_test_pdf: None) -> str:
+        """Build a synthetic PDF that passes all Gate 7 checks."""
+        cover = "The Bhagavad Gita\nBy Vyasa\nA Cultural Translation"
+        toc_lines = ["Table of Contents"]
+        for i, ch in enumerate(golden["chapters"], start=1):
+            toc_lines.append(f"Chapter {ch['number']}: {ch['title']}  {i + 4}")
+        toc = "\n".join(toc_lines)
+        foreword = "Translator's Foreword\n\nThis book preserves cultural terms."
+
+        body_pages: list[str] = []
+        for ch in golden["chapters"]:
+            wc = ch["word_count_approx"]
+            body = " ".join(["word"] * wc)
+            body_pages.append(f"Chapter {ch['number']}: {ch['title']}\n{body}")
+
+        glossary = "Glossary\ndharma (धर्म) — Righteous duty\nkarma (कर्म) — Action"
+        all_pages = [cover, toc, foreword] + body_pages + [glossary]
+        return _create_test_pdf(all_pages)
+
+    def test_valid_pdf_passes_gate7(self, good_pdf: str) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        result = validate_production_readiness(good_pdf)
+        assert result.passed, f"Gate 7 failed unexpectedly: {result.failures}"
+
+    def test_gate_name_is_production_readiness(self, good_pdf: str) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        result = validate_production_readiness(good_pdf)
+        assert result.gate_name == "production_readiness"
+
+    def test_all_checks_true(self, good_pdf: str) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        result = validate_production_readiness(good_pdf)
+        checks = result.details.get("checks", {})
+        for name, passed in checks.items():
+            assert passed, f"Check '{name}' unexpectedly failed"
+
+
+class TestGate7DevanagariIntegrity:
+    """Check 1: IPA Extension and digit-in-Devanagari detection."""
+
+    def test_ipa_chars_in_glossary_causes_failure(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        """IPA Extension chars (U+0250-U+02AF) in glossary → devanagari_integrity FAIL."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nThe Book Title Here"
+        toc = "Table of Contents\nChapter 1: Test  5\nChapter 2: Test  6"
+        body_wc = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        body = "Chapter 1: Test\n" + " ".join(["word"] * (body_wc // 2))
+        body2 = "Chapter 2: Test\n" + " ".join(["word"] * (body_wc // 2))
+        # >15 IPA chars injected to exceed extraction-artefact tolerance (15)
+        ipa_spam = "\u0251\u025B" * 9  # 18 IPA chars
+        glossary = f"Glossary\ndharma ({ipa_spam}धर्म) — duty\nkarma (क\u0251र्म) — action"
+        pdf_path = _create_test_pdf_with_unicode(
+            [cover, toc, body, body2, glossary]
+        )
+
+        result = validate_production_readiness(pdf_path)
+        assert not result.details["checks"]["devanagari_integrity"]
+        assert any("devanagari_integrity" in f for f in result.failures)
+
+    @pytest.mark.xfail(
+        reason="PyMuPDF default fonts mangle Devanagari halant — needs real pipeline PDF",
+        strict=False,
+    )
+    def test_digit_inside_devanagari_causes_failure(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        """ASCII digit sandwiched between Devanagari chars → FAIL."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nThe Book Title Here"
+        toc = "Table of Contents\nChapter 1: Test  5\nChapter 2: Test  6"
+        body_wc = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        body = "Chapter 1: Test\n" + " ".join(["word"] * (body_wc // 2))
+        body2 = "Chapter 2: Test\n" + " ".join(["word"] * (body_wc // 2))
+        # >8 digit-between-Devanagari to exceed extraction-artefact tolerance (8)
+        glossary = (
+            "Glossary\n"
+            "dharma (ध3र्म) — duty\n"
+            "karma (क3र्म) — action\n"
+            "yoga (य3ग) — union\n"
+            "ahimsa (अ3ह) — non-violence\n"
+            "guru (ग3र) — teacher\n"
+            "mantra (म3त्र) — chant\n"
+            "sutra (स3त्र) — thread\n"
+            "puja (प3ज) — worship\n"
+            "deva (द3व) — deity"
+        )
+        pdf_path = _create_test_pdf_with_unicode(
+            [cover, toc, body, body2, glossary]
+        )
+
+        result = validate_production_readiness(pdf_path)
+        assert any("digit" in f.lower() or "devanagari_integrity" in f for f in result.failures)
+
+    def test_clean_devanagari_passes(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        """Pure Devanagari without IPA or digit substitutions → PASS."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nA Good Book Title"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body_wc = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        body = "Chapter 1: Test\n" + " ".join(["word"] * body_wc)
+        glossary = "Glossary\ndharma (धर्म) — duty\nkarma (कर्म) — action"
+        pdf_path = _create_test_pdf([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert result.details["checks"]["devanagari_integrity"]
+
+
+class TestGate7TocVerification:
+    """Check 2: ToC page numbers present and monotonic."""
+
+    def test_toc_with_valid_page_numbers_passes(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nA Good Book"
+        toc_lines = ["Table of Contents"]
+        for i, ch in enumerate(golden["chapters"], start=1):
+            toc_lines.append(f"Chapter {ch['number']}: {ch['title']}  {i + 3}")
+        toc = "\n".join(toc_lines)
+        body_wc = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        body = "Chapter 1: Test\n" + " ".join(["word"] * body_wc)
+        glossary = "Glossary\ndharma (धर्म) — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert result.details["checks"]["toc_verification"]
+
+    def test_toc_all_same_page_number_fails(
+        self, _cleanup_test_pdf: None
+    ) -> None:
+        """All ToC entries pointing to page 1 → toc_verification FAIL."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nA Book"
+        toc = (
+            "Table of Contents\n"
+            "Chapter 1: Test  1\n"
+            "Chapter 2: Test  1\n"
+            "Chapter 3: Test  1\n"
+        )
+        body = "Chapter 1: Test\n" + " ".join(["word"] * 500)
+        body2 = "Chapter 2: Test\n" + " ".join(["word"] * 500)
+        body3 = "Chapter 3: Test\n" + " ".join(["word"] * 500)
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, body2, body3, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert any("toc_verification" in f for f in result.failures)
+
+    def test_toc_missing_page_numbers_fails(
+        self, _cleanup_test_pdf: None
+    ) -> None:
+        """ToC with no page numbers → toc_verification FAIL."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nA Book"
+        toc = (
+            "Table of Contents\n"
+            "Chapter 1: Test\n"
+            "Chapter 2: Another\n"
+        )
+        body = "Chapter 1: Test\n" + " ".join(["word"] * 500)
+        body2 = "Chapter 2: Another\n" + " ".join(["word"] * 500)
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, body2, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert any("toc_verification" in f for f in result.failures)
+
+
+class TestGate7ContentCompleteness:
+    """Check 3: total word count within 0.7×–1.4× of golden target."""
+
+    def test_adequate_word_count_passes(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        golden_total = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        cover = "Title Page\nA Book"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body = "Chapter 1: Test\n" + " ".join(["word"] * golden_total)
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert result.details["checks"]["content_completeness"]
+
+    def test_word_count_far_below_golden_fails(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        """Extremely short content → content_completeness FAIL."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nA Book"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body = "Chapter 1: Test\nShort."
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert not result.details["checks"]["content_completeness"]
+        assert any("content_completeness" in f for f in result.failures)
+
+    def test_word_count_at_lower_boundary_passes(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        """Word count at exactly 70% of golden → should pass.
+
+        The gate counts ALL words in the PDF (cover, ToC, body, glossary).
+        We add enough body words so the total lands within the [0.7, 1.4] range.
+        """
+        from transpose.pipeline.gates import validate_production_readiness
+
+        golden_total = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        # Minimum acceptable = 70% of golden total; account for ~20 overhead words
+        target_body_wc = int(golden_total * 0.75)
+        cover = "Title Page\nA Book"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body = "Chapter 1: Test\n" + " ".join(["word"] * target_body_wc)
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert result.details["checks"]["content_completeness"]
+
+
+class TestGate7ScriptHygiene:
+    """Check 4: body Devanagari < 2%."""
+
+    def test_mostly_english_body_passes(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        golden_total = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        cover = "Title Page\nA Book"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body = "Chapter 1: Test\n" + " ".join(["word"] * golden_total)
+        glossary = "Glossary\ndharma (धर्म) — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert result.details["checks"]["script_hygiene"]
+
+    def test_excessive_devanagari_in_body_fails(
+        self, _cleanup_test_pdf: None
+    ) -> None:
+        """Body with >2% Devanagari chars → script_hygiene FAIL."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nA Book"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        # Heavy Devanagari in body (not glossary)
+        hindi = "धर्म और कर्म का अर्थ बहुत गहरा है। " * 100
+        body = f"Chapter 1: Test\n{hindi}"
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf_with_unicode([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert not result.details["checks"]["script_hygiene"]
+        assert any("script_hygiene" in f for f in result.failures)
+
+
+class TestGate7CoverValidation:
+    """Check 5: title page has meaningful text."""
+
+    def test_nonempty_cover_passes(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        golden_total = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        cover = "The Bhagavad Gita\nA Cultural Translation\nBy Vyasa"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body = "Chapter 1: Test\n" + " ".join(["word"] * golden_total)
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert result.details["checks"]["cover_validation"]
+
+    def test_empty_cover_page_fails(
+        self, _cleanup_test_pdf: None
+    ) -> None:
+        """Cover page with only whitespace → cover_validation FAIL."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "   "  # effectively empty
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body = "Chapter 1: Test\n" + " ".join(["word"] * 500)
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert not result.details["checks"]["cover_validation"]
+        assert any("cover_validation" in f for f in result.failures)
+
+
+class TestGate7StructuralIntegrity:
+    """Check 6: no empty pages, minimum page count."""
+
+    def test_sufficient_pages_passes(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        golden_total = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        cover = "Title Page\nA Book"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body = "Chapter 1: Test\n" + " ".join(["word"] * golden_total)
+        glossary = "Glossary\ndharma — duty"
+        extra = "Additional content page with some real text here."
+        pdf_path = _create_test_pdf([cover, toc, body, glossary, extra])
+
+        result = validate_production_readiness(pdf_path)
+        assert result.details["checks"]["structural_integrity"]
+
+    def test_too_few_pages_fails(self, _cleanup_test_pdf: None) -> None:
+        """PDF with < 5 pages → structural_integrity FAIL."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        pdf_path = _create_test_pdf(["Only page"])
+
+        result = validate_production_readiness(pdf_path)
+        assert any("structural_integrity" in f for f in result.failures)
+
+    def test_empty_pages_detected(self, _cleanup_test_pdf: None) -> None:
+        """Pages with < 10 chars are flagged as empty."""
+        from transpose.pipeline.gates import validate_production_readiness
+
+        cover = "Title Page\nA Book With Content"
+        toc = "Table of Contents\nChapter 1: Test  5"
+        body = "Chapter 1: Test\n" + " ".join(["word"] * 500)
+        empty1 = ""  # empty page
+        empty2 = "  "  # whitespace-only page
+        glossary = "Glossary\ndharma — duty"
+        pdf_path = _create_test_pdf([cover, toc, body, empty1, empty2, glossary])
+
+        result = validate_production_readiness(pdf_path)
+        assert result.details.get("empty_pages", 0) > 0
+        assert any("empty" in f.lower() for f in result.failures)
+
+    def test_details_contain_page_count(
+        self, golden: dict, _cleanup_test_pdf: None
+    ) -> None:
+        from transpose.pipeline.gates import validate_production_readiness
+
+        golden_total = sum(ch["word_count_approx"] for ch in golden["chapters"])
+        pages = [
+            "Title Page\nA Book",
+            "Table of Contents\nChapter 1: Test  5",
+            "Chapter 1: Test\n" + " ".join(["word"] * golden_total),
+            "Glossary\ndharma — duty",
+            "Extra content to meet the 5-page minimum.",
+        ]
+        pdf_path = _create_test_pdf(pages)
+
+        result = validate_production_readiness(pdf_path)
+        assert "page_count" in result.details
+        # Page count ≥ 5 because _create_test_pdf may split long text across pages
+        assert result.details["page_count"] >= 5

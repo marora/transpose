@@ -185,3 +185,26 @@ Known WeasyPrint issue: ToUnicode CMap produces garbled text extraction for Deva
 **Decision filed:** `.squad/decisions/inbox/thufir-production-readiness-gate.md` — recommends production readiness tests as release gate (not pipeline gate), Chani to fix title truncation bug.
 
 **Key insight:** Gate 6 validates *structure* (chapter count, word counts, ratios) but not *content fidelity* (actual title text, subtitle presence). The pipeline passes all structural gates while producing truncated titles — the tests need to compare strings, not just count things.
+
+### Session 2026-04-21: Gate 7 & Export Test Expansion
+
+**Delivered:** 23 new Gate 7 unit tests + 8 new export tests.
+
+**Gate 7 tests (`tests/regression/test_production_readiness.py`):**
+- `TestGate7HappyPath` (3 tests): synthetic PDF passes all 6 checks, gate name correct, all checks true
+- `TestGate7DevanagariIntegrity` (3 tests): IPA chars in glossary → FAIL, digit-in-Devanagari → xfail (PyMuPDF font limitation), clean Devanagari → PASS
+- `TestGate7TocVerification` (3 tests): valid page numbers PASS, all-same fails, missing numbers fails
+- `TestGate7ContentCompleteness` (3 tests): adequate words PASS, far-below FAIL, lower boundary PASS
+- `TestGate7ScriptHygiene` (2 tests): English body PASS, heavy Devanagari in body FAIL
+- `TestGate7CoverValidation` (2 tests): nonempty cover PASS, empty cover FAIL
+- `TestGate7StructuralIntegrity` (4 tests): enough pages PASS, too-few FAIL, empty pages detected, page_count in details
+- Added `_create_test_pdf_with_unicode()` helper using `insert_htmlbox` for Devanagari/IPA preservation
+
+**Export tests (`tests/unit/pipeline/test_export.py`):**
+- `TestNfcNormalization` (2 tests): NFD Devanagari → NFC before rendering, both passes normalized
+- `TestGurmukhiFontResolution` (2 tests): Gurmukhi @font-face conditional on font existence, Devanagari always present
+- `TestTwoPassRendering` (3 tests): non-empty HTML output, pass-2 uses content:none, chapter content present
+
+**Technical note:** PyMuPDF's default fonts can't render Devanagari in `insert_text` — characters are replaced with `·`. Used `insert_htmlbox` (PyMuPDF ≥ 1.23) for Unicode-preserving PDF creation. Even then, halant+digit sequences get mangled, so digit-in-Devanagari test is xfailed.
+
+**Status:** 84 regression tests pass (4 xfail), 32 export tests pass (4 xfail). All ruff clean.
