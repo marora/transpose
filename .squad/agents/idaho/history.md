@@ -77,3 +77,15 @@ Also updated "Last Updated" date from 2024 to 2026.
 - **Updated `infra/README.md`**: Replaced inline KQL snippets with pointer to `docs/observability.md` plus quick-start workbook import instructions.
 - **Design decision:** Token cost estimation uses GPT-4o pricing ($2.50/1M input, $10.00/1M output). Workbook uses conditional visibility groups for tab navigation. Alert thresholds tuned for 75-page book workloads.
 
+
+## Coordinator Fix (2026-04-20T20-43Z)
+
+During observability dashboard deployment, Coordinator identified and fixed a critical ARM API URL bug in `deploy-workbook.sh`. 
+
+**Issue:** Initial deployment script used nested path for workbooks (under Microsoft.Insights/components), but Azure Monitor Workbooks are actually **resource-group-scoped** resources under `Microsoft.Insights/workbooks` at the RG level.
+
+**Fix:** Updated ARM API endpoint in deploy-workbook.sh from `/subscriptions/.../providers/Microsoft.Insights/components/.../workbooks/` to `/subscriptions/.../resourceGroups/.../providers/Microsoft.Insights/workbooks/`. This is critical for idempotent re-deployments with deterministic workbook GUIDs.
+
+**Commit:** 1f5fb69
+
+**Lesson:** ARM resource scoping matters. Workbooks are RG-level resources, not nested under App Insights components. Update ARM API paths accordingly in future observability tooling.

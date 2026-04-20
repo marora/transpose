@@ -693,3 +693,83 @@ Never revert code changes without explicit user approval. Always ask before disc
 **Applies to:** All agents.
 
 ---
+
+### Decision: Observability Dashboard Approach
+
+**Author:** Idaho  
+**Date:** 2026-04-20  
+**Status:** Implemented  
+
+## Context
+
+Manish couldn't find useful pipeline insights in the Azure Portal because the UI changed (Performance/Dependencies moved under Investigate menu). We needed a self-contained, deployable dashboard plus updated documentation.
+
+## Decision
+
+1. **Azure Monitor Workbook** (not a Grafana dashboard or third-party tool) — keeps everything in the Azure ecosystem, deployable via ARM API, no additional infrastructure.
+
+2. **5-tab layout** aligned to the pipeline's concerns: Pipeline Overview → Translation → OCR → Infrastructure → Errors. Each tab uses conditional visibility groups so only active tab queries run.
+
+3. **Parameterized workbook** with `TimeRange` and `AppInsightsResource` selectors at the top. This means one workbook template works for any environment (dev, staging, prod).
+
+4. **KQL-first approach** — all queries are self-contained and runnable directly in Log Analytics. No workbook-specific functions or data sources.
+
+5. **Token cost estimation** built into the Translation tab using GPT-4o pricing ($2.50/1M input, $10.00/1M output). These rates will need updating as pricing changes.
+
+6. **Deploy script uses `az rest` PUT** (not `az monitor app-insights workbook create`) for maximum compatibility and deterministic workbook IDs (idempotent re-deploys). **Note:** Workbooks are resource-group-scoped, not nested under App Insights — ARM API endpoint is `/subscriptions/.../resourceGroups/.../providers/Microsoft.Insights/workbooks/`.
+
+7. **Comprehensive `docs/observability.md`** replaces scattered monitoring docs. Covers 2026 Portal navigation, KQL queries, alert setup, and troubleshooting runbooks.
+
+## Consequences
+
+- Team has a single source of truth for observability (`docs/observability.md`)
+- Workbook can be deployed to any resource group with one command
+- Alert thresholds are documented but not auto-provisioned (Phase 2: add Bicep alert rule modules)
+- Token pricing in the workbook is hardcoded — update when Azure OpenAI pricing changes
+
+---
+
+### Decision: Gate 7 — Production Readiness Visual Inspection Proxy
+
+**Author:** Chani (Pipeline Developer)  
+**Date:** 2026-04-20  
+**Status:** Implemented  
+**Issue:** #15  
+
+## Context
+
+Stilgar's Round 2 visual inspection found 4 rendering/data defects in PDF output: Devanagari garbling, ToC page numbers all showing "1", halant misordering, and sangat showing wrong script (Devanagari instead of Gurmukhi). These defects were only caught by manual visual review — no automated gate existed to catch them.
+
+## Decision
+
+Add Gate 7 (`validate_production_readiness`) as a permanent post-export QA gate that acts as an automated proxy for visual inspection. It runs 6 checks against the rendered PDF:
+
+1. **devanagari_integrity** — IPA Extension chars and digit-in-Devanagari substitutions in glossary (with tolerance for PyMuPDF extraction artifacts)
+2. **toc_verification** — ToC page numbers present and not all identical
+3. **content_completeness** — word count within 0.7×–2.0× of golden target
+4. **script_hygiene** — body text ≤2% Devanagari (English translation)
+5. **cover_validation** — title page exists and has content
+6. **structural_integrity** — no empty pages, minimum page count
+
+## Key Design Choices
+
+### Tolerant Devanagari Thresholds
+
+PyMuPDF text extraction garbles Devanagari conjunct glyphs (e.g. धर्म → ध2र्म). This is a known text-extraction limitation, not a rendering defect (confirmed by pixmap rendering). Gate 7 therefore uses tolerances (IPA ≤15, digit-in-Devanagari ≤8) rather than zero-tolerance for these metrics.
+
+### Two-Pass ToC Rendering
+
+WeasyPrint's `target-counter()` CSS function is unreliable. We use a two-pass approach: Pass 1 renders with placeholders, PyMuPDF extracts actual page numbers, Pass 2 renders with hard-coded numbers.
+
+### Seed Glossary Override at Export Time
+
+LLM-detected `original_script` values in the DB are sometimes hallucinated (e.g. wrong script for Sikh terms). At export time, seed glossary values override DB values to ensure curated terms always render correctly.
+
+## Consequences
+
+- All 4 defect classes from Round 2 are now caught automatically
+- Gate 7 runs after export in the pipeline runner (after golden targeted QA gate)
+- PyMuPDF text extraction artifacts are documented and tolerated — future threshold adjustments may be needed as font rendering evolves
+- 473 tests pass, 5 xfailed (pre-existing), 0 failures
+
+---
