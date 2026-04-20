@@ -53,6 +53,10 @@ if [[ -n "$SUBSCRIPTION" ]]; then
   SUB_FLAG="--subscription ${SUBSCRIPTION}"
 fi
 
+# Workbooks are resource-group-scoped resources; sourceId links to App Insights
+# shellcheck disable=SC2086
+RG_ID=$(az group show --name "$RESOURCE_GROUP" $SUB_FLAG --query id -o tsv)
+
 echo "==> Looking up Application Insights resource in '${RESOURCE_GROUP}'..."
 # shellcheck disable=SC2086
 APP_INSIGHTS_ID=$(az monitor app-insights component show \
@@ -63,11 +67,9 @@ APP_INSIGHTS_ID=$(az monitor app-insights component show \
 if [[ -z "$APP_INSIGHTS_ID" ]]; then
   echo "Warning: No Application Insights resource found. The workbook will be created"
   echo "         at the resource-group scope. You can link it to App Insights later."
-  # Use the resource group ID as the scope
-  # shellcheck disable=SC2086
-  SCOPE=$(az group show --name "$RESOURCE_GROUP" $SUB_FLAG --query id -o tsv)
+  SOURCE_ID="$RG_ID"
 else
-  SCOPE="$APP_INSIGHTS_ID"
+  SOURCE_ID="$APP_INSIGHTS_ID"
   echo "    Found: ${APP_INSIGHTS_ID}"
 fi
 
@@ -95,16 +97,18 @@ fi
 
 # Deploy using az rest (direct ARM API call for maximum compatibility)
 # shellcheck disable=SC2086
+LOCATION=$(az group show --name "${RESOURCE_GROUP}" $SUB_FLAG --query location -o tsv)
+
 az rest --method PUT \
-  --url "https://management.azure.com${SCOPE}/providers/Microsoft.Insights/workbooks/${WORKBOOK_ID}?api-version=2022-04-01" \
+  --url "https://management.azure.com${RG_ID}/providers/Microsoft.Insights/workbooks/${WORKBOOK_ID}?api-version=2022-04-01" \
   --body "{
-    \"location\": \"$(az group show --name "${RESOURCE_GROUP}" $SUB_FLAG --query location -o tsv)\",
+    \"location\": \"${LOCATION}\",
     \"kind\": \"shared\",
     \"properties\": {
       \"displayName\": \"${WORKBOOK_NAME}\",
       \"serializedData\": ${SERIALIZED_CONTENT},
       \"category\": \"workbook\",
-      \"sourceId\": \"${SCOPE}\"
+      \"sourceId\": \"${SOURCE_ID}\"
     },
     \"tags\": {
       \"project\": \"transpose\",
