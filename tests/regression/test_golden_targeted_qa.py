@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from transpose.pipeline.gates import GateResult, golden_targeted_qa_gate
+from transpose.pipeline.gates import (
+    GateResult,
+    golden_targeted_qa_gate,
+    validate_golden_target,
+)
 
 # ---------------------------------------------------------------------------
 # Marks
@@ -393,9 +397,9 @@ class TestToleranceBoundaries:
 
     def test_word_count_at_lower_boundary_passes(self, tmp_path: Path) -> None:
         """Word counts at exactly -30% of golden should pass."""
-        # Use per-chapter lower bounds based on golden target
-        # Ch1: 218*0.7=152.6→153, Ch2: 208*0.7=145.6→146, etc.
-        golden_wc = {1: 218, 2: 208, 3: 198, 4: 189, 5: 157, 6: 152, 7: 150, 8: 160, 9: 191}
+        with open(GOLDEN_DIR / "golden-target.json") as f:
+            golden_data = json.load(f)
+        golden_wc = {ch["number"]: ch["word_count_approx"] for ch in golden_data["chapters"]}
         word_counts = {ch: int(wc * 0.75) for ch, wc in golden_wc.items()}  # 75% = within 30%
         pdf_path = self._make_chapter_pdf(tmp_path, word_counts)
         result = golden_targeted_qa_gate(pdf_path)
@@ -404,7 +408,9 @@ class TestToleranceBoundaries:
 
     def test_word_count_at_upper_boundary_passes(self, tmp_path: Path) -> None:
         """Word counts at +25% of golden should pass (within 30% tolerance)."""
-        golden_wc = {1: 218, 2: 208, 3: 198, 4: 189, 5: 157, 6: 152, 7: 150, 8: 160, 9: 191}
+        with open(GOLDEN_DIR / "golden-target.json") as f:
+            golden_data = json.load(f)
+        golden_wc = {ch["number"]: ch["word_count_approx"] for ch in golden_data["chapters"]}
         word_counts = {ch: int(wc * 1.20) for ch, wc in golden_wc.items()}  # 120% = within 30%
         pdf_path = self._make_chapter_pdf(tmp_path, word_counts)
         result = golden_targeted_qa_gate(pdf_path)
@@ -427,3 +433,373 @@ class TestToleranceBoundaries:
         result = golden_targeted_qa_gate(str(OUTPUT_PDF))
         page_failures = [f for f in result.failures if "Page count" in f]
         assert len(page_failures) == 0, f"Page count should be within bounds: {page_failures}"
+
+
+# ===================================================================
+# 6. Golden target self-validation (validate_golden_target)
+# ===================================================================
+
+
+class TestGoldenTargetSelfValidation:
+    """Gate must reject a corrupted or incomplete golden target."""
+
+    def test_valid_golden_target_passes(self) -> None:
+        with open(GOLDEN_DIR / "golden-target.json") as f:
+            golden = json.load(f)
+        errors = validate_golden_target(golden)
+        assert errors == [], f"Real golden target should be valid: {errors}"
+
+    def test_garbled_chapter_title_detected(self) -> None:
+        golden = {
+            "chapters": [
+                {
+                    "number": 1,
+                    "title": "Dharma \ufffd\ufffd Karma",
+                    "word_count_approx": 200,
+                    "key_phrases": ["test"],
+                }
+            ],
+            "structure": {
+                "expected_sections": [
+                    {"type": "cover", "required": True},
+                    {"type": "toc", "required": True},
+                ],
+            },
+            "glossary": {"min_entries": 0, "required_terms": []},
+        }
+        errors = validate_golden_target(golden)
+        assert any("U+FFFD" in e for e in errors), f"Should detect U+FFFD: {errors}"
+
+    def test_empty_chapter_title_detected(self) -> None:
+        golden = {
+            "chapters": [
+                {"number": 1, "title": "", "word_count_approx": 200, "key_phrases": []}
+            ],
+            "structure": {
+                "expected_sections": [
+                    {"type": "cover", "required": True},
+                    {"type": "toc", "required": True},
+                ],
+            },
+            "glossary": {"min_entries": 0, "required_terms": []},
+        }
+        errors = validate_golden_target(golden)
+        assert any("empty title" in e for e in errors), f"Should detect empty title: {errors}"
+
+    def test_zero_word_count_detected(self) -> None:
+        golden = {
+            "chapters": [
+                {"number": 1, "title": "Ch1", "word_count_approx": 0, "key_phrases": []}
+            ],
+            "structure": {
+                "expected_sections": [
+                    {"type": "cover", "required": True},
+                    {"type": "toc", "required": True},
+                ],
+            },
+            "glossary": {"min_entries": 0, "required_terms": []},
+        }
+        errors = validate_golden_target(golden)
+        assert any("word_count_approx" in e for e in errors)
+
+    def test_missing_cover_section_detected(self) -> None:
+        golden = {
+            "chapters": [
+                {"number": 1, "title": "Ch1", "word_count_approx": 200, "key_phrases": []}
+            ],
+            "structure": {"expected_sections": [{"type": "toc", "required": True}]},
+            "glossary": {"min_entries": 0, "required_terms": []},
+        }
+        errors = validate_golden_target(golden)
+        assert any("cover" in e for e in errors)
+
+    def test_missing_toc_section_detected(self) -> None:
+        golden = {
+            "chapters": [
+                {"number": 1, "title": "Ch1", "word_count_approx": 200, "key_phrases": []}
+            ],
+            "structure": {"expected_sections": [{"type": "cover", "required": True}]},
+            "glossary": {"min_entries": 0, "required_terms": []},
+        }
+        errors = validate_golden_target(golden)
+        assert any("toc" in e for e in errors)
+
+    def test_no_chapters_array_detected(self) -> None:
+        golden = {"structure": {}, "glossary": {}}
+        errors = validate_golden_target(golden)
+        assert any("no 'chapters'" in e for e in errors)
+
+    def test_garbled_key_phrase_detected(self) -> None:
+        golden = {
+            "chapters": [
+                {
+                    "number": 1,
+                    "title": "Ch1",
+                    "word_count_approx": 200,
+                    "key_phrases": ["good phrase", "bad \ufffd phrase"],
+                }
+            ],
+            "structure": {
+                "expected_sections": [
+                    {"type": "cover", "required": True},
+                    {"type": "toc", "required": True},
+                ],
+            },
+            "glossary": {"min_entries": 0, "required_terms": []},
+        }
+        errors = validate_golden_target(golden)
+        assert any("U+FFFD" in e for e in errors)
+
+
+# ===================================================================
+# 7. Gate rejects corrupted golden target (end-to-end)
+# ===================================================================
+
+
+class TestGateRejectsCorruptGoldenTarget:
+    """Gate 6 must refuse to use a corrupt golden target as reference."""
+
+    def _make_minimal_pdf(self, tmp_path: Path) -> str:
+        import fitz
+
+        doc = fitz.open()
+        p = doc.new_page(width=595, height=842)
+        p.insert_text((72, 72), "Test", fontsize=10)
+        pdf_path = tmp_path / "candidate.pdf"
+        doc.save(str(pdf_path))
+        doc.close()
+        return str(pdf_path)
+
+    def test_gate_fails_with_garbled_golden_target(self, tmp_path: Path) -> None:
+        corrupt_golden = {
+            "chapters": [
+                {
+                    "number": 1,
+                    "title": "\ufffd\ufffd Corrupted \ufffd",
+                    "word_count_approx": 200,
+                    "key_phrases": [],
+                }
+            ],
+            "structure": {
+                "expected_sections": [
+                    {"type": "cover", "required": True},
+                    {"type": "toc", "required": True},
+                ],
+                "source_page_count": 10,
+            },
+            "glossary": {"min_entries": 0, "required_terms": []},
+        }
+        golden_path = tmp_path / "corrupt-golden.json"
+        golden_path.write_text(json.dumps(corrupt_golden))
+
+        pdf_path = self._make_minimal_pdf(tmp_path)
+        result = golden_targeted_qa_gate(pdf_path, str(golden_path))
+        assert not result.passed, "Gate should fail when golden target is corrupt"
+        assert any("Golden target invalid" in f for f in result.failures)
+
+    def test_gate_fails_with_empty_chapters_golden(self, tmp_path: Path) -> None:
+        empty_golden = {
+            "chapters": [],
+            "structure": {
+                "expected_sections": [
+                    {"type": "cover", "required": True},
+                    {"type": "toc", "required": True},
+                ],
+                "source_page_count": 10,
+            },
+            "glossary": {"min_entries": 0, "required_terms": []},
+        }
+        golden_path = tmp_path / "empty-golden.json"
+        golden_path.write_text(json.dumps(empty_golden))
+
+        pdf_path = self._make_minimal_pdf(tmp_path)
+        result = golden_targeted_qa_gate(pdf_path, str(golden_path))
+        assert not result.passed
+
+
+# ===================================================================
+# 8. Structural alignment — missing / reordered chapters
+# ===================================================================
+
+
+class TestStructuralAlignment:
+    """Gate must catch chapter ordering and missing chapter issues."""
+
+    def _make_pdf(self, tmp_path: Path, pages: list[str]) -> str:
+        import fitz
+
+        doc = fitz.open()
+        for text in pages:
+            page = doc.new_page(width=595, height=842)
+            y = 72
+            for line in text.split("\n"):
+                if y > 780:
+                    page = doc.new_page(width=595, height=842)
+                    y = 72
+                page.insert_text((72, y), line[:100], fontsize=9)
+                y += 12
+        pdf_path = tmp_path / "candidate.pdf"
+        doc.save(str(pdf_path))
+        doc.close()
+        return str(pdf_path)
+
+    def test_reordered_chapters_detected(self, tmp_path: Path) -> None:
+        """Chapters 1,3,2,4..9 should fail sequential ordering check."""
+        pages = [
+            "Test Hindi Book",
+            "Table of Contents\n" + "\n".join(
+                f"Chapter {i}: Ch{i}" for i in range(1, 10)
+            ),
+            "Foreword\n" + " ".join(["word"] * 100),
+            "Chapter 1: First\n" + " ".join(["text"] * 200),
+            "Chapter 3: Third\n" + " ".join(["text"] * 200),
+            "Chapter 2: Second\n" + " ".join(["text"] * 200),
+        ] + [
+            f"Chapter {i}: Ch{i}\n" + " ".join(["text"] * 200)
+            for i in range(4, 10)
+        ]
+        pdf_path = self._make_pdf(tmp_path, pages)
+        result = golden_targeted_qa_gate(pdf_path)
+        # Must detect structural problem (missing chapters or wrong count)
+        structural_ok = result.details.get("checks", {}).get("structural_match", True)
+        content_ok = result.details.get("checks", {}).get("content_completeness", True)
+        assert not result.passed or not structural_ok or not content_ok, (
+            "Reordered chapters should trigger a failure"
+        )
+
+    def test_chapter_count_divergence_detected(self, tmp_path: Path) -> None:
+        """Only 5 of 9 expected chapters should fail."""
+        pages = [
+            "Test Hindi Book",
+            "Table of Contents\n" + "\n".join(
+                f"Chapter {i}: Ch{i}" for i in range(1, 6)
+            ),
+            "Foreword\n" + " ".join(["word"] * 100),
+        ] + [
+            f"Chapter {i}: Ch{i}\n" + " ".join(["text"] * 200)
+            for i in range(1, 6)
+        ]
+        pdf_path = self._make_pdf(tmp_path, pages)
+        result = golden_targeted_qa_gate(pdf_path)
+        assert not result.passed
+        assert any(
+            "Chapter count" in f or "not sequential" in f
+            for f in result.failures
+        ), f"Should detect missing chapters: {result.failures}"
+
+
+# ===================================================================
+# 9. Allowed exceptions don't cause false failures
+# ===================================================================
+
+
+class TestAllowedExceptions:
+    """Translator's Foreword, Glossary, and ToC are pipeline-added sections.
+    Their presence must not trigger false structural failures."""
+
+    def _make_full_pdf(self, tmp_path: Path) -> str:
+        """Build a PDF that matches the golden target structure."""
+        import fitz
+
+        doc = fitz.open()
+        # Cover
+        p = doc.new_page(width=595, height=842)
+        p.insert_text((72, 72), "Test Hindi Book", fontsize=14)
+        # ToC
+        p = doc.new_page(width=595, height=842)
+        y = 72
+        p.insert_text((72, y), "Table of Contents", fontsize=12)
+        for i in range(1, 10):
+            y += 14
+            p.insert_text((72, y), f"Chapter {i}: Ch{i}", fontsize=10)
+        # Foreword
+        p = doc.new_page(width=595, height=842)
+        p.insert_text((72, 72), "Foreword", fontsize=12)
+        for _j in range(10):
+            p.insert_text((72, 90 + _j * 12), " ".join(["word"] * 10), fontsize=9)
+        # Chapters
+        golden_wc = {
+            1: 218, 2: 208, 3: 198, 4: 189, 5: 157,
+            6: 152, 7: 150, 8: 160, 9: 191,
+        }
+        for ch_num in range(1, 10):
+            wc = golden_wc[ch_num]
+            p = doc.new_page(width=595, height=842)
+            p.insert_text((72, 72), f"Chapter {ch_num}: Test Chapter", fontsize=11)
+            y = 90
+            written = 0
+            while written < wc:
+                if y > 780:
+                    p = doc.new_page(width=595, height=842)
+                    y = 72
+                batch = min(8, wc - written)
+                p.insert_text((72, y), " ".join(["text"] * batch), fontsize=9)
+                y += 12
+                written += batch
+        # Glossary
+        p = doc.new_page(width=595, height=842)
+        p.insert_text((72, 60), "Glossary", fontsize=12)
+        terms = [
+            "dharma (धर्म) Duty", "karma (कर्म) Action", "yoga (योग) Discipline",
+            "moksha (मोक्ष) Liberation", "sangat (संगत) Congregation",
+            "langar (लंगर) Kitchen", "seva (सेवा) Service",
+            "guru (गुरु) Teacher", "prana (प्राण) Energy",
+            "samsara (संसार) Rebirth", "samadhi (समाधि) Meditation",
+            "jnana (ज्ञान) Knowledge", "maya (माया) Illusion",
+            "waheguru (वाहेगुरु) Lord",
+        ]
+        for i in range(25):
+            terms.append(f"term{i} (तत्त्व) Def{i}")
+        y = 72
+        for entry in terms:
+            if y > 780:
+                p = doc.new_page(width=595, height=842)
+                y = 72
+            p.insert_text((72, y), entry, fontsize=8)
+            y += 14
+        pdf_path = tmp_path / "full_candidate.pdf"
+        doc.save(str(pdf_path))
+        doc.close()
+        return str(pdf_path)
+
+    def test_foreword_does_not_cause_false_failure(self, tmp_path: Path) -> None:
+        pdf = self._make_full_pdf(tmp_path)
+        result = golden_targeted_qa_gate(pdf)
+        foreword_failures = [f for f in result.failures if "Foreword" in f]
+        assert len(foreword_failures) == 0, (
+            f"Foreword should not cause failure: {foreword_failures}"
+        )
+
+    def test_glossary_section_does_not_cause_false_failure(self, tmp_path: Path) -> None:
+        import re as _re
+
+        import fitz as _fitz
+
+        pdf = self._make_full_pdf(tmp_path)
+        # Verify the PDF actually has extractable Devanagari in glossary
+        doc = _fitz.open(pdf)
+        full = "\n".join(doc[i].get_text() for i in range(doc.page_count))
+        doc.close()
+        dev_in_parens = _re.search(r"[a-z]+\s*\([\u0900-\u097F]+", full)
+        if not dev_in_parens:
+            pytest.skip(
+                "fitz could not extract Devanagari from glossary — "
+                "font limitation, not a gate bug"
+            )
+        result = golden_targeted_qa_gate(pdf)
+        struct_failures = [
+            f for f in result.failures
+            if "Glossary section not found" in f
+        ]
+        assert len(struct_failures) == 0, (
+            f"Glossary section should not cause structural failure: {struct_failures}"
+        )
+
+    def test_toc_does_not_cause_false_failure(self, tmp_path: Path) -> None:
+        pdf = self._make_full_pdf(tmp_path)
+        result = golden_targeted_qa_gate(pdf)
+        toc_failures = [f for f in result.failures if "Table of Contents" in f]
+        assert len(toc_failures) == 0, (
+            f"ToC should not cause failure: {toc_failures}"
+        )
+

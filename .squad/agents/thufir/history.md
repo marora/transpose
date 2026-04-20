@@ -244,3 +244,31 @@ Chani completed **3 PDF quality fixes** that lock in the baseline for your golde
 
 Known WeasyPrint issue: ToUnicode CMap produces garbled text extraction for Devanagari (copy/paste), but visual rendering is perfect. Does not affect visual quality.
 
+### Session 2026-04-20: Golden-Target QA Hardening (Issue #14)
+
+**Delivered:** `validate_golden_target()` function in gates.py + 34 new tests across 2 files.
+
+**Gate 6 hardening (`src/transpose/pipeline/gates.py`):**
+- Added `validate_golden_target(golden: dict) -> list[str]` — validates the golden target JSON itself before using it as a reference
+- Checks: U+FFFD replacement characters (garbled text), empty chapter titles, zero/missing word counts, missing cover/ToC sections, deep JSON-wide U+FFFD scan
+- Gate 6 now calls validation before comparing candidate — corrupt golden target = immediate gate FAIL with details
+- New constants: `_GOLDEN_TARGET_MIN_CHAPTERS = 1`, `_GOLDEN_TARGET_MIN_CHAPTER_WORDS = 5`
+
+**New test file (`tests/regression/test_golden_target_integrity.py`) — 19 tests:**
+- File-level: exists, valid JSON, no U+FFFD, no null bytes
+- Chapters: count=9, sequential, non-empty titles, positive word counts, no garbled titles/phrases
+- Structure: cover present, ToC present, cover required, glossary present, thresholds defined
+- Glossary: required terms present, terms have names, no garbled terms, reasonable min_entries
+
+**Strengthened Gate 6 tests (`tests/regression/test_golden_targeted_qa.py`) — 15 new tests:**
+- Self-validation (8): valid golden passes, garbled title/key_phrase detected, empty title detected, zero word count, missing cover/toc, no chapters array
+- Gate rejects corrupt golden (2): garbled golden target → gate FAIL, empty chapters → gate FAIL
+- Structural alignment (2): reordered chapters detected, chapter count divergence detected
+- Allowed exceptions (3): Foreword/Glossary/ToC don't cause false failures
+
+**Bug fix:** Boundary tests (`test_word_count_at_lower/upper_boundary_passes`) were hardcoding golden word counts that drifted from actual `golden-target.json`. Fixed to read dynamically from the file — no more silent drift.
+
+**Status:** 380 passed, 1 skipped (fitz Devanagari rendering), 4 xfailed, 1 pre-existing env failure. All ruff clean.
+
+**Key insight:** The golden target was being trusted blindly as the reference standard. If it had garbled text or empty chapters, Gate 6 would pass bad candidates against a bad baseline. Now the gate validates its own reference before using it — trust nothing.
+

@@ -437,6 +437,81 @@ _GOLDEN_TARGET_DEFAULT = "tests/golden/golden-target.json"
 _WORD_COUNT_TOLERANCE = 0.30
 _PAGE_COUNT_RATIO_MAX = 1.5
 _BODY_DEVANAGARI_MAX_RATIO = 0.02
+_GOLDEN_TARGET_MIN_CHAPTERS = 1
+_GOLDEN_TARGET_MIN_CHAPTER_WORDS = 5
+
+
+def validate_golden_target(golden: dict) -> list[str]:
+    """Validate the golden target reference itself before using it.
+
+    Returns a list of validation errors (empty if valid).
+    Checks:
+      - No garbled Unicode (U+FFFD replacement characters) in any text field
+      - All chapters present with non-empty content fields
+      - Cover page section present in structure
+      - ToC section present in structure
+      - Chapter titles and key_phrases are non-empty strings
+    """
+    errors: list[str] = []
+
+    # --- Check: chapters exist and have content ---
+    chapters = golden.get("chapters")
+    if not chapters or not isinstance(chapters, list):
+        errors.append("Golden target has no 'chapters' array")
+        return errors
+
+    if len(chapters) < _GOLDEN_TARGET_MIN_CHAPTERS:
+        errors.append(
+            f"Golden target has {len(chapters)} chapters, "
+            f"minimum {_GOLDEN_TARGET_MIN_CHAPTERS} required"
+        )
+
+    for ch in chapters:
+        ch_num = ch.get("number", "?")
+        title = ch.get("title", "")
+        if not title or not title.strip():
+            errors.append(f"Golden target chapter {ch_num} has empty title")
+        # Check for garbled Unicode in title
+        if _REPLACEMENT_CHAR in str(title):
+            errors.append(
+                f"Golden target chapter {ch_num} title contains U+FFFD "
+                "replacement characters (garbled text)"
+            )
+        # Check word count is positive
+        wc = ch.get("word_count_approx", 0)
+        if not isinstance(wc, (int, float)) or wc < _GOLDEN_TARGET_MIN_CHAPTER_WORDS:
+            errors.append(
+                f"Golden target chapter {ch_num} has invalid word_count_approx: {wc}"
+            )
+        # Check key_phrases for garbled text
+        for phrase in ch.get("key_phrases", []):
+            if _REPLACEMENT_CHAR in str(phrase):
+                errors.append(
+                    f"Golden target chapter {ch_num} key_phrase contains "
+                    "U+FFFD (garbled text)"
+                )
+
+    # --- Check: structure has cover and ToC ---
+    structure = golden.get("structure", {})
+    sections = structure.get("expected_sections", [])
+    section_types = [s.get("type") for s in sections]
+    if "cover" not in section_types:
+        errors.append("Golden target structure missing 'cover' section")
+    if "toc" not in section_types:
+        errors.append("Golden target structure missing 'toc' section")
+
+    # --- Check: deep scan for U+FFFD in the entire JSON payload ---
+    import json as _json
+
+    serialized = _json.dumps(golden, ensure_ascii=False)
+    fffd_count = serialized.count(_REPLACEMENT_CHAR)
+    if fffd_count > 0:
+        errors.append(
+            f"Golden target contains {fffd_count} U+FFFD replacement "
+            "character(s) — indicates garbled/corrupt text"
+        )
+
+    return errors
 
 
 def golden_targeted_qa_gate(
@@ -490,6 +565,21 @@ def golden_targeted_qa_gate(
 
     with open(golden_path) as f:
         golden = json.load(f)
+
+    # Validate golden target itself before trusting it as reference
+    golden_errors = validate_golden_target(golden)
+    if golden_errors:
+        failures.extend(
+            f"Golden target invalid: {e}" for e in golden_errors
+        )
+        details["checks"]["structural_match"] = False
+        details["golden_target_validation_errors"] = golden_errors
+        return GateResult(
+            gate_name="golden_targeted_qa",
+            passed=False,
+            failures=failures,
+            details=details,
+        )
 
     # Load candidate PDF
     candidate = Path(candidate_pdf_path)
