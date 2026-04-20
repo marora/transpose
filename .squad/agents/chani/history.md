@@ -490,3 +490,29 @@ Thufir completed **Gate 6: Golden-Targeted QA** validation framework. This is cr
 
 Your PDF fixes (duplicate titles, foreword cleanup, page numbering) now lock in the quality baseline for Thufir's golden target. All 347 tests pass.
 
+
+### 2026-04-20: Full E2E Pipeline Validation with Gate 6
+
+**Ran all 6 quality gates against existing output (Test_Hindi_Book_final.pdf):**
+
+All 6 gates PASS:
+- Gate 1: OCR sanity — 10 pages, no garbled chars, Devanagari density OK
+- Gate 2: Translation completeness — 10/10 chunks, 0 failures
+- Gate 3: Glossary integrity — 51 entries, all NFC-normalized
+- Gate 4: Document structure — 10 chapters, ToC matches, foreword present
+- Gate 5: Artifact availability — PDF 207.8KB, ePub 16.6KB, both valid
+- Gate 6: Golden-targeted QA — 9 chapters detected, 14/14 glossary terms, 46 glossary entries, 0% Devanagari bleed, 14 pages (within 1.5× bound)
+
+**Test results:** 43 regression tests passed, 38 gate unit tests passed. Zero failures.
+
+**Key note:** Pipeline runner requires live Azure DB connection for assemble/export stages. For local validation of output quality, gates can be run standalone against the existing PDF/ePub artifacts without Azure connectivity. Gate 6 (golden_targeted_qa_gate) only needs the PDF path and golden-target.json — no DB required.
+
+### Golden Target English PDF Generation
+
+**Created:** `tests/golden/golden-target-english.pdf` — the visual/structural benchmark for QA comparison.
+
+- Script at `scripts/generate_golden_target_pdf.py` uses WeasyPrint with the same CSS patterns as pipeline export.
+- 11 pages (cover + TOC + 9 chapters), 177 KB. No Foreword/Glossary (those are pipeline-added).
+- Content is scholarly English aligned with `golden-target.json` chapter structure.
+- `.gitignore` updated with `!tests/golden/golden-target-english.pdf` exception since `*.pdf` is globally ignored.
+- Gate 6 doesn't need updating — it validates against the JSON, not the PDF. The PDF is for human visual comparison.
