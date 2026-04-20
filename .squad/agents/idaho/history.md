@@ -59,3 +59,11 @@ All resources provisioned with Managed Identity — zero secrets in code or envi
 - **Note:** PostgreSQL password is set as plain env var for now. Should move to Key Vault reference in Phase 2.
 - **Note:** Created minimal `src/transpose/api.py` with aiohttp for health/root endpoints. Chani will enhance with pipeline trigger endpoints.
 
+### 2026: Documentation Sync
+
+Updated `infra/README.md` Directory Structure section to include:
+- `main.json` (compiled ARM template)
+- `acr.bicep` module (Azure Container Registry)
+
+Also updated "Last Updated" date from 2024 to 2026.
+

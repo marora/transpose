@@ -40,7 +40,7 @@ Comprehensive test suite: 147 total tests (10 existing + 137 new). Unit tests mo
 **Date:** 2026-04-17  
 **Status:** Active  
 
-Transpose uses a 7-stage sequential pipeline: Ingest → OCR → Chunk → Translate → Glossary → Assemble → Export. Each stage is an independent Python module with typed input/output contracts. Stages communicate through PostgreSQL (source of truth) and Redis (orchestration/cache).
+Transpose uses a 7-stage sequential pipeline: Ingest → OCR → Chunk → Translate → Glossary → Assemble → Export. Each stage is an independent Python module with typed input/output contracts. Stages communicate through PostgreSQL (source of truth and orchestration state). Quality gates block stage transitions.
 
 **Key Decisions:**
 1. Staged pipeline, not event-driven (simpler to debug, resume, reason about; event-driven is Phase 2)
@@ -626,5 +626,59 @@ Current pipeline gate (Gate 6) validates structural presence but not content qua
 
 **Key Files:**
 - `tests/regression/test_production_readiness.py` — 61 tests, 8 test classes
+
+---
+
+### Decision: Docs-Update Convention
+
+**Author:** Stilgar (Lead/Architect)  
+**Date:** 2026-04-21  
+**Status:** Active  
+
+Four documentation files drifted significantly from the actual codebase. The Redis removal (commit 7b2b83d, serverless pivot), quality gates system, HTTP API, service context, unicode utilities, and many new test files were all added without corresponding doc updates. This created a state where architecture.md described a Redis dependency that no longer exists, project-structure.md listed files that don't exist and omitted files that do, and api-contracts.md had no mention of the gate system that blocks every stage transition.
+
+**Enforce:** Any agent that adds, removes, or renames a source file or feature MUST update the corresponding documentation file in the same commit.
+
+Specifically:
+1. Adding/removing a source file → update `docs/project-structure.md`
+2. Changing a pipeline stage contract → update `docs/api-contracts.md`
+3. Adding/removing an Azure service dependency → update `docs/architecture.md` (service table + relevant sections)
+4. Adding/removing a major feature (gates, API endpoints, utilities) → update `docs/architecture.md` and `README.md`
+5. Adding/removing test files → update `docs/project-structure.md`
+
+PR reviewers should check that doc files are included in any PR that touches the source tree structure or introduces a new feature. Docs stay current without periodic "catch-up" sprints; new team members can trust the docs as ground truth.
+
+---
+
+### Decision: Visual Quality Inspection — Round 2 (Devanagari Font Fix Required)
+
+**Author:** Stilgar (Lead)  
+**Date:** 2026-04-20  
+**Status:** Blocker Identified  
+
+Deep comparative quality review of `tests/fixtures/test-hindi-10page.pdf` → `Test_Hindi_Book_final.pdf` against `tests/golden/golden-target.json` revealed **1 P0 blocker, 2 P1 issues, 2 P2 minor issues**.
+
+**Verdict: Conditional PASS** — Pipeline output substantially improved. All 3 prior P0s resolved (chapter titles now complete with subtitles, cover shows proper translated title, no wholesale garbling). One P0 remains: glossary Devanagari rendering has significant garbling (17 of 49 entries corrupted due to font embedding failure in WeasyPrint).
+
+**P0 Blocker:**
+- **Glossary Devanagari Garbling** — Character `9` replaces `व` (va); characters `ɜ·`, `ɡ`, `ɟ`, `ɠ`, `ɥÊ` replace vowel matras. Examples: `आयु9र्वेद` (should be `आयुर्वेद`), `भɜ·क्ति` (should be `भक्ति`). Font embedding issue in WeasyPrint PDF export.
+
+**P1 Issues:**
+- ToC page numbers all show "1" (non-functional navigation)
+- dharma/karma Devanagari halant misordering (`धर्म` renders as `धमर्म`)
+
+**P2 Issues:**
+- Page count 15 vs golden 14 (extra glossary page)
+- "sangat" Devanagari wrong (`संगक्ति` instead of `संगत`)
+
+**Recommendations:**
+1. Switch to Noto Sans Devanagari (comprehensive glyph coverage), ensure proper `@font-face` embedding
+2. Add Devanagari rendering check to quality gates (flag U+0250–U+02AF IPA artifacts)
+3. Generate ToC page numbers programmatically post-PDF or use two-pass approach
+4. Verify glossary source data has correct Unicode sequences (NFC normalization)
+
+**What IS Production-Ready:** Cover title correct, all 9 chapter titles complete with subtitles, content complete (no bleed/duplicates), word count ratios within tolerance (0.91x–1.16x), body script hygiene (Devanagari < 0.1%), Translator's Foreword well-crafted.
+
+**Files:** Full analysis in `.squad/decisions/inbox/stilgar-visual-inspection-r2.md` (archived).
 
 ---

@@ -2,7 +2,7 @@
 
 - **Owner:** Mani
 - **Project:** Transpose — agentic pipeline that translates scanned/digital PDF books from Hindi/Punjabi into English using Azure AI Document Intelligence for OCR and Azure OpenAI GPT-4o for literary/cultural translation. Culturally significant words (atman, dharma, karma) must be preserved untranslated and collected into a glossary. Output: publication-ready ePub/PDF.
-- **Stack:** Python, PostgreSQL, Redis, Azure Container Apps, Azure AI Document Intelligence, Azure OpenAI GPT-4o, Managed Identity, Key Vault, Application Insights
+- **Stack:** Python, PostgreSQL, Azure Container Apps, Azure AI Document Intelligence, Azure OpenAI GPT-4o, Managed Identity, Key Vault, Application Insights
 - **Created:** 2026-04-17
 
 ## Learnings
@@ -78,3 +78,22 @@
 - **Recommended 6 new QA checks:** Title Fidelity, Enhanced Cover Validation, Devanagari Rendering Integrity, Key Phrase Coverage, Per-Chapter Word Count, ToC Completeness.
 - **Golden JSON assessment:** Directionally correct but missing section-level data, cover title field, and Devanagari validation criteria. Needs enrichment.
 - **Full report:** `.squad/decisions/inbox/stilgar-qa-findings.md`
+
+### 2026-04-20 — Deep Visual Inspection Round 2 (Post P0-Fix)
+
+- **Verdict:** CONDITIONAL PASS — 1 P0, 2 P1, 2 P2 remaining (down from 3 P0 + 2 P1 + 2 P2 in R1).
+- **Resolved from R1:** Chapter titles now complete with subtitles (P0-1 fixed), cover shows translated title not filename (P0-2 fixed), word count inflation eliminated — all chapters at 0.91x–1.16x golden (P1-2 fixed, Ch9 bleed gone).
+- **Remaining P0:** Glossary Devanagari garbling — 17 of 49 entries corrupted. Character `9` systematically replaces `व` (va), IPA characters (ɜ·, ɡ, ɟ, ɠ, ɥÊ) replace vowel matras. WeasyPrint font glyph substitution failure.
+- **Key phrases confirmed present:** "Shrimad Bhagavad Gita", "nishkama karma", "eightfold path" (= eight limbs), "action bears fruit" (= fruits of action) — R1's "missing phrase" findings were false positives caused by double-space PDF extraction artifacts breaking exact-string matching.
+- **Lesson:** Always normalize whitespace before substring matching on PDF-extracted text. PyMuPDF extracts justified text with variable spacing.
+- **Font investigation needed:** `fonts/` directory likely has incomplete Devanagari font. Noto Sans Devanagari recommended for full conjunct glyph coverage.
+- **ToC page numbers:** All show "1" — WeasyPrint CSS `target-counter()` limitation. P1 severity.
+- **Full report:** `.squad/decisions/inbox/stilgar-visual-inspection-r2.md`
+
+### 2026-04-21 — Documentation Drift Fix (4 files)
+
+- **README.md:** Removed Redis from Stack (replaced with PostgreSQL for orchestration). Added "Quality Gates" to the "What It Does" list.
+- **docs/architecture.md:** Replaced all Redis references with PostgreSQL (system overview, ASCII diagram footer, pipeline state section, service table, design decisions). Added 7 new sections: Quality Gates (all 7 gates described), HTTP API, Service Context, Unicode Normalization, Cross-Page Paragraph Joining, Translator's Foreword & Title Handling.
+- **docs/project-structure.md:** Complete file tree rewrite — added api.py, gates.py, context.py, utils/, scripts/, fonts/, tests/golden/, tests/regression/, new unit/integration tests. Removed non-existent files (test_pipeline_e2e.py, test_azure_services.py, alembic/).
+- **docs/api-contracts.md:** Added comprehensive Quality Gates section with contracts for all 7 gates (GateResult model, per-gate signature, check tables with thresholds). Added rule #7: "Quality gates block stage transitions."
+- **Lesson:** Docs drifted because the serverless pivot (commit 7b2b83d) and gate system additions didn't update docs in the same commits. Proposed docs-update convention to prevent recurrence.
