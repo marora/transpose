@@ -487,3 +487,22 @@ Fixed all 3 P0 blockers from Stilgar's quality review. All visually verified aga
 - Glossary NFC normalization in `glossary.py` (lines 95-97): Already applied via `normalize_unicode()`.
 
 **Cleanup performed:** Removed duplicate module-level constant definitions (`_BODY_DEVANAGARI_MAX_RATIO`, `_DEVANAGARI_RE`) in the Gate 7 section of gates.py — they shadowed identical definitions from the Gate 6 section. Added clarifying comment that Gate 7 reuses these module-level constants. All 38 gate tests pass after cleanup.
+
+### Visual Inspection Fixes & Gate 7 Calibration (2026-04-20)
+
+**Task:** Fix 4 rendering/data defects from Stilgar's Round 2 visual inspection (issue #15), build permanent Gate 7 "Production Readiness" QA gate, validate everything works.
+
+**Fixes delivered:**
+- **P0-1 Devanagari garbling:** Added bold `@font-face` for Devanagari and Gurmukhi (static font for both normal/bold weights), `unicode-range` CSS scoping, NFC normalization. Visual rendering confirmed correct via pixmap screenshot. Residual garbling in PyMuPDF text extraction is a known conjunct-glyph artifact, NOT a rendering defect.
+- **P1-1 ToC page numbers:** Two-pass rendering (Pass 1 → extract page map via PyMuPDF → Pass 2 with hard-coded numbers). Verified: pages 4,5,6,7,8,9,10.
+- **P1-2 Halant misordering:** NFC normalization + correct font embedding resolve visual ordering.
+- **P2-2 sangat wrong script:** Seed glossary `original_script` now takes precedence over LLM-detected forms in both `glossary.py` and at export-time override in `_build_pdf_body_html()`. Verified: sangat→ਸੰਗਤ (Gurmukhi).
+
+**Gate 7 calibration:**
+- Devanagari integrity check uses tolerant thresholds (IPA ≤15, digit-in-Devanagari ≤8) to account for PyMuPDF text extraction artifacts with complex script conjuncts.
+- ToC parsing handles both inline page numbers (`Chapter 1: Title  5`) and multi-line extraction (page number on separate line).
+- Content completeness uses 2.0× upper bound (PDF includes ToC, glossary, cover beyond golden target).
+
+**Key learning:** PyMuPDF text extraction garbles Devanagari conjunct glyphs (e.g. धर्म→ध2र्म or धमर्म). This is a text-extraction limitation, not a rendering defect. Gate 7 checks that use text extraction must apply tolerances for this artifact.
+
+**Testing:** 473 passed, 5 xfailed, 0 failures (pre-existing test_settings.py env var conflict excluded). Ruff clean.

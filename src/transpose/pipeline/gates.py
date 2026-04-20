@@ -885,17 +885,33 @@ def validate_production_readiness(pdf_path: str) -> GateResult:
             break
     toc_page_nums: list[int] = []
     if toc_text:
-        lines = toc_text.split("\n")
-        for i, line in enumerate(lines):
-            if re.search(r"Chapter\s+\d+", line):
-                # Page number might be at end of this line OR on the next line
-                num_match = re.search(r"(\d+)\s*$", line.strip())
-                if num_match:
-                    toc_page_nums.append(int(num_match.group(1)))
-                elif i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if re.fullmatch(r"\d+", next_line):
-                        toc_page_nums.append(int(next_line))
+        lines = [ln.strip() for ln in toc_text.split("\n") if ln.strip()]
+        chapter_indices = [
+            i for i, ln in enumerate(lines)
+            if re.search(r"Chapter\s+\d+", ln)
+        ]
+        # Collect standalone numbers that appear between/after chapter lines
+        standalone_nums = {
+            i: int(ln) for i, ln in enumerate(lines)
+            if re.fullmatch(r"\d+", ln) and int(ln) > 0
+        }
+        for ch_idx in chapter_indices:
+            ch_line = lines[ch_idx]
+            # Case A: page number at end of chapter line (e.g. "Chapter 1: Title  5")
+            ch_num_m = re.match(r"Chapter\s+(\d+)", ch_line)
+            trail_m = re.search(r"(\d+)\s*$", ch_line)
+            if trail_m and ch_num_m and trail_m.group(1) != ch_num_m.group(1):
+                toc_page_nums.append(int(trail_m.group(1)))
+                continue
+            # Case B: standalone number on a subsequent line before next chapter
+            next_ch = next(
+                (ci for ci in chapter_indices if ci > ch_idx),
+                len(lines),
+            )
+            for num_idx in range(ch_idx + 1, next_ch):
+                if num_idx in standalone_nums:
+                    toc_page_nums.append(standalone_nums[num_idx])
+                    break
 
     check2_ok = bool(toc_page_nums) and (
         len(set(toc_page_nums)) > 1 or len(toc_page_nums) <= 1

@@ -687,8 +687,9 @@ class TestGate7ProductionReadiness:
 def _create_test_pdf(pages: list[str]) -> str:
     """Write a minimal PDF with the given per-page text strings.
 
-    Long text is word-wrapped into lines that fit on A4 pages so that
-    PyMuPDF's insert_text renders all content (it does not auto-wrap).
+    Short lines (≤12 words) are preserved verbatim so that structured
+    content like ToC entries keep their line breaks.  Long lines are
+    word-wrapped to fit A4 pages.
 
     Returns the path as a string.
     """
@@ -698,11 +699,16 @@ def _create_test_pdf(pages: list[str]) -> str:
     lines_per_page = 55  # conservative for 11pt on A4
 
     for text in pages:
-        # Word-wrap long text into lines
-        words = text.split()
+        # Preserve original line breaks, only wrapping long lines
+        raw_lines = text.split("\n")
         lines: list[str] = []
-        for i in range(0, len(words), words_per_line):
-            lines.append(" ".join(words[i : i + words_per_line]))
+        for raw in raw_lines:
+            words = raw.split()
+            if len(words) <= words_per_line:
+                lines.append(raw)
+            else:
+                for i in range(0, len(words), words_per_line):
+                    lines.append(" ".join(words[i : i + words_per_line]))
 
         # Split lines across pages
         for chunk_start in range(0, max(len(lines), 1), lines_per_page):
