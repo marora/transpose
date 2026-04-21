@@ -435,6 +435,12 @@ Do NOT mix scripts (e.g., do not use Gurmukhi for Hindi terms or Devanagari for 
 6. TRANSLATE ALL CONTENT COMPLETELY. Do not skip, summarize, or condense any part of the \
 source text. Every sentence in the source must have a corresponding translation in the output. \
 The translated text should be approximately the same length as the source — do not abridge.
+7. CHAPTER MARKERS: If the text contains chapter/section markers like \
+"तं-सू —वध—03" (Tantra Sutra abbreviations), translate them as \
+"Tantra Sutra — Method N" where N is the number. Place this on its own line at the start.
+8. DISCOURSE REFERENCES: Preserve discourse reference markers like "वचन-15" \
+(Vachan-N). Translate as "Vachan-N" (e.g., "Vachan-15") on its own line. \
+These indicate recorded discourse references and must be retained for scholarly citation.
 
 CULTURAL TERMS:
 - Known terms that MUST be preserved (with their original script and definitions):

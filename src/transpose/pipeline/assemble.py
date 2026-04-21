@@ -68,6 +68,15 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
     glossary = await ctx.db.get_glossary_for_book(input.book_id)
     glossary_id = glossary.id if glossary else None
 
+    # --- Issue #67: Collect page images for embedding in output ---
+    pages = await ctx.db.get_pages_for_book(input.book_id)
+    page_images: dict[int, list[dict]] = {}  # page_num → list of image refs
+    for pg in pages:
+        if pg.ocr_metadata and pg.ocr_metadata.get("images"):
+            page_images[pg.page_number] = pg.ocr_metadata["images"]
+    if page_images:
+        logger.info("Found images on %d pages", len(page_images))
+
     # Build translation map
     translation_map = {t.chunk_id: t for t in translations}
 
@@ -114,10 +123,24 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
 
         # Sub-heading counter for within-chapter headings (Discourse N, Part N, etc.)
         sub_heading_idx = 0
+        emitted_image_keys: set[str] = set()  # dedupe images across overlapping chunks
 
         for item_idx, item in enumerate(chapter_chunks):
             chunk = item["chunk"]
             translation = item["translation"]
+
+            # --- Issue #67: Insert images that belong to this chunk's page range ---
+            if page_images:
+                for pg_num in range(chunk.page_start, chunk.page_end + 1):
+                    for img_ref in page_images.get(pg_num, []):
+                        img_key = img_ref.get("blob_uri", "")
+                        if img_key and img_key not in emitted_image_keys:
+                            emitted_image_keys.add(img_key)
+                            content_html += (
+                                "<figure class='page-image'>"
+                                f"<img src='{_escape_html(img_key)}' alt='Illustration'/>"
+                                "</figure>\n"
+                            )
 
             text = translation.translated_text
 
@@ -346,8 +369,26 @@ def _extract_chapter_title(chapter_chunks: list[dict], fallback: str) -> str:
         chapter_match = re.match(r"^(Chapter \d+:.+)", line, re.IGNORECASE)
         if chapter_match:
             title = chapter_match.group(1).strip()
-            # Check if the NEXT non-empty line is a subtitle continuation
-            # (starts with em-dash, en-dash, or long dash)
+            title = _join_subtitle_line(title, non_empty, pos)
+            if len(title) < 200:
+                return title
+
+        # Match "Tantra Sutra — Method N" patterns (Issue #68)
+        tantra_match = re.match(
+            r"^(Tantra\s+Sutra\s*[—\u2014\u2013-]\s*Method\s*\d+.*)",
+            line,
+            re.IGNORECASE,
+        )
+        if tantra_match:
+            title = tantra_match.group(1).strip()
+            title = _join_subtitle_line(title, non_empty, pos)
+            if len(title) < 200:
+                return title
+
+        # Match "Method N" standalone patterns
+        method_match = re.match(r"^(Method\s+\d+.*)", line, re.IGNORECASE)
+        if method_match:
+            title = method_match.group(1).strip()
             title = _join_subtitle_line(title, non_empty, pos)
             if len(title) < 200:
                 return title
@@ -401,8 +442,12 @@ def _strip_leading_chapter_title(text: str) -> str:
 
     lines = text.split("\n")
     first = lines[0].strip() if lines else ""
-    # Matches "Chapter N: ..." or "Introduction"
-    if not re.match(r"^(Chapter\s+\d+\b|Introduction\b)", first, re.IGNORECASE):
+    # Matches "Chapter N: ...", "Introduction", "Tantra Sutra — Method N", "Method N"
+    if not re.match(
+        r"^(Chapter\s+\d+\b|Introduction\b|Tantra\s+Sutra\b|Method\s+\d+\b)",
+        first,
+        re.IGNORECASE,
+    ):
         return text
 
     # Strip the chapter title line
@@ -483,6 +528,8 @@ _HEADING_PATTERNS: list[re.Pattern] = [
     re.compile(r"^Talk\s+\d+", re.IGNORECASE),
     re.compile(r"^Sermon\s+\d+", re.IGNORECASE),
     re.compile(r"^Session\s+\d+", re.IGNORECASE),
+    # Discourse reference markers (वचन-N → Vachan-N)
+    re.compile(r"^Vachan[\s-]*\d+", re.IGNORECASE),
     # Numbered heading like "1. The Nature of Reality" or "15. Beyond the Mind"
     re.compile(r"^\d{1,3}\.\s+[A-Z]"),
 ]

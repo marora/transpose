@@ -13,6 +13,7 @@ class ChunkInput:
     book_id: UUID
     target_chunk_tokens: int = 1500
     overlap_tokens: int = 150
+    force_rechunk: bool = False
 
 
 @dataclass
@@ -52,7 +53,7 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
 
     # Check if chunks already exist — skip re-chunking to preserve translations
     existing_chunks = await ctx.db.get_chunks_for_book(input.book_id)
-    if existing_chunks:
+    if existing_chunks and not input.force_rechunk:
         logger.info(
             "Chunks already exist for book_id=%s (%d chunks) — skipping re-chunking",
             input.book_id,
@@ -90,8 +91,14 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
     # Initialize tokenizer
     encoding = tiktoken.get_encoding("cl100k_base")  # GPT-4 encoding
 
-    # Detect structural markers
-    chapter_pattern = re.compile(r"^(Chapter|अध्याय|ਅਧਿਆਇ)\s+(\d+|[IVX]+)", re.MULTILINE)
+    # Detect structural markers — Issue #68: include Hindi chapter abbreviations
+    chapter_pattern = re.compile(
+        r"^("
+        r"Chapter|अध्याय|ਅਧਿਆਇ"           # standard chapter markers
+        r"|तं[\s-]*सू\s*[—\u2014\u2013-]"  # Tantra Sutra abbreviation (तं-सू —)
+        r")\s*",
+        re.MULTILINE,
+    )
 
     # Split on structural boundaries
     chunks: list[Chunk] = []
@@ -299,12 +306,13 @@ def _create_chunk(
             page_start = page_num
             page_end = page_num
 
-    # Detect section type
+    # Detect section type — Issue #68: recognize Hindi chapter markers
     section_type = SectionType.PROSE
     if current_chapter and (
         "Chapter" in current_chapter
         or "अध्याय" in current_chapter
         or "ਅਧਿਆਇ" in current_chapter
+        or "तं" in current_chapter  # Tantra Sutra abbreviation
     ):
         section_type = SectionType.CHAPTER
 

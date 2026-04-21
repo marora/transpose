@@ -377,6 +377,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                     book_id=book_id,
                     target_chunk_tokens=ctx.settings.chunk_target_tokens,
                     overlap_tokens=ctx.settings.chunk_overlap_tokens,
+                    force_rechunk=input.force_retranslate,
                 ),
                 ctx,
             )

@@ -89,6 +89,9 @@ async def run(input: ExportInput, ctx) -> ExportOutput:  # type: ignore[no-untyp
             logger.warning("Could not download cover image (blob: %s) — using text title page. Error: %s", 
                          cover_blob_name, e, exc_info=True)
 
+    # --- Issue #67: Resolve blob image URIs to base64 data URIs ---
+    await _resolve_chapter_images(manuscript, ctx, logger)
+
     artifacts: list[ExportArtifact] = []
 
     # Generate ePub if requested
@@ -416,7 +419,7 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
     {gurmukhi_face}
     @page {{
         size: A4;
-        margin: 2.5cm;
+        margin: 2cm;
         @bottom-center {{
             content: counter(page);
             font-size: 10pt;
@@ -440,23 +443,23 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
     }}
     body {{
         font-family: Georgia, 'Noto Sans Devanagari', 'Noto Sans Gurmukhi', serif;
-        line-height: 1.6;
-        font-size: 12pt;
+        line-height: 1.45;
+        font-size: 11pt;
     }}
     h1 {{
-        font-size: 24pt;
-        margin-top: 2em;
+        font-size: 20pt;
+        margin-top: 1.5em;
         page-break-before: always;
     }}
     h1:first-of-type {{
         page-break-before: avoid;
     }}
     h2 {{
-        font-size: 18pt;
-        margin-top: 1.5em;
+        font-size: 15pt;
+        margin-top: 1.2em;
     }}
     p {{
-        margin: 1em 0;
+        margin: 0.7em 0;
         text-align: justify;
     }}
     .title-page {{
@@ -554,6 +557,21 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
     .cover-image img {{
         max-width: 100%;
         max-height: 90vh;
+    }}
+    figure.page-image {{
+        text-align: center;
+        margin: 1em 0;
+        page-break-inside: avoid;
+    }}
+    figure.page-image img {{
+        max-width: 90%;
+        max-height: 40vh;
+    }}
+    figure.page-image figcaption {{
+        font-size: 9pt;
+        font-style: italic;
+        color: #555;
+        margin-top: 0.3em;
     }}
     """
     return CSS(string=css_text, font_config=font_config)
@@ -708,9 +726,14 @@ def _extract_chapter_page_numbers(pdf_bytes):
     # Count front-matter pages (title, ToC, foreword — before body content)
     frontmatter_pages = 0
     body_started = False
-    chapter_pattern = re.compile(r"Chapter\s+(\d+)\s*:")
+    # Match Chapter N:, Tantra Sutra — Method N, or Method N (Issue #68)
+    chapter_pattern = re.compile(
+        r"(Chapter\s+(\d+)\s*:|Tantra\s+Sutra\s*[—\u2014\u2013-]\s*Method\s*(\d+)|Method\s+(\d+))",
+        re.IGNORECASE,
+    )
 
     page_map = {}
+    chapter_counter = 0
     for page_idx in range(doc.page_count):
         text = doc[page_idx].get_text()
 
@@ -721,12 +744,50 @@ def _extract_chapter_page_numbers(pdf_bytes):
             frontmatter_pages = page_idx
 
         if match:
-            chapter_num = int(match.group(1))
+            chapter_counter += 1
+            # Use Chapter N number if available, else sequential counter
+            chapter_num = int(match.group(2) or match.group(3) or match.group(4) or chapter_counter)
             body_page = page_idx - frontmatter_pages + 1
-            page_map[chapter_num] = body_page
+            page_map[chapter_counter] = body_page
 
     doc.close()
     return page_map
+
+
+async def _resolve_chapter_images(manuscript, ctx, logger) -> None:
+    """Download blob-hosted images in chapter HTML and replace with base64 data URIs.
+
+    This ensures WeasyPrint and ePub can embed the images without network access.
+    Modifies manuscript.chapters in-place.
+    """
+    import base64
+    import re
+
+    blob_img_re = re.compile(r"<img src='([^']+blob[^']+)' alt='([^']*)'/>")
+
+    for chapter in manuscript.chapters:
+        matches = blob_img_re.findall(chapter.content_html)
+        if not matches:
+            continue
+
+        for blob_uri, alt_text in matches:
+            try:
+                blob_name = blob_uri.split("/")[-1]
+                img_data = await ctx.blob.download_blob(
+                    container=ctx.settings.blob_container_source,
+                    blob_name=blob_name,
+                )
+                b64 = base64.b64encode(img_data).decode("ascii")
+                data_uri = f"data:image/png;base64,{b64}"
+                chapter.content_html = chapter.content_html.replace(blob_uri, data_uri)
+                logger.debug("Resolved image %s (%d bytes)", blob_name, len(img_data))
+            except Exception:
+                logger.warning("Could not resolve image: %s", blob_uri, exc_info=True)
+                # Remove the broken image tag
+                chapter.content_html = chapter.content_html.replace(
+                    f"<figure class='page-image'><img src='{blob_uri}' alt='{alt_text}'/></figure>\n",
+                    "",
+                )
 
 
 def _sanitize_filename(filename: str) -> str:

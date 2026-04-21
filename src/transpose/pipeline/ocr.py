@@ -166,13 +166,26 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
             # Apply NFC normalization to digital text too
             text = _normalize_text(text.strip())
 
+            page_metadata: dict = {"source": "digital_extraction"}
+
+            # --- Issue #67: Extract interior images from each page ---
+            try:
+                image_refs = await _extract_page_images(
+                    page, page_num, input.book_id, pdf_doc, ctx, logger,
+                )
+                if image_refs:
+                    page_metadata["images"] = image_refs
+                    logger.info("Page %d: extracted %d image(s)", page_num, len(image_refs))
+            except Exception:
+                logger.warning("Page %d: image extraction failed", page_num, exc_info=True)
+
             page_obj = Page(
                 book_id=input.book_id,
                 page_number=page_num,
                 raw_text=text,
                 confidence=1.0,  # Digital text has high confidence
                 needs_review=False,
-                ocr_metadata={"source": "digital_extraction"},
+                ocr_metadata=page_metadata,
             )
 
             # Validate even digital extraction
@@ -273,4 +286,64 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
         page_results=page_results,
         cover_image_blob_uri=cover_image_blob_uri,
     )
+
+
+async def _extract_page_images(
+    page, page_num: int, book_id: UUID, pdf_doc, ctx, logger,
+) -> list[dict]:
+    """Extract images from a PDF page and upload to blob storage.
+
+    Returns a list of dicts: [{"blob_uri": "...", "width": N, "height": N}]
+    Skips the cover page (page 1) since it's handled separately.
+    Skips full-page raster images (likely scanned page backgrounds).
+    """
+    if page_num == 1:
+        return []
+
+    images = page.get_images(full=True)
+    if not images:
+        return []
+
+    page_rect = page.rect
+    page_area = page_rect.width * page_rect.height
+    results: list[dict] = []
+
+    for img_idx, img_info in enumerate(images):
+        xref = img_info[0]
+        try:
+            import fitz
+
+            pix = fitz.Pixmap(pdf_doc, xref)
+            img_area = pix.width * pix.height
+
+            # Skip tiny images (icons, bullets) and full-page rasters
+            if img_area < 5000:  # too small to be meaningful
+                pix = None
+                continue
+            if img_area > page_area * 0.85:  # likely a scanned page background
+                pix = None
+                continue
+
+            # Convert CMYK to RGB if needed
+            if pix.n > 4:
+                pix = fitz.Pixmap(fitz.csRGB, pix)
+
+            png_data = pix.tobytes("png")
+            pix = None
+
+            blob_name = f"{book_id}_page{page_num}_img{img_idx}.png"
+            blob_uri = await ctx.blob.upload_output(
+                container=ctx.settings.blob_container_source,
+                blob_name=blob_name,
+                data=png_data,
+            )
+            results.append({
+                "blob_uri": blob_uri,
+                "width": img_info[2] if len(img_info) > 2 else 0,
+                "height": img_info[3] if len(img_info) > 3 else 0,
+            })
+        except Exception:
+            logger.debug("Page %d img %d: extraction failed", page_num, img_idx, exc_info=True)
+
+    return results
 

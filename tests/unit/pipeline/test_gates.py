@@ -421,10 +421,10 @@ class TestDocumentStructureGate:
         assert result.passed is True
 
     def test_fails_with_toc_chapter_mismatch(self) -> None:
-        chapters = [StubChapter(number=1)]
+        """ToC with fewer entries than chapters should fail."""
+        chapters = [StubChapter(number=1), StubChapter(number=2)]
         toc = [
             {"chapter": 1, "title": "Ch 1"},
-            {"chapter": 2, "title": "Ch 2"},
         ]
         output = StubAssembleOutput(
             title="Test Book",
@@ -435,6 +435,22 @@ class TestDocumentStructureGate:
         result = document_structure_gate(output)
         assert result.passed is False
         assert any("ToC" in f for f in result.failures)
+
+    def test_passes_with_extra_toc_entries(self) -> None:
+        """ToC with more entries than chapters is valid (sub-headings)."""
+        chapters = [StubChapter(number=1)]
+        toc = [
+            {"chapter": 1, "title": "Ch 1"},
+            {"chapter": 2, "title": "Sub heading"},
+        ]
+        output = StubAssembleOutput(
+            title="Test Book",
+            chapters=chapters,
+            table_of_contents=toc,
+            metadata={"foreword": self._long_foreword()},
+        )
+        result = document_structure_gate(output)
+        assert result.passed is True
 
     def test_warns_with_missing_foreword(self) -> None:
         chapters = [StubChapter(number=1)]
