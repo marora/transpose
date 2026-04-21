@@ -138,6 +138,8 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         ctx = ServiceContext()
         await ctx.connect()
 
+    pipeline_start_time = datetime.now()
+
     stages_completed: list[str] = []
     errors: list[dict] = []
     gate_results: list[GateResult] = []
@@ -219,6 +221,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "ingest", "book_id": str(book_id)})
             stages_completed.append("ingest")
+            elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+            logger.info(
+                "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                len(stages_completed), 7, "ingest", duration, elapsed_total, str(book_id),
+            )
 
             logger.info(
                 f"Ingest complete: book_id={book_id}, "
@@ -244,6 +251,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "ocr", "book_id": str(book_id)})
             stages_completed.append("ocr")
+            elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+            logger.info(
+                "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                len(stages_completed), 7, "ocr", duration, elapsed_total, str(book_id),
+            )
 
             logger.info(
                 f"OCR complete: processed={ocr_output.pages_processed}, "
@@ -266,6 +278,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "chunk", "book_id": str(book_id)})
             stages_completed.append("chunk")
+            elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+            logger.info(
+                "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                len(stages_completed), 7, "chunk", duration, elapsed_total, str(book_id),
+            )
 
             logger.info(f"Chunk complete: total_chunks={chunk_output.total_chunks}")
 
@@ -284,6 +301,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "translate", "book_id": str(book_id)})
             stages_completed.append("translate")
+            elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+            logger.info(
+                "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                len(stages_completed), 7, "translate", duration, elapsed_total, str(book_id),
+            )
 
             total_tokens = (
                 translate_output.total_prompt_tokens + translate_output.total_completion_tokens
@@ -312,6 +334,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "glossary", "book_id": str(book_id)})
             stages_completed.append("glossary")
+            elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+            logger.info(
+                "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                len(stages_completed), 7, "glossary", duration, elapsed_total, str(book_id),
+            )
 
             glossary_term_count = glossary_output.total_terms
 
@@ -338,6 +365,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "assemble", "book_id": str(book_id)})
             stages_completed.append("assemble")
+            elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+            logger.info(
+                "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                len(stages_completed), 7, "assemble", duration, elapsed_total, str(book_id),
+            )
 
             logger.info(f"Assemble complete: chapters={len(assemble_output.chapters)}")
 
@@ -360,6 +392,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "export", "book_id": str(book_id)})
             stages_completed.append("export")
+            elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+            logger.info(
+                "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                len(stages_completed), 7, "export", duration, elapsed_total, str(book_id),
+            )
 
             artifacts = [
                 {

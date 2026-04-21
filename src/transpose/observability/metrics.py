@@ -56,3 +56,10 @@ translation_errors = meter.create_counter(
     name="transpose.translation.errors",
     description="Translation errors by type",
 )
+
+# Cost tracking
+estimated_cost = meter.create_counter(
+    name="transpose.translation.estimated_cost_usd",
+    description="Estimated translation cost in USD (based on token pricing)",
+    unit="usd",
+)

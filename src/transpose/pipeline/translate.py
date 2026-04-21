@@ -57,6 +57,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     """
     import asyncio
     import logging
+    import time
 
     from transpose.config.seed_glossary import get_seed_glossary
     from transpose.models.enums import BookStatus
@@ -64,6 +65,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     from transpose.observability.metrics import (
         chunks_translated,
         content_filter_blocks,
+        estimated_cost,
         tokens_used,
         translation_errors,
     )
@@ -89,6 +91,16 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     # Get already-translated chunks (idempotent)
     translated_chunk_ids = await ctx.db.get_translated_chunk_ids(input.book_id)
     logger.info(f"Already translated: {len(translated_chunk_ids)} chunks")
+
+    # Check for placeholder translations that should be retried
+    if translated_chunk_ids and not input.force_retranslate:
+        placeholder_ids = await ctx.db.get_failed_translation_chunk_ids(input.book_id)
+        if placeholder_ids:
+            logger.info(f"Found {len(placeholder_ids)} failed translations to retry")
+            translated_chunk_ids -= placeholder_ids
+            # Delete the placeholder translations so they can be re-created
+            for pid in placeholder_ids:
+                await ctx.db.delete_translation(pid)
 
     # Filter chunks to translate
     chunks_to_translate = [
@@ -158,6 +170,10 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
                 {"book_id": str(input.book_id), "type": "translation"},
             )
 
+            # Estimate cost (GPT-4o: $2.50/1M input, $10.00/1M output)
+            chunk_cost = (response.prompt_tokens * 2.50 / 1_000_000) + (response.completion_tokens * 10.00 / 1_000_000)
+            estimated_cost.add(chunk_cost, {"book_id": str(input.book_id)})
+
             return TranslationResult(
                 chunk_id=chunk.id,
                 translated_text=response.translated_text,
@@ -182,6 +198,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
         if previous_translation and len(previous_translation.translated_text) > 200:
             prev_context = previous_translation.translated_text[-200:]
 
+        chunk_start_time = time.monotonic()
         try:
             result, response = await translate_chunk(chunk, prev_context)
             translations.append(result)
@@ -269,6 +286,12 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
             )
             # Don't update previous_translation — keep last successful context
 
+        chunk_elapsed = time.monotonic() - chunk_start_time
+        logger.info(
+            "📊 Translation: chunk %d/%d completed in %.1fs | book_id=%s",
+            i + 1, len(chunks_to_translate), chunk_elapsed, str(input.book_id),
+        )
+
         # Update progress
         await ctx.state.set_progress(
             str(input.book_id),
@@ -291,6 +314,12 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     logger.info(
         f"Translation complete: {len(translations)} chunks translated, "
         f"{failed_count} failed"
+    )
+
+    total_cost = (total_prompt_tokens * 2.50 / 1_000_000) + (total_completion_tokens * 10.00 / 1_000_000)
+    logger.info(
+        f"💰 Translation cost estimate: ${total_cost:.4f} "
+        f"(prompt: {total_prompt_tokens} tokens, completion: {total_completion_tokens} tokens)"
     )
 
     return TranslateOutput(

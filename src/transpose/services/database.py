@@ -356,6 +356,25 @@ class Database:
             )
             return {row["chunk_id"] for row in rows}
 
+    async def get_failed_translation_chunk_ids(self, book_id: UUID) -> set[UUID]:
+        """Get chunk IDs that have placeholder/failed translations."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT chunk_id FROM translations
+                   WHERE book_id = $1
+                   AND translated_text LIKE '[TRANSLATION FAILED%'""",
+                book_id,
+            )
+            return {row["chunk_id"] for row in rows}
+
+    async def delete_translation(self, chunk_id: UUID) -> None:
+        """Delete a translation record for re-translation."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM translations WHERE chunk_id = $1",
+                chunk_id,
+            )
+
     # --- Cultural Term CRUD ---
 
     async def upsert_cultural_term(self, term: CulturalTerm) -> None:
