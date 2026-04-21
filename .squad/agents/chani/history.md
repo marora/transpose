@@ -785,3 +785,37 @@ Fixed type inconsistencies in pipeline serialization layer, added queue isolatio
 
 **Test Status:** 500/500 passing, 4 xfailed
 **Files changed:** `translate.py`, `assemble.py`, `ocr.py`, `export.py`
+
+## Session 2026-04-21: Issues #61 & #62 — Content-Based Chapter Splitting + Cover Image Logging
+
+**Issue #61 (P0): TOC shows single entry instead of 22 chapters**
+- Root cause: Chunk stage sets `SectionType.CHAPTER` only when markers contain "Chapter"/"अध्याय"/"ਅਧਿਆਇ". Tantra Sutra book uses "तंत्र-सूत्र—विधि-01" style markers (translated as "Tantra Sutra—Method 01"), so ALL chunks got `SectionType.PROSE` → one "Introduction" chapter
+- Solution: Added content-based chapter splitting as fallback in `assemble.py::run()`:
+  - New `_CHAPTER_LEVEL_PATTERNS` list with regexes for "Tantra Sutra—Method N", "Method N", "Chapter N"
+  - New `_detect_chapter_boundary()` function checks if text matches chapter-level heading patterns (≤150 chars, single line)
+  - New `_split_chapters_by_content()` function re-scans all translated text when metadata-based grouping yields only 1 chapter; creates new chapter groups by detecting chapter-level headings in first 5 lines of each chunk's translation
+  - Content-based splitting runs AFTER metadata-based grouping as a fallback only
+  - Existing `_detect_heading()` unchanged — it still handles sub-headings (h2) within chapters
+- Chapter splitting now works for books that:
+  - Use non-standard chapter markers in original language
+  - Have clear chapter headings in translated text
+  - Follow consistent heading patterns throughout
+
+**Issue #62 (P1): Cover image not embedded — diagnosis improved**
+- Verified `ctx.db.fetch_one()` method exists and works correctly (found in `database.py` line 68-74)
+- OCR stage uploads cover to `blob_container_source`, export stage downloads from same container — no mismatch
+- Added detailed logging in `export.py`:
+  - Debug log when checking book metadata fallback
+  - Info log showing cover_image_uri when found
+  - Info log showing container and blob name before download attempt
+  - Warning log with specific error message and blob name on download failure
+- Logging will help diagnose if cover images fail to embed in future runs
+
+**Testing:** 684 tests passing (1 skipped, 5 xfailed). No test changes needed.
+**Files changed:** `assemble.py`, `export.py`
+
+## Learnings
+
+- When chunk metadata lacks chapter markers (all chunks marked as `SectionType.PROSE`), metadata-based chapter grouping produces a single "Introduction" chapter with all content. Content-based chapter splitting solves this by detecting chapter-level headings in the translated text itself.
+- A good heuristic for chapter vs sub-heading detection: chapter headings should be ≤150 chars, single-line, and match specific patterns (Tantra Sutra—Method N, Chapter N, etc.). Sub-headings use different patterns (Discourse N, Part N, Lecture N) and are handled by existing `_detect_heading()`.
+- The `fetch_one()` database method returns an `asyncpg.Record` which behaves like a dict with `row.get("key")` access pattern. It's implemented correctly in the codebase and wasn't the source of the cover image issue.
