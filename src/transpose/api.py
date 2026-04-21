@@ -3,7 +3,8 @@
 Designed for Azure Container Apps deployment. Runs on port 8000.
 
 Endpoints:
-    GET  /health            → health check
+    GET  /health            → deep health check (liveness — always 200)
+    GET  /ready             → readiness probe (503 when degraded)
     POST /translate         → trigger pipeline (returns book_id)
     GET  /status/{book_id}  → poll pipeline status
 """
@@ -21,6 +22,7 @@ import contextlib
 import hmac
 import json
 import logging
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from aiohttp import web
@@ -33,12 +35,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Per-check timeout for health probes (seconds)
+_HEALTH_CHECK_TIMEOUT = 3.0
+
 
 class JobTracker:
     """PostgreSQL-backed job status tracker."""
 
     def __init__(self):
         self._ctx = None
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def connect(self):
         """Initialize database connection."""
@@ -106,11 +112,131 @@ class JobTracker:
 
 
 # ---------------------------------------------------------------------------
+# Health checks
+# ---------------------------------------------------------------------------
+
+
+async def _check_database(app: web.Application) -> str:
+    """Verify PostgreSQL connectivity with a simple query."""
+    job_tracker: JobTracker | None = app.get("job_tracker")
+    if not job_tracker or not job_tracker._ctx:
+        return "not_configured"
+    try:
+        row = await asyncio.wait_for(
+            job_tracker._ctx.db.fetch_one("SELECT 1 AS ok"),
+            timeout=_HEALTH_CHECK_TIMEOUT,
+        )
+        return "ok" if row else "error: empty result"
+    except asyncio.TimeoutError:
+        return "error: timeout"
+    except Exception as exc:
+        return f"error: {type(exc).__name__}"
+
+
+async def _check_blob(app: web.Application) -> str:
+    """Verify Azure Blob Storage connectivity by listing container properties."""
+    settings = get_settings()
+    if not settings.blob_storage_account_url:
+        return "not_configured"
+    try:
+        from azure.identity.aio import DefaultAzureCredential
+        from azure.storage.blob.aio import BlobServiceClient
+
+        async def _probe():
+            credential = DefaultAzureCredential()
+            try:
+                client = BlobServiceClient(
+                    account_url=settings.blob_storage_account_url,
+                    credential=credential,
+                )
+                try:
+                    await client.get_account_information()
+                    return "ok"
+                finally:
+                    await client.close()
+            finally:
+                await credential.close()
+
+        return await asyncio.wait_for(_probe(), timeout=_HEALTH_CHECK_TIMEOUT)
+    except asyncio.TimeoutError:
+        return "error: timeout"
+    except ImportError:
+        return "not_configured"
+    except Exception as exc:
+        return f"error: {type(exc).__name__}"
+
+
+async def _check_openai(app: web.Application) -> str:
+    """Verify Azure OpenAI connectivity with a lightweight models list."""
+    settings = get_settings()
+    if not settings.openai_endpoint:
+        return "not_configured"
+    try:
+        import httpx
+
+        async def _probe():
+            url = f"{settings.openai_endpoint.rstrip('/')}/openai/models?api-version={settings.openai_api_version}"
+            from azure.identity.aio import DefaultAzureCredential
+
+            credential = DefaultAzureCredential()
+            try:
+                token = await credential.get_token("https://cognitiveservices.azure.com/.default")
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        url,
+                        headers={"Authorization": f"Bearer {token.token}"},
+                        timeout=_HEALTH_CHECK_TIMEOUT,
+                    )
+                    return "ok" if resp.status_code < 400 else f"error: HTTP {resp.status_code}"
+            finally:
+                await credential.close()
+
+        return await asyncio.wait_for(_probe(), timeout=_HEALTH_CHECK_TIMEOUT)
+    except asyncio.TimeoutError:
+        return "error: timeout"
+    except ImportError:
+        return "not_configured"
+    except Exception as exc:
+        return f"error: {type(exc).__name__}"
+
+
+async def _run_health_checks(app: web.Application) -> dict:
+    """Run all health checks concurrently and return structured result."""
+    db_check, blob_check, openai_check = await asyncio.gather(
+        _check_database(app),
+        _check_blob(app),
+        _check_openai(app),
+        return_exceptions=True,
+    )
+
+    # Normalise gather exceptions
+    checks = {}
+    for name, result in [("database", db_check), ("blob", blob_check), ("openai", openai_check)]:
+        if isinstance(result, BaseException):
+            checks[name] = f"error: {type(result).__name__}"
+        else:
+            checks[name] = result
+
+    # Determine overall status
+    errors = [v for v in checks.values() if v.startswith("error:")]
+    if errors:
+        status = "degraded" if len(errors) < len(checks) else "unhealthy"
+    else:
+        status = "healthy"
+
+    return {
+        "status": status,
+        "checks": checks,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # API Key Authentication
 # ---------------------------------------------------------------------------
 
 # Paths that bypass authentication (health probes, status polling)
-_PUBLIC_PATHS = frozenset({"/health"})
+_PUBLIC_PATHS = frozenset({"/health", "/ready"})
 _PUBLIC_PREFIXES = ("/status/",)
 
 
@@ -138,9 +264,57 @@ async def api_key_middleware(request: web.Request, handler):
 
     provided_key = _extract_api_key(request)
     if not provided_key or not hmac.compare_digest(provided_key, configured_key):
-        return web.json_response({"error": "Unauthorized"}, status=401)
+        return _error_response("Unauthorized", code="UNAUTHORIZED", status=401, request=request)
 
     return await handler(request)
+
+
+# ---------------------------------------------------------------------------
+# Request ID middleware
+# ---------------------------------------------------------------------------
+
+
+@web.middleware
+async def request_id_middleware(request: web.Request, handler):
+    """Attach a unique request ID to every request/response for correlation."""
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    request["request_id"] = request_id
+    try:
+        response = await handler(request)
+    except web.HTTPException as exc:
+        exc.headers["X-Request-ID"] = request_id
+        raise
+    except Exception:
+        raise
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Structured error helpers
+# ---------------------------------------------------------------------------
+
+
+def _error_response(
+    message: str,
+    *,
+    code: str = "INTERNAL_ERROR",
+    status: int = 500,
+    details: list | None = None,
+    request: web.Request | None = None,
+) -> web.Response:
+    """Build a structured JSON error response."""
+    request_id = request.get("request_id", "unknown") if request else "unknown"
+    body = {
+        "error": {
+            "code": code,
+            "message": message,
+            "request_id": request_id,
+        }
+    }
+    if details:
+        body["error"]["details"] = details
+    return web.json_response(body, status=status)
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +322,17 @@ async def api_key_middleware(request: web.Request, handler):
 # ---------------------------------------------------------------------------
 
 
-async def health(_request: web.Request) -> web.Response:
-    """Health probe for Container Apps."""
-    return web.json_response({"status": "healthy"})
+async def health(request: web.Request) -> web.Response:
+    """Liveness probe — always returns 200, reports deep check results."""
+    result = await _run_health_checks(request.app)
+    return web.json_response(result, status=200)
+
+
+async def ready(request: web.Request) -> web.Response:
+    """Readiness probe — returns 503 when any check is degraded/unhealthy."""
+    result = await _run_health_checks(request.app)
+    status = 200 if result["status"] == "healthy" else 503
+    return web.json_response(result, status=status)
 
 
 async def translate(request: web.Request) -> web.Response:
@@ -158,17 +340,28 @@ async def translate(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except (json.JSONDecodeError, Exception):
-        return web.json_response({"error": "invalid JSON body"}, status=400)
+        return _error_response("invalid JSON body", code="INVALID_JSON", status=400, request=request)
 
     # Validate required fields
     blob_uri = body.get("blob_uri")
     title = body.get("title")
     if not blob_uri or not title:
-        return web.json_response({"error": "blob_uri and title are required"}, status=400)
+        return _error_response(
+            "blob_uri and title are required",
+            code="MISSING_FIELDS",
+            status=400,
+            details=["blob_uri and title are required fields"],
+            request=request,
+        )
 
     language = body.get("language", "hindi")
     if language not in ("hindi", "punjabi"):
-        return web.json_response({"error": "language must be 'hindi' or 'punjabi'"}, status=400)
+        return _error_response(
+            "language must be 'hindi' or 'punjabi'",
+            code="INVALID_LANGUAGE",
+            status=400,
+            request=request,
+        )
 
     author = body.get("author")
     formats = body.get("formats", ["epub", "pdf"])
@@ -177,11 +370,22 @@ async def translate(request: web.Request) -> web.Response:
     job_tracker = request.app.get("job_tracker")
     if job_tracker and job_tracker._ctx:
         await job_tracker.create_job(book_id)
-    
-    # Fire-and-forget pipeline task
-    asyncio.create_task(
-        _run_pipeline_job(job_tracker, book_id, blob_uri, title, author, language, formats)
+
+    concurrency = body.get("concurrency")
+    if concurrency is not None:
+        if not isinstance(concurrency, int) or concurrency < 1:
+            return web.json_response({"error": "concurrency must be a positive integer"}, status=400)
+
+    # Launch pipeline task with proper lifecycle management
+    task = asyncio.create_task(
+        _run_pipeline_job(job_tracker, book_id, blob_uri, title, author, language, formats, concurrency)
     )
+    # Prevent GC collection and log failures
+    if job_tracker:
+        job_tracker._background_tasks.add(task)
+        task.add_done_callback(lambda t: _on_task_done(t, book_id, job_tracker))
+    else:
+        task.add_done_callback(lambda t: _on_task_done(t, book_id, None))
 
     return web.json_response({"book_id": book_id, "status": "accepted"})
 
@@ -201,7 +405,9 @@ async def get_status(request: web.Request) -> web.Response:
     try:
         UUID(book_id)
     except ValueError:
-        return web.json_response({"error": "invalid book_id format"}, status=400)
+        return _error_response(
+            "invalid book_id format", code="INVALID_BOOK_ID", status=400, request=request,
+        )
 
     try:
         from transpose.services import ServiceContext
@@ -211,7 +417,9 @@ async def get_status(request: web.Request) -> web.Response:
         try:
             book = await ctx.db.get_book(UUID(book_id))
             if not book:
-                return web.json_response({"error": "book not found"}, status=404)
+                return _error_response(
+                    "book not found", code="NOT_FOUND", status=404, request=request,
+                )
             return web.json_response({
                 "book_id": book_id,
                 "status": str(book.status),
@@ -221,13 +429,38 @@ async def get_status(request: web.Request) -> web.Response:
         finally:
             await ctx.close()
     except Exception as exc:
-        logger.exception("Error fetching status from DB")
-        return web.json_response({"error": str(exc)}, status=500)
+        request_id = request.get("request_id", "unknown")
+        logger.exception("Error fetching status from DB [request_id=%s]", request_id)
+        return _error_response(
+            "internal error fetching status",
+            code="INTERNAL_ERROR",
+            status=500,
+            request=request,
+        )
 
 
 # ---------------------------------------------------------------------------
 # Background pipeline runner
 # ---------------------------------------------------------------------------
+
+
+def _on_task_done(task: asyncio.Task, book_id: str, job_tracker: JobTracker | None) -> None:
+    """Callback for completed pipeline tasks — logs errors, cleans up references."""
+    if job_tracker:
+        job_tracker._background_tasks.discard(task)
+
+    if task.cancelled():
+        logger.warning("Pipeline task cancelled for book_id=%s", book_id)
+        return
+
+    exc = task.exception()
+    if exc:
+        logger.error(
+            "Pipeline task failed for book_id=%s: %s: %s",
+            book_id, type(exc).__name__, exc,
+        )
+    else:
+        logger.info("Pipeline task completed for book_id=%s", book_id)
 
 
 async def _run_pipeline_job(
@@ -238,6 +471,7 @@ async def _run_pipeline_job(
     author: str | None,
     language: str,
     formats: list[str],
+    concurrency: int | None = None,
 ) -> None:
     """Run the full pipeline in background and update the job tracker."""
     from transpose.models.enums import SourceLanguage
@@ -260,6 +494,7 @@ async def _run_pipeline_job(
             source_language=source_language,
             output_formats=formats,
             blob_uri=blob_uri,
+            concurrency=concurrency,
         )
 
         output = await run_pipeline(pipeline_input, ctx)
@@ -287,6 +522,34 @@ async def _run_pipeline_job(
 
 
 # ---------------------------------------------------------------------------
+# Global exception handler
+# ---------------------------------------------------------------------------
+
+
+async def _json_error_handler(request: web.Request, handler):
+    """Catch unhandled exceptions and return structured JSON errors."""
+    try:
+        return await handler(request)
+    except web.HTTPException:
+        raise  # Let aiohttp handle HTTP errors normally
+    except ValueError as exc:
+        request_id = request.get("request_id", "unknown")
+        logger.warning("ValueError [request_id=%s]: %s", request_id, exc)
+        return _error_response(
+            str(exc), code="VALIDATION_ERROR", status=400, request=request,
+        )
+    except Exception as exc:
+        request_id = request.get("request_id", "unknown")
+        logger.exception("Unhandled exception [request_id=%s]", request_id)
+        settings = get_settings()
+        # Only expose detail in debug mode (non-production, no API key configured)
+        message = str(exc) if not settings.api_key else "internal server error"
+        return _error_response(
+            message, code="INTERNAL_ERROR", status=500, request=request,
+        )
+
+
+# ---------------------------------------------------------------------------
 # App factory & entrypoint
 # ---------------------------------------------------------------------------
 
@@ -300,7 +563,11 @@ def create_app() -> web.Application:
 
     settings = get_settings()
 
-    app = web.Application(middlewares=[api_key_middleware])
+    app = web.Application(middlewares=[
+        request_id_middleware,
+        api_key_middleware,
+        _json_error_handler,
+    ])
     app["api_key"] = settings.api_key
     app["job_tracker"] = JobTracker()
 
@@ -326,6 +593,7 @@ def create_app() -> web.Application:
     app.on_cleanup.append(on_cleanup)
 
     app.router.add_get("/health", health)
+    app.router.add_get("/ready", ready)
     app.router.add_post("/translate", translate)
     app.router.add_get("/status/{book_id}", get_status)
     return app

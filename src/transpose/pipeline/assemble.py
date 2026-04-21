@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from transpose.utils import escape_html as _escape_html
+
 
 @dataclass
 class AssembleInput:
@@ -369,16 +371,6 @@ def _clean_foreword(text: str) -> str:
     while lines and re.match(sign_off, lines[-1].strip(), re.IGNORECASE):
         lines.pop()
     return "\n".join(lines).rstrip()
-
-
-def _escape_html(text: str) -> str:
-    """Basic HTML escaping."""
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
 
 
 async def _generate_foreword(ctx, book_title: str, cultural_terms: list[dict]) -> str:

@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 from aiohttp import web
 
-from transpose.api import get_status, health, translate
+from transpose.api import get_status, health, ready, translate
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -91,6 +91,7 @@ def _make_app(api_key: str | None = None) -> web.Application:
 
     app = web.Application(middlewares=[_auth_middleware])
     app.router.add_get("/health", health)
+    app.router.add_get("/ready", ready)
     app.router.add_post("/translate", translate)
     app.router.add_get("/status/{book_id}", get_status)
     return app

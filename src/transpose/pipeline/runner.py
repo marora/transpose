@@ -11,7 +11,6 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
 
 from transpose.models.enums import BookStatus, SourceLanguage
 from transpose.pipeline.gates import (
@@ -31,6 +30,9 @@ from transpose.pipeline.gates import (
 
 logger = logging.getLogger(__name__)
 
+# Type alias: book IDs are always strings at pipeline boundaries.
+BookId = str
+
 
 @dataclass
 class PipelineInput:
@@ -44,13 +46,14 @@ class PipelineInput:
     resume_from: str | None = None
     blob_uri: str | None = None
     output_dir: str | None = None
+    concurrency: int | None = None
 
 
 @dataclass
 class PipelineOutput:
     """Top-level output of the full pipeline."""
 
-    book_id: UUID
+    book_id: BookId
     status: BookStatus
     artifacts: list[dict]
     glossary_term_count: int
@@ -112,7 +115,7 @@ def _run_gate(gate_fn, gate_input, gate_results: list[GateResult]) -> GateResult
 
 
 def _build_validation_report(
-    book_id: UUID | None,
+    book_id: BookId | None,
     gate_results: list[GateResult],
     artifacts: list[dict],
 ) -> dict:
@@ -203,7 +206,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             source_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
             existing = await ctx.db.get_book_by_hash(source_hash)
             if existing:
-                book_id = existing.id
+                book_id = str(existing.id)
                 cost_tracker = CostTracker(book_id)
                 logger.info(f"Resumed with book_id={book_id} from hash {source_hash}")
             else:
@@ -255,7 +258,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 ctx,
             )
 
-            book_id = ingest_output.book_id
+            book_id = str(ingest_output.book_id)
             cost_tracker = CostTracker(book_id)
 
             # Track blob upload from ingest (source PDF)
@@ -380,7 +383,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             translate_output = await translate.run(
                 translate.TranslateInput(
                     book_id=book_id,
-                    concurrency=ctx.settings.translate_concurrency,
+                    concurrency=input.concurrency or ctx.settings.translate_concurrency,
                 ),
                 ctx,
             )

@@ -31,6 +31,7 @@ def main() -> None:
 @click.option("--language", type=click.Choice(["hindi", "punjabi"]), default="hindi")
 @click.option("--format", "formats", multiple=True, default=["epub", "pdf"])
 @click.option("--resume-from", default=None, help="Stage to resume from")
+@click.option("--concurrency", type=int, default=None, help="Translation concurrency (default: from settings)")
 def run(
     source: str,
     title: str,
@@ -38,6 +39,7 @@ def run(
     language: str,
     formats: tuple[str, ...],
     resume_from: str | None,
+    concurrency: int | None,
 ) -> None:
     """Run the translation pipeline on a book."""
     # Configure logging
@@ -49,7 +51,7 @@ def run(
     click.echo(f"Transpose: translating '{title}' from {language}")
 
     # Run the pipeline
-    asyncio.run(_run_pipeline(source, title, author, language, list(formats), resume_from))
+    asyncio.run(_run_pipeline(source, title, author, language, list(formats), resume_from, concurrency))
 
 
 async def _run_pipeline(
@@ -59,6 +61,7 @@ async def _run_pipeline(
     language: str,
     formats: list[str],
     resume_from: str | None,
+    concurrency: int | None = None,
 ) -> None:
     """Async pipeline runner."""
     from transpose.models.enums import SourceLanguage
@@ -80,6 +83,7 @@ async def _run_pipeline(
             source_language=source_language,
             output_formats=formats,
             resume_from=resume_from,
+            concurrency=concurrency,
         )
 
         # Run pipeline

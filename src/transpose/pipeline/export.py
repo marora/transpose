@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from transpose.utils import escape_html as _escape_html
 from transpose.utils.unicode import normalize_unicode
 
 
@@ -645,14 +646,4 @@ def _sanitize_filename(filename: str) -> str:
     if len(sanitized) > 100:
         sanitized = sanitized[:100]
     return sanitized
-
-
-def _escape_html(text: str) -> str:
-    """Basic HTML escaping."""
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
 

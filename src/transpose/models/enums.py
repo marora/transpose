@@ -7,6 +7,7 @@ class BookStatus(StrEnum):
     """Lifecycle status of a book in the pipeline."""
 
     INGESTED = "ingested"
+    PROCESSING = "processing"
     OCR_COMPLETE = "ocr_complete"
     CHUNKED = "chunked"
     TRANSLATED = "translated"
