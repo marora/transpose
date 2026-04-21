@@ -239,7 +239,18 @@ During observability dashboard deployment, Coordinator identified and fixed a cr
 - Budget uses `targetScope = 'resourceGroup'` to stay within the RG scope of main.bicep.
 - Alert thresholds are parameterized but have sensible defaults matching observability doc recommendations.
 
+### 2026-04-21: Alembic Migrations + Container App Auto-Scaling (#19, #24)
 
+**Commit:** 5dcccdd
+
+**Deliverables:**
+- **#19 — Alembic database migrations:** Added `alembic>=1.13.0` to pyproject.toml. Initialized `migrations/` directory. Configured `env.py` to resolve DB URL from `TRANSPOSE_DATABASE_URL` or individual `TRANSPOSE_POSTGRES_*` env vars (matching pydantic Settings). Created baseline migration (`bbbf3659ac87`) capturing all 11 tables: books, pages, chunks, translations, cultural_terms, glossaries, manuscripts, pipeline_state, pipeline_locks, pipeline_jobs, book_costs — plus all indexes and triggers. All DDL uses `IF NOT EXISTS` / `CREATE OR REPLACE` so it's safe to run against existing databases. For existing deployments: `alembic stamp bbbf3659ac87` to mark baseline without re-running DDL.
+- **#24 — Container App auto-scaling:** Added HTTP concurrency-based scaling rule to `infra/modules/container-app.bicep`. Parameters: `minReplicas` (default 1, always-on), `maxReplicas` (default 5), `httpScaleConcurrency` (default 10 concurrent requests). Replaced the empty `rules: []` and `minReplicas: 0` configuration. Bicep validated successfully.
+
+**Key decisions:**
+- Alembic uses raw SQL (`op.execute`) not SQLAlchemy ORM — matches the project's asyncpg/raw-SQL pattern.
+- Baseline migration is stamp-able for existing databases; safe to run fresh too via `IF NOT EXISTS`.
+- Container App min replicas changed from 0→1 to avoid cold starts on the translation pipeline.
 ## Wave 1 P2 Hardening (2026-04-21T16:46:24Z)
 
 **Issues Resolved:** #22 (alert rules), #23 (budget alerts), #27 (ACR wiring), #28 (log retention)
