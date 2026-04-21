@@ -154,3 +154,30 @@ During observability dashboard deployment, Coordinator identified and fixed a cr
 **Validation:** JSON validated successfully after modification. 19 query items now include the parameter binding.
 
 **Key lesson:** Azure Monitor Workbook parameters are useless unless KQL queries explicitly reference them via `crossComponentResources`. The parameter picker creates the variable but doesn't auto-bind it to queries — every query must opt-in to the selected resource. Always verify resource binding when workbook shows zeros despite metrics existing.
+
+### 2026: Remediation Script v2 + CD Pipeline (Issues #33, #18)
+
+**Commit:** a8883ac
+
+**Remediation script (`infra/scripts/remediate-env-vars.sh`):**
+- Rewrote with `--dry-run` mode — previews all changes without mutating anything
+- Idempotent: removing non-existent env vars is a no-op in `az containerapp update`
+- Fixed defaults to match real resource names: `transpose-sc` RG, `transpose-dev-psql` PG server
+- Added comprehensive post-remediation docs: password rotation, Key Vault cleanup, access log audit
+- Structured logging with timestamps for audit trail
+
+**CD pipeline (`.github/workflows/deploy.yml`):**
+- Triggers on push to main (ignores docs-only changes), plus manual dispatch
+- OIDC/workload identity auth — requires `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` as GitHub secrets (these are non-secret IDs, not credentials)
+- Build job: Docker build → push to `transposedevacr.azurecr.io` with SHA-based tags
+- Deploy job: updates `transpose-dev-app` Container App with new image
+- GitHub Environment `production` protection rule for manual approval gate
+- Post-deploy health check: curls `/health` endpoint, fails workflow if non-200
+
+**Key lesson:** OIDC federated credentials eliminate stored secrets entirely. The three "secrets" in GitHub (client ID, tenant ID, subscription ID) are public-facing identifiers — the actual trust is established via the OIDC token exchange between GitHub's identity provider and Azure AD. This is the correct pattern for CI/CD auth.
+
+**Setup required for CD to work:**
+1. Create Azure AD app registration with federated credential for `repo:marora/transpose:ref:refs/heads/main`
+2. Assign Contributor + AcrPush roles to the app registration's service principal on `transpose-sc` RG
+3. Create GitHub Environment `production` with required reviewers (Manish)
+4. Set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` as GitHub repository secrets
