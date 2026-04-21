@@ -270,3 +270,12 @@ Fixed three P2 operational issues in one commit:
 - Pool defaults (5–20) sized for the current translate_concurrency=5. Operators should set pool_max_size ≥ translate_concurrency + 15 if they increase concurrency.
 - 659 tests pass; pre-existing gate_telemetry test failure (missing `trace` attribute) is unrelated.
 
+
+## Wave 1 P2 Hardening (2026-04-21T16:46:24Z)
+
+**Issues Resolved:** #21 (deep health check), #26 (structured errors), #42 (DB pool sizing)
+
+Implemented POST `/health` (deep liveness checks) and `/ready` (readiness gate) endpoints. Added request ID middleware for log correlation. Configured PostgreSQL connection pooling from environment settings with adaptive sizing (min 5, max 20).
+
+**Test Status:** 659/659 passing  
+**Key Learnings:** Readiness probes need differentiation from liveness; structured errors with request IDs enable distributed tracing across cloud deployments.

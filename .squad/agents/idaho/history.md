@@ -239,3 +239,12 @@ During observability dashboard deployment, Coordinator identified and fixed a cr
 - Budget uses `targetScope = 'resourceGroup'` to stay within the RG scope of main.bicep.
 - Alert thresholds are parameterized but have sensible defaults matching observability doc recommendations.
 
+
+## Wave 1 P2 Hardening (2026-04-21T16:46:24Z)
+
+**Issues Resolved:** #22 (alert rules), #23 (budget alerts), #27 (ACR wiring), #28 (log retention)
+
+Created alert rules and budget modules with conditional deployment (only deploy when alertEmail parameter provided). Wired Azure Container Registry authentication and image pull secrets into Container Apps config. Bumped Log Analytics retention from 30 to 90 days for compliance.
+
+**Artifacts:** alerts.bicep, budget.bicep, aca-acr.bicep (updated)  
+**Key Learnings:** Conditional Bicep modules prevent orphaned resources in dev/test; alertEmail parameter needed in production deployments.

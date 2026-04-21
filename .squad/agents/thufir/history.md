@@ -385,3 +385,13 @@ Known WeasyPrint issue: ToUnicode CMap produces garbled text extraction for Deva
 **Key learnings:**
 - `_run_gate` imports are local (inside the function body), so patches must target the source modules (`opentelemetry.trace.get_tracer`, `transpose.observability.metrics.*`), not the runner module namespace.
 - `--timeout=30` pytest flag no longer works — `pytest-timeout` not installed. Run tests without it.
+
+## Wave 1 P2 Hardening (2026-04-21T16:46:24Z)
+
+**Issues Resolved:** #29 (gate telemetry), #44 (gate metrics), #49 (resume-from tests)
+
+Instrumented OpenTelemetry spans and Prometheus metrics on all quality gates via centralized _run_gate() wrapper in runner.py. Added 43 new test cases covering resume-from checkpoint recovery, state validation, and multi-stage resumption.
+
+**Metrics:** gate latency (histogram), gate errors (counter), throughput (gauge)  
+**Test Status:** 657/657 passing  
+**Key Learnings:** Centralized instrumentation in orchestration layer (DRY) > individual gate functions; resume-from tests validate idempotency guarantees.

@@ -1284,3 +1284,71 @@ Created a **separate** workbook (`pipeline-dashboard.json`) for real-time pipeli
 - **Operators:** Open the Pipeline Operations workbook during E2E runs for real-time visibility
 - **Idaho (future):** Workbook Bicep module is ready to wire into `main.bicep` when deploying infra
 
+
+---
+
+### Decision: Conditional Alert/Budget Deployment
+
+**Author:** Idaho (Cloud/Infra)  
+**Date:** 2026-04-21  
+**Status:** Implemented  
+**Issues:** #22, #23
+
+Alert rules and budget module are conditionally deployed — they only provision when the `alertEmail` parameter is non-empty. This avoids creating empty action groups or budget resources in dev/test environments where notifications aren't wanted.
+
+**Rationale:**
+- Alerts with no recipient create noise in the Azure portal (orphaned action groups)
+- Budget resources with empty email lists fail validation
+- Dev environments don't need budget alerts (costs are minimal)
+- Production deployments MUST provide `alertEmail` via `.bicepparam` or CI/CD
+
+**Impact:**
+- **deploy.yml**: Should pass `alertEmail` parameter for production deployments
+- **Team**: No action needed for dev; production deploys need the email parameter set
+
+---
+
+### Decision: Health vs Ready Probe Pattern
+
+**Author:** Stilgar  
+**Date:** 2026-04-21  
+**Status:** Implemented  
+**Issues:** #21, #26, #42
+
+Container Apps needs both liveness and readiness probes. The original `/health` returned a static `{status: ok}` — useless for detecting degraded backends.
+
+**Decision:**
+- **`/health` (liveness):** Always returns HTTP 200. Runs deep checks against DB, Blob, and OpenAI with 3s timeouts. Reports structured `{status, checks, timestamp}`. Never blocks container restart.
+- **`/ready` (readiness):** Returns HTTP 200 when healthy, HTTP 503 when degraded/unhealthy. Container Apps should route traffic away from degraded instances.
+- **Request ID middleware:** Every request gets a UUID (or accepts incoming `X-Request-ID`). Returned in response headers and included in all error payloads for log correlation.
+- **Pool sizing from config:** `TRANSPOSE_POOL_MIN_SIZE` (default 5) and `TRANSPOSE_POOL_MAX_SIZE` (default 20) control asyncpg pool. Sized for translate_concurrency + overhead.
+
+**Consequences:**
+- Operators must configure Container Apps: liveness → `/health`, readiness → `/ready`.
+- Error responses now structured — any clients parsing `{"error": "..."}` strings must update to `{"error": {"code": "...", "message": "..."}}`.
+- Pool sizing must be reviewed if translate_concurrency is increased beyond 5.
+
+---
+
+### Decision: Gate Telemetry Instrumented in _run_gate (runner.py)
+
+**Author:** Thufir (Tester)  
+**Date:** 2026-04-21  
+**Status:** Implemented  
+**Issues:** #29, #44
+
+OTel spans and metrics for quality gate executions instrumented centrally in `_run_gate()` wrapper in runner.py, not in individual gate functions.
+
+**Rationale:**
+- DRY: One instrumentation point vs. 8+ copy-paste blocks in gates.py
+- Future-proof: New gates automatically get telemetry
+- Separation of concerns: gates.py stays pure validation logic; runner.py owns orchestration + observability
+- Easier to test: mock the metrics module once
+
+**Trade-offs:**
+- Individual gates can't customize span attributes beyond what GateResult provides (acceptable — GateResult.details carries gate-specific data)
+
+**Metrics Instrumented:**
+- `transpose_gate_duration_ms` (histogram)
+- `transpose_gate_errors_total` (counter)
+- OTel spans with gate name, status, and error details

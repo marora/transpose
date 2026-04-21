@@ -731,3 +731,12 @@ Full production pipeline run: **95-page Hindi → 381 KB English PDF (70/72 chun
 
 **Test status:** 666 passing, 1 pre-existing environment-dependent failure (health endpoint returning degraded).
 
+
+## Wave 1 P2 Hardening (2026-04-21T16:46:24Z)
+
+**Issues Resolved:** #20 (UUID/str mismatch), #25 (async task safety), #30 (dead code), #40 (concurrency config)
+
+Fixed type inconsistencies in pipeline serialization layer, added queue isolation and task cancellation guards for async safety, removed deprecated pipeline stages and retry logic, and implemented bounded semaphores for concurrent batch processing.
+
+**Test Status:** 666/666 passing  
+**Key Learnings:** Concurrent pipeline stages need explicit semaphore boundaries; serialization type safety prevents silent data corruption in cached results.
