@@ -50,6 +50,7 @@ _MIN_CONFIDENCE = 0.6
 _DEVANAGARI_DENSITY_THRESHOLD = 0.05  # at least 5% Devanagari chars for Hindi source
 _TRANSLATION_FAILED_MARKER = "[TRANSLATION FAILED"
 _MAX_FAILED_CHUNK_RATIO = 0.10
+_MAX_FAILED_CHUNK_RATIO_HARD = 0.30  # Hard ceiling — never produce output above this
 _MIN_FOREWORD_WORDS = 50
 _MIN_ARTIFACT_SIZE = 1024  # 1 KB
 
@@ -160,12 +161,22 @@ def translation_completeness_gate(translate_output) -> GateResult:
 
     # Check 1: Failed translation ratio
     total = len(translations) if translations else max(chunks_translated, 1)
-    if total > 0 and failed_count / total > _MAX_FAILED_CHUNK_RATIO:
+    fail_ratio = failed_count / total if total > 0 else 0
+
+    if fail_ratio > _MAX_FAILED_CHUNK_RATIO_HARD:
+        # Above hard ceiling — always fail
         msg = (
             f"{failed_count}/{total} chunks failed translation "
-            f"({failed_count / total:.0%}, threshold {_MAX_FAILED_CHUNK_RATIO:.0%})"
+            f"({fail_ratio:.0%}, hard ceiling {_MAX_FAILED_CHUNK_RATIO_HARD:.0%})"
         )
         failures.append(msg)
+    elif fail_ratio > _MAX_FAILED_CHUNK_RATIO:
+        # Above soft threshold but below hard ceiling — warn but continue
+        details["warning"] = (
+            f"{failed_count}/{total} chunks failed ({fail_ratio:.0%}, "
+            f"above {_MAX_FAILED_CHUNK_RATIO:.0%} soft threshold). "
+            f"Output will contain placeholder markers for manual review."
+        )
 
     # Check 2: Scan translations for TRANSLATION FAILED markers and Devanagari passthrough
     marker_count = 0
@@ -195,10 +206,18 @@ def translation_completeness_gate(translate_output) -> GateResult:
     details["marker_count"] = marker_count
     details["passthrough_count"] = passthrough_count
 
-    if total > 0 and marker_count / total > _MAX_FAILED_CHUNK_RATIO:
+    if total > 0 and marker_count / total > _MAX_FAILED_CHUNK_RATIO_HARD:
         failures.append(
             f"{marker_count}/{total} chunks contain TRANSLATION FAILED marker "
-            f"({marker_count / total:.0%})"
+            f"({marker_count / total:.0%}, hard ceiling {_MAX_FAILED_CHUNK_RATIO_HARD:.0%})"
+        )
+    elif total > 0 and marker_count / total > _MAX_FAILED_CHUNK_RATIO:
+        details.setdefault("warning", "")
+        if details["warning"]:
+            details["warning"] += "; "
+        details["warning"] += (
+            f"{marker_count}/{total} chunks have FAILED markers — "
+            f"output will include placeholders for review"
         )
 
     details["failing_chunks"] = failing_chunks

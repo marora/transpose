@@ -658,3 +658,28 @@ Full production pipeline run: **95-page Hindi → 381 KB English PDF (70/72 chun
 ✓ 6 bugs discovered and fixed during pipeline execution
 ✓ Ready for batch processing optimization (Phase 2)
 ✓ Cost analysis: $25-35 per book in API tokens (translation + glossary extraction)
+
+### Content Filter Fallback Enhancement (2026-04-20)
+
+**Problem:** Azure OpenAI content filter blocks ~2-3% of chunks in spiritual/religious texts (Osho's Vigyan Bhairav Tantra, Bhagavad Gita). The existing 3-stage fallback lacked sufficient scholarly context to sidestep false positives.
+
+**Changes to `src/transpose/services/llm_client.py`:**
+
+1. **Stage 0 — `_SPIRITUAL_TEXT_PREAMBLE`**: New module-level constant prepended to the system prompt when `content_filter_context=True`. References UNESCO cultural heritage, university-level curricula, major publishers. Activated via a new `content_filter_context` kwarg on `_build_system_prompt` and `translate_chunk`.
+
+2. **System prompt enriched**: `_build_system_prompt` now includes scholarly framing for ALL translations (references to academic presses, cultural heritage preservation, university syllabi) regardless of the flag. The flag just adds the extra Stage 0 preamble.
+
+3. **Stage 1 enriched**: `_reframe_for_content_filter` now names specific publishers (Penguin Classics, Oxford World's Classics, Harper Perennial, Shambhala), references analogous works (Upanishads, Tao Te Ching, Rumi's Masnavi), and explicitly states yogic terminology is not explicit.
+
+4. **Stage 2 expanded**: `_reframe_clinical` now takes `source_language` parameter and selects from 19 Hindi or 15 Punjabi body-term patterns (up from 4 Hindi-only). References specific academic disciplines (Comparative Religion, Indology, Yoga Studies) and institutions. No longer hardcodes "Osho" — works for any spiritual text.
+
+5. **Stage 3 rewritten**: `_reframe_chunked_summary` now does smart sentence-level filtering instead of naive middle-elision. Splits on Devanagari danda/double-danda/Latin punctuation, replaces only sentences containing trigger terms with scholarly paraphrases, keeps all clean sentences intact. Reports elided count to the LLM. Also takes `source_language` for correct pattern selection.
+
+6. **Fallback stages now use hardened system prompt**: When a content filter hit triggers fallbacks, all three stages use `content_filter_context=True` system prompt regardless of the original call's flag.
+
+**Key patterns:**
+- Body patterns are module-level constants (`_BODY_PATTERNS_HINDI`, `_BODY_PATTERNS_PUNJABI`) for reuse across Stage 2 and Stage 3
+- `content_filter_context` is a backward-compatible kwarg defaulting to `False`
+- All existing function signatures preserved (new params have defaults)
+
+**Testing:** 492 tests pass, 5 xfail, ruff clean (pre-existing B904 warnings in retry blocks untouched).

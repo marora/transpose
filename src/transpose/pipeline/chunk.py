@@ -50,6 +50,33 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
 
     logger = logging.getLogger(__name__)
 
+    # Check if chunks already exist — skip re-chunking to preserve translations
+    existing_chunks = await ctx.db.get_chunks_for_book(input.book_id)
+    if existing_chunks:
+        logger.info(
+            "Chunks already exist for book_id=%s (%d chunks) — skipping re-chunking",
+            input.book_id,
+            len(existing_chunks),
+        )
+        chunk_results = [
+            ChunkResult(
+                chunk_id=c.id,
+                sequence=c.sequence,
+                source_text=c.source_text,
+                token_count=c.token_count,
+                chapter_ref=c.chapter_ref,
+                section_type=c.section_type,
+                page_start=c.page_start,
+                page_end=c.page_end,
+            )
+            for c in existing_chunks
+        ]
+        return ChunkOutput(
+            book_id=input.book_id,
+            total_chunks=len(existing_chunks),
+            chunks=chunk_results,
+        )
+
     # Get all pages for the book
     pages = await ctx.db.get_pages_for_book(input.book_id)
     if not pages:
