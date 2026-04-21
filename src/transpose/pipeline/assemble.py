@@ -206,20 +206,28 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         },
     )
 
-    # Build factual Translator's Note (not AI-generated — see Issue #64)
-    translator_note = (
-        "This translation was produced using AI-assisted translation technology. "
-        "Certain culturally significant terms have been preserved in their original "
-        "language to maintain authenticity. Passages that could not be translated "
-        "are presented in their original language and marked accordingly."
-    )
-    if untranslated_passages > 0:
-        translator_note += (
-            f"\n\nNote: {untranslated_passages} passage(s) in this text could not "
-            "be fully translated due to content processing limitations."
-        )
-    manuscript.metadata["translator_note"] = translator_note
-    logger.info("Added Translator's Note to manuscript metadata")
+    # Generate Translator's Foreword using cultural terms from glossary
+    foreword_text = None
+    if glossary and glossary.entries:
+        cultural_terms = [
+            {"term": e.term, "original_script": e.original_script, "definition": e.definition}
+            for e in sorted(glossary.entries, key=lambda e: e.occurrence_count, reverse=True)
+        ]
+        try:
+            foreword_text = await _generate_foreword(ctx, translated_title, cultural_terms)
+            foreword_text = _clean_foreword(foreword_text)
+            # Append note about untranslated passages if any
+            if untranslated_passages > 0:
+                foreword_text += (
+                    f"\n\nNote: {untranslated_passages} passage(s) in this text could not "
+                    "be fully translated due to content processing limitations. These "
+                    "passages are presented in their original language and marked "
+                    "accordingly."
+                )
+            manuscript.metadata["foreword"] = foreword_text
+            logger.info("Generated Translator's Foreword (%d chars)", len(foreword_text))
+        except Exception:
+            logger.warning("Failed to generate foreword — continuing without it", exc_info=True)
 
     await ctx.db.create_manuscript(manuscript)
 
@@ -246,7 +254,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         chapters=output_chapters,
         glossary_id=glossary_id,
         table_of_contents=toc,
-        foreword=None,
+        foreword=foreword_text,
     )
 
 
@@ -411,6 +419,55 @@ def _strip_leading_chapter_title(text: str) -> str:
             break
 
     return "\n".join(remaining).lstrip("\n") if remaining else ""
+
+
+def _clean_foreword(text: str) -> str:
+    """Remove LLM-generated placeholder sign-offs from the foreword.
+
+    GPT-4o often appends lines like ``Warm regards, [Translator's Name]``
+    even when asked not to.  Strip them so the output looks polished.
+    """
+    import re
+
+    # Remove trailing lines that contain bracketed placeholders
+    lines = text.rstrip().split("\n")
+    while lines and re.search(r"\[.*?name.*?\]", lines[-1], re.IGNORECASE):
+        lines.pop()
+    # Also remove a bare sign-off line left orphaned (e.g. "Warm regards,")
+    sign_off = r"^(Warm regards|Sincerely|With .* regards|Yours),?\s*$"
+    while lines and re.match(sign_off, lines[-1].strip(), re.IGNORECASE):
+        lines.pop()
+    return "\n".join(lines).rstrip()
+
+
+async def _generate_foreword(ctx, book_title: str, cultural_terms: list[dict]) -> str:
+    """Generate a Translator's Foreword using the LLM.
+
+    The foreword explains the cultural translation philosophy and contextualises
+    the preserved original-language words for the reader.
+    """
+    terms_list = ", ".join(t["term"] for t in cultural_terms[:15])
+
+    prompt = (
+        f'Write a Translator\'s Foreword (250-400 words) for the '
+        f'English translation of "{book_title}".\n\n'
+        f"This foreword should:\n"
+        f"1. Explain the literary and cultural translation approach "
+        f"— not a literal translation but a cultural bridge\n"
+        f"2. Explain why certain words are preserved in their "
+        f"original language: {terms_list}\n"
+        f"3. Help the reader understand these preserved words add "
+        f"authenticity and cultural depth\n"
+        f"4. Be written in a warm, scholarly tone appropriate for "
+        f"a published eBook\n"
+        f'5. Address the reader directly ("Dear Reader" or similar)\n\n'
+        f"Write ONLY the foreword text. Do not include a title "
+        f"— it will be added separately. Do not include a "
+        f"sign-off with a placeholder name like '[Translator\\'s Name]' "
+        f"— end naturally without a signature block."
+    )
+
+    return await ctx.llm.chat(prompt)
 
 
 # ---------------------------------------------------------------------------

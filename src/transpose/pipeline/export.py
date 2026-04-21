@@ -234,24 +234,24 @@ async def _generate_epub(manuscript, glossary, book, cover_image_data: bytes | N
         ebook.add_item(cover_page)
         epub_chapters.append(cover_page)
 
-    # Add Translator's Note if present (Issue #64 — factual, not AI-generated)
-    translator_note = manuscript.metadata.get("translator_note") if manuscript.metadata else None
-    if translator_note:
-        note_html = "<h1>Translator's Note</h1>\n<div class='foreword-content'>\n"
-        for para in translator_note.split("\n\n"):
+    # Add Translator's Foreword if present
+    foreword_text = manuscript.metadata.get("foreword") if manuscript.metadata else None
+    if foreword_text:
+        foreword_html = "<h1>Translator's Foreword</h1>\n<div class='foreword-content'>\n"
+        for para in foreword_text.split("\n\n"):
             if para.strip():
-                note_html += f"<p>{para.strip()}</p>\n"
-        note_html += "</div>\n"
+                foreword_html += f"<p>{para.strip()}</p>\n"
+        foreword_html += "</div>\n"
 
-        note_chapter = epub.EpubHtml(
-            title="Translator's Note",
-            file_name="translator_note.xhtml",
+        foreword_chapter = epub.EpubHtml(
+            title="Translator's Foreword",
+            file_name="foreword.xhtml",
             lang="en",
         )
-        note_chapter.content = note_html
-        note_chapter.add_item(nav_css)
-        ebook.add_item(note_chapter)
-        epub_chapters.append(note_chapter)
+        foreword_chapter.content = foreword_html
+        foreword_chapter.add_item(nav_css)
+        ebook.add_item(foreword_chapter)
+        epub_chapters.append(foreword_chapter)
 
     # Add chapters
     for chapter in manuscript.chapters:
@@ -602,16 +602,16 @@ def _build_toc_html(table_of_contents, *, page_map):
 
 
 def _build_pdf_body_html(manuscript, glossary):
-    """Build the body HTML (translator's note + chapters + glossary)."""
+    """Build the body HTML (foreword + chapters + glossary)."""
     parts = []
 
-    # Translator's Note — Issue #64 (replaces fabricated foreword)
-    translator_note = manuscript.metadata.get("translator_note") if manuscript.metadata else None
-    if translator_note:
+    # Translator's Foreword — Issue #12
+    foreword_text = manuscript.metadata.get("foreword") if manuscript.metadata else None
+    if foreword_text:
         parts.append("<div class='foreword-page'>\n")
-        parts.append("<h1>Translator's Note</h1>\n")
+        parts.append("<h1>Translator's Foreword</h1>\n")
         parts.append("<div class='foreword-content'>\n")
-        for para in translator_note.split("\n\n"):
+        for para in foreword_text.split("\n\n"):
             if para.strip():
                 parts.append(f"<p>{_escape_html(para.strip())}</p>\n")
         parts.append("</div>\n</div>\n")
@@ -676,7 +676,7 @@ def _assemble_full_html(manuscript, toc_html, body_html, cover_image_data: bytes
     # ToC
     parts.append(toc_html)
 
-    # Body (translator's note + chapters + glossary)
+    # Body (foreword + chapters + glossary)
     parts.append(body_html)
 
     parts.append("</body></html>")
@@ -705,7 +705,7 @@ def _extract_chapter_page_numbers(pdf_bytes):
     except Exception:
         return {}
 
-    # Count front-matter pages (title, ToC, translator's note — before body content)
+    # Count front-matter pages (title, ToC, foreword — before body content)
     frontmatter_pages = 0
     body_started = False
     chapter_pattern = re.compile(r"Chapter\s+(\d+)\s*:")
