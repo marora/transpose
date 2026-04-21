@@ -381,5 +381,131 @@ Or in the Azure Portal: **Container App → Monitoring → Metrics** → select 
 
 ---
 
+## Pipeline Operations Dashboard (NEW — Issue #37)
+
+A dedicated workbook for **real-time pipeline monitoring during E2E runs**. Separate from the general `transpose-dashboard.json` which covers broad infrastructure health.
+
+### What It Shows
+
+| Tab | Purpose |
+|-----|---------|
+| **🔴 Live Pipeline** | Which stage is running right now, Gantt-style timeline, pipeline run status tiles |
+| **📊 Translation Progress** | Chunks completed/failed, cumulative progress, token usage, estimated cost |
+| **⏱️ Stage Timing** | Per-stage duration breakdown (avg/P50/P95/max), stacked bar by book, trend over time |
+| **🚨 Errors & Filters** | Error rate by stage/type, content filter blocks vs. fallback recovery, translation error breakdown |
+| **💚 Pipeline Health** | Success rate, OCR quality, Azure dependency health, OpenAI throttling |
+
+### Deploying
+
+**Option A — Bicep module** (recommended for IaC):
+
+The `infra/modules/workbook.bicep` module deploys the workbook linked to your App Insights instance. Add to `main.bicep`:
+
+```bicep
+module pipelineWorkbook 'modules/workbook.bicep' = {
+  name: 'pipeline-workbook'
+  params: {
+    location: location
+    appInsightsId: monitoring.outputs.appInsightsId
+    tags: tags
+  }
+}
+```
+
+**Option B — Manual import:**
+
+1. Go to **Azure Monitor** → **Workbooks** → **New**
+2. Click the **Advanced Editor** (`</>` button)
+3. Paste the contents of `infra/workbooks/pipeline-dashboard.json`
+4. Click **Apply** → **Done Editing** → **Save**
+
+### Filtering by Book
+
+Every tab supports the optional **Book ID** parameter at the top. Leave it empty to see all runs, or paste a specific `book_id` UUID to scope all charts to a single pipeline execution.
+
+---
+
+## Reusable KQL Query Templates (Python)
+
+The module `src/transpose/observability/queries.py` provides KQL query templates as Python functions. Useful from CLI scripts, Jupyter notebooks, or custom monitoring tools.
+
+### Available Queries
+
+| Function | Description |
+|----------|-------------|
+| `stage_duration_breakdown()` | Per-stage avg/P50/P95/max duration |
+| `stage_timeline()` | Gantt-style start/end times per stage |
+| `pipeline_total_duration()` | End-to-end pipeline duration stats |
+| `translation_progress()` | Chunks translated/failed, tokens, cost |
+| `translation_throughput()` | Chunks translated per time bucket |
+| `error_rate_by_stage()` | Error count by stage and type |
+| `error_timeline()` | Error rate over time |
+| `content_filter_summary()` | Block vs. recovery counts |
+| `content_filter_timeline()` | Content filter events over time |
+| `ocr_quality()` | Pages processed, low-confidence count |
+| `dependency_health()` | Azure service dependency stats |
+| `openai_throttling()` | HTTP 429 events from OpenAI |
+| `pipeline_trace(operation_id)` | Full distributed trace for one run |
+
+All functions accept an optional `book_id` parameter to scope to a single pipeline run.
+
+### Usage Example
+
+```python
+from azure.identity import DefaultAzureCredential
+from azure.monitor.query import LogsQueryClient
+from transpose.observability.queries import stage_duration_breakdown
+
+credential = DefaultAzureCredential()
+client = LogsQueryClient(credential)
+
+kql = stage_duration_breakdown(book_id="abc-123")
+result = client.query_workspace("your-workspace-id", kql, timespan="PT1H")
+
+for row in result.tables[0].rows:
+    print(row)
+```
+
+---
+
+## Operator Runbook — Monitoring a Live Run
+
+### Before Starting a Pipeline Run
+
+1. Open the **Pipeline Operations Dashboard** (workbook) in the Azure Portal
+2. Set **Time Range** to "Last 1 hour"
+3. Leave **Book ID** empty — you'll see it appear once ingest completes
+4. Open the **🔴 Live Pipeline** tab
+
+### During the Run
+
+| What to Watch | Where | Normal | Warning |
+|---------------|-------|--------|---------|
+| Current stage | Live Pipeline → Status tiles | Progresses through all 7 stages | Stuck on one stage for >10 min |
+| Translation progress | Translation Progress → Cumulative chart | Steady upward trend | Flat line (no chunks processing) |
+| Error count | Errors & Filters → Error timeline | 0 or very few | Spike during translate stage |
+| Content filter | Errors & Filters → Content Filter Summary | Recovery rate >80% | Recovery rate <50% |
+| OpenAI throttling | Pipeline Health → OpenAI 429 chart | No bars | Bars appearing = back off |
+| Token cost | Translation Progress → Summary tiles | Within budget | Runaway cost = possible retry loop |
+
+### After the Run
+
+1. Switch to **⏱️ Stage Timing** tab — check if any stage took disproportionately long
+2. Check **💚 Pipeline Health** → OCR Quality — if quality % is below 80%, the source scan may need improvement
+3. Review **🚨 Errors & Filters** → Translation Errors by Type — persistent `content_filter` errors mean text needs manual review
+
+### Alert Thresholds (Recommended)
+
+| Condition | Threshold | Action |
+|-----------|-----------|--------|
+| Stage stuck | No new `stage_duration` events in 10 min | Check container logs |
+| High error rate | >10 errors in 15 min | Pause and investigate |
+| OCR low confidence | >20% of pages | Review source PDF quality |
+| Token spike | >500K tokens in 1 hour | Check for retry loops |
+| Content filter unrecoverable | >5 unrecoverable blocks | Manual text review needed |
+| OpenAI throttling | >10 429s in 5 min | Check quota, consider scaling |
+
+---
+
 **Owner:** Idaho (Cloud/Infrastructure Developer)
 **Last Updated:** 2026

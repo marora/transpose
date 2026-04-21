@@ -1,0 +1,661 @@
+{
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "res-param",
+            "version": "KqlParameterItem/1.0",
+            "name": "AppInsightsResource",
+            "label": "Application Insights",
+            "type": 5,
+            "isRequired": true,
+            "typeSettings": {
+              "resourceTypeFilter": {
+                "microsoft.insights/components": true
+              },
+              "additionalResourceOptions": [
+                "value::1"
+              ]
+            },
+            "defaultValue": "value::1"
+          },
+          {
+            "id": "time-param",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time Range",
+            "type": 4,
+            "isRequired": true,
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 1800000 },
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 }
+              ],
+              "allowCustom": true
+            },
+            "value": { "durationMs": 3600000 }
+          },
+          {
+            "id": "book-param",
+            "version": "KqlParameterItem/1.0",
+            "name": "BookId",
+            "label": "Book ID (optional)",
+            "type": 1,
+            "isRequired": false,
+            "value": ""
+          }
+        ],
+        "style": "above",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "# 📖 Transpose Pipeline — Live Operations Dashboard\nReal-time pipeline visibility for operators. Shows stage progression, translation progress, errors, and content filter events."
+      },
+      "name": "header"
+    },
+    {
+      "type": 11,
+      "content": {
+        "version": "LinkItem/1.0",
+        "style": "tabs",
+        "links": [
+          {
+            "id": "tab-live",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "🔴 Live Pipeline",
+            "subTarget": "live",
+            "style": "link"
+          },
+          {
+            "id": "tab-progress",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "📊 Translation Progress",
+            "subTarget": "progress",
+            "style": "link"
+          },
+          {
+            "id": "tab-timing",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "⏱️ Stage Timing",
+            "subTarget": "timing",
+            "style": "link"
+          },
+          {
+            "id": "tab-errors",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "🚨 Errors & Filters",
+            "subTarget": "errors",
+            "style": "link"
+          },
+          {
+            "id": "tab-health",
+            "cellValue": "tab",
+            "linkTarget": "parameter",
+            "linkLabel": "💚 Pipeline Health",
+            "subTarget": "health",
+            "style": "link"
+          }
+        ]
+      },
+      "name": "tab-navigation"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Live Pipeline Status\nShows which stages are currently running or recently completed. Refresh to track real-time progression."
+            },
+            "name": "live-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Active pipeline runs — most recent stage per book\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where stage != 'total'\n| summarize last_ts = max(timestamp), duration_s = round(avg(value), 1) by book_id, stage\n| extend stage_order = case(\n    stage == 'ingest', 1,\n    stage == 'ocr', 2,\n    stage == 'chunk', 3,\n    stage == 'translate', 4,\n    stage == 'glossary', 5,\n    stage == 'assemble', 6,\n    stage == 'export', 7,\n    99)\n| order by book_id asc, stage_order asc\n| project Book = book_id, Stage = stage, ['Duration (s)'] = duration_s, Completed = last_ts",
+              "size": 0,
+              "title": "Stage Completion Timeline",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Duration (s)",
+                    "formatter": 8,
+                    "formatOptions": {
+                      "palette": "blue"
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "stage-timeline-table"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Gantt-style stage timeline\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where stage != 'total'\n| summarize stage_end = max(timestamp), duration_s = avg(value) by book_id, stage\n| extend stage_start = datetime_add('second', -toint(duration_s), stage_end)\n| project book_id, stage, stage_start, stage_end, duration_s = round(duration_s, 1)\n| order by book_id asc, stage_start asc",
+              "size": 0,
+              "title": "Stage Gantt View (Start → End)",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "duration_s",
+                    "formatter": 3,
+                    "formatOptions": {
+                      "palette": "greenRed"
+                    }
+                  }
+                ]
+              }
+            },
+            "name": "stage-gantt"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Current pipeline stage — latest stage with no 'total' completion\nlet book_filter = '{BookId}';\nlet completed_books = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where stage == 'total'\n| distinct book_id;\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where stage != 'total'\n| summarize stages_done = dcount(stage), last_stage = arg_max(timestamp, stage) by book_id\n| extend Status = iff(book_id in (completed_books), '✅ Complete', strcat('🔄 Running — ', stage, ' (', stages_done, '/7)'))\n| project Book = book_id, ['Current Stage'] = stage, ['Stages Done'] = stages_done, Status, ['Last Update'] = timestamp",
+              "size": 4,
+              "title": "Pipeline Run Status",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Book", "formatter": 1 },
+                "leftContent": { "columnMatch": "Status", "formatter": 1 },
+                "secondaryContent": { "columnMatch": "Last Update", "formatter": 6 },
+                "showBorder": true
+              }
+            },
+            "name": "pipeline-status-tiles"
+          }
+        ],
+        "title": "Live Pipeline",
+        "exportParameters": true
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "live"
+      },
+      "name": "group-live"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Translation Progress\nTrack chunk-level translation progress: completed, failed, and remaining."
+            },
+            "name": "progress-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Translation progress summary\nlet book_filter = '{BookId}';\nlet translated = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.chunks_translated'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize Translated = sum(value);\nlet failed = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.translation.errors'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize Failed = sum(value);\nlet tokens = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.openai.tokens_used'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize Tokens = sum(value);\nlet cost = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.translation.estimated_cost_usd'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize Cost_USD = round(sum(value), 2);\ntranslated | extend d=1\n| join (failed | extend d=1) on d\n| join (tokens | extend d=1) on d\n| join (cost | extend d=1) on d\n| project ['Chunks Translated'] = Translated, ['Chunks Failed'] = Failed, ['Total Tokens'] = Tokens, ['Est. Cost (USD)'] = Cost_USD",
+              "size": 4,
+              "title": "Translation Summary",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Chunks Translated", "formatter": 1 },
+                "showBorder": true
+              }
+            },
+            "name": "translation-summary-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Translation throughput over time (chunks per 5 minutes)\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.chunks_translated'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize chunks = sum(value) by bin(timestamp, 5m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Translation Throughput (chunks / 5 min)",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["chunks"],
+                "ySettings": { "unit": "Count" }
+              }
+            },
+            "name": "translation-throughput"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Cumulative translation progress\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.chunks_translated'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize chunks = sum(value) by bin(timestamp, 1m)\n| order by timestamp asc\n| extend cumulative = row_cumsum(chunks)",
+              "size": 0,
+              "title": "Cumulative Chunks Translated",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "areachart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["cumulative"],
+                "ySettings": { "unit": "Count" }
+              }
+            },
+            "name": "cumulative-progress"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Token consumption over time\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.openai.tokens_used'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize tokens = sum(value) by bin(timestamp, 5m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Token Usage Over Time",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["tokens"],
+                "ySettings": { "unit": "Count" }
+              }
+            },
+            "name": "token-usage-chart"
+          }
+        ],
+        "title": "Translation Progress",
+        "exportParameters": true
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "progress"
+      },
+      "name": "group-progress"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Per-Stage Timing\nBreakdown of how long each pipeline stage takes. Use this to identify bottlenecks."
+            },
+            "name": "timing-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Per-stage duration breakdown — avg, p50, p95, max\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where stage != 'total'\n| summarize\n    avg_s = round(avg(value), 1),\n    p50_s = round(percentile(value, 50), 1),\n    p95_s = round(percentile(value, 95), 1),\n    max_s = round(max(value), 1),\n    runs = count()\n  by stage\n| extend stage_order = case(\n    stage == 'ingest', 1, stage == 'ocr', 2, stage == 'chunk', 3,\n    stage == 'translate', 4, stage == 'glossary', 5,\n    stage == 'assemble', 6, stage == 'export', 7, 99)\n| order by stage_order asc\n| project Stage = stage, ['Avg (s)'] = avg_s, ['P50 (s)'] = p50_s, ['P95 (s)'] = p95_s, ['Max (s)'] = max_s, Runs = runs",
+              "size": 0,
+              "title": "Stage Duration Breakdown",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "P95 (s)",
+                    "formatter": 8,
+                    "formatOptions": { "palette": "greenRed" }
+                  },
+                  {
+                    "columnMatch": "Max (s)",
+                    "formatter": 8,
+                    "formatOptions": { "palette": "redGreen" }
+                  }
+                ]
+              }
+            },
+            "name": "stage-duration-table"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Stage duration stacked bar — shows where time is spent per pipeline run\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where stage != 'total'\n| summarize duration_s = round(avg(value), 1) by book_id, stage\n| order by book_id asc",
+              "size": 0,
+              "title": "Time Spent per Stage (by Book)",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "book_id",
+                "yAxis": ["duration_s"],
+                "group": "stage",
+                "ySettings": { "unit": "Seconds" }
+              }
+            },
+            "name": "stage-duration-stacked"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Total pipeline duration\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where stage == 'total'\n| summarize\n    avg_total_s = round(avg(value), 1),\n    min_total_s = round(min(value), 1),\n    max_total_s = round(max(value), 1),\n    runs = count()\n| project ['Avg Total (s)'] = avg_total_s, ['Min (s)'] = min_total_s, ['Max (s)'] = max_total_s, ['Pipeline Runs'] = runs",
+              "size": 4,
+              "title": "End-to-End Pipeline Duration",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Avg Total (s)", "formatter": 1 },
+                "showBorder": true
+              }
+            },
+            "name": "total-duration-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Stage duration trend over time\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where stage != 'total'\n| summarize avg_duration = round(avg(value), 1) by stage, bin(timestamp, 10m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Stage Duration Trend",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["avg_duration"],
+                "group": "stage",
+                "ySettings": { "unit": "Seconds" }
+              }
+            },
+            "name": "stage-duration-trend"
+          }
+        ],
+        "title": "Stage Timing",
+        "exportParameters": true
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "timing"
+      },
+      "name": "group-timing"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Errors & Content Filters\nError rates by stage, content filter blocks, and fallback recovery."
+            },
+            "name": "errors-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Error rate by stage and type\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.errors'\n| extend stage = tostring(customDimensions.stage), error_type = tostring(customDimensions.error_type), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize error_count = sum(value) by stage, error_type\n| order by error_count desc",
+              "size": 0,
+              "title": "Errors by Stage & Type",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "error_count",
+                    "formatter": 8,
+                    "formatOptions": { "palette": "redGreen" }
+                  }
+                ]
+              }
+            },
+            "name": "error-by-stage-table"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Error timeline\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.errors'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize errors = sum(value) by stage, bin(timestamp, 5m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Error Rate Over Time (by Stage)",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["errors"],
+                "group": "stage",
+                "ySettings": { "unit": "Count" }
+              }
+            },
+            "name": "error-timeline"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Content filter events\nlet book_filter = '{BookId}';\nlet blocks = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.translation.content_filter_blocks'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize Blocked = sum(value);\nlet recovered = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.translation.content_filter_fallback_success'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize Recovered = sum(value);\nblocks | extend d=1\n| join (recovered | extend d=1) on d\n| project ['Content Filter Blocks'] = Blocked, ['Recovered via Fallback'] = Recovered, ['Unrecoverable'] = Blocked - Recovered, ['Recovery Rate %'] = iff(Blocked > 0, round(Recovered / Blocked * 100, 1), 0.0)",
+              "size": 4,
+              "title": "Content Filter Summary",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Content Filter Blocks", "formatter": 1 },
+                "showBorder": true
+              }
+            },
+            "name": "content-filter-summary"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Content filter events over time\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name in ('transpose.translation.content_filter_blocks', 'transpose.translation.content_filter_fallback_success')\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| extend metric = case(\n    name == 'transpose.translation.content_filter_blocks', 'Blocked',\n    name == 'transpose.translation.content_filter_fallback_success', 'Recovered',\n    name)\n| summarize count = sum(value) by metric, bin(timestamp, 10m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "Content Filter Events Over Time",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "linechart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["count"],
+                "group": "metric"
+              }
+            },
+            "name": "content-filter-timeline"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Translation-specific errors (content_filter, rate_limit, etc.)\nlet book_filter = '{BookId}';\ncustomMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.translation.errors'\n| extend error_type = tostring(customDimensions.error_type), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize count = sum(value) by error_type\n| order by count desc",
+              "size": 0,
+              "title": "Translation Errors by Type",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "piechart"
+            },
+            "name": "translation-error-types"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Recent exceptions\nexceptions\n| where timestamp {TimeRange}\n| summarize count() by type, outerMessage, bin(timestamp, 15m)\n| order by timestamp desc\n| take 20\n| project Timestamp = timestamp, Type = type, Message = outerMessage, Count = count_",
+              "size": 0,
+              "title": "Recent Exceptions",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "table"
+            },
+            "name": "recent-exceptions"
+          }
+        ],
+        "title": "Errors & Filters",
+        "exportParameters": true
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "errors"
+      },
+      "name": "group-errors"
+    },
+    {
+      "type": 12,
+      "content": {
+        "version": "NotebookGroup/1.0",
+        "groupType": 0,
+        "items": [
+          {
+            "type": 1,
+            "content": {
+              "json": "## Pipeline Health\nOverall health indicators: success rates, dependency health, and OCR quality."
+            },
+            "name": "health-header"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Pipeline success vs failure rate\nlet book_filter = '{BookId}';\nlet total_runs = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.pipeline.stage_duration'\n| extend stage = tostring(customDimensions.stage), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where stage == 'total'\n| summarize total = count();\nlet failed = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.errors'\n| extend stage = tostring(customDimensions.stage), error_type = tostring(customDimensions.error_type), book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| where error_type == 'QualityGateError' or stage == 'unknown'\n| summarize failed_count = dcount(book_id);\ntotal_runs | extend d=1\n| join (failed | extend d=1) on d\n| project ['Total Runs'] = total, ['Failed'] = failed_count, ['Success Rate %'] = iff(total > 0, round((total - failed_count) * 100.0 / total, 1), 0.0)",
+              "size": 4,
+              "title": "Pipeline Success Rate",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Success Rate %", "formatter": 1 },
+                "showBorder": true
+              }
+            },
+            "name": "success-rate-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// OCR quality summary\nlet book_filter = '{BookId}';\nlet total = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.ocr.pages_processed'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize pages = sum(value);\nlet low = customMetrics\n| where timestamp {TimeRange}\n| where name == 'transpose.ocr.low_confidence_pages'\n| extend book_id = tostring(customDimensions.book_id)\n| where book_filter == '' or book_id == book_filter\n| summarize low_conf = sum(value);\ntotal | extend d=1\n| join (low | extend d=1) on d\n| project ['Pages Processed'] = pages, ['Low Confidence'] = low_conf, ['Quality %'] = iff(pages > 0, round((pages - low_conf) * 100.0 / pages, 1), 0.0)",
+              "size": 4,
+              "title": "OCR Quality",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": { "columnMatch": "Quality %", "formatter": 1 },
+                "showBorder": true
+              }
+            },
+            "name": "ocr-quality-tiles"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// Dependency health — Azure services\ndependencies\n| where timestamp {TimeRange}\n| summarize\n    calls = count(),\n    avg_ms = round(avg(duration), 1),\n    p95_ms = round(percentile(duration, 95), 1),\n    failures = countif(success == false)\n  by type, target\n| extend ['Failure Rate %'] = round(100.0 * failures / calls, 1)\n| order by calls desc\n| project Service = type, Target = target, Calls = calls, ['Avg (ms)'] = avg_ms, ['P95 (ms)'] = p95_ms, Failures = failures, ['Failure Rate %']",
+              "size": 0,
+              "title": "Azure Service Dependencies",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "table",
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "Failure Rate %",
+                    "formatter": 8,
+                    "formatOptions": { "palette": "greenRed" }
+                  }
+                ]
+              }
+            },
+            "name": "dependency-health"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "// OpenAI throttling (429s)\ndependencies\n| where timestamp {TimeRange}\n| where target has 'openai'\n| where resultCode == '429'\n| summarize throttle_count = count() by bin(timestamp, 5m)\n| order by timestamp asc",
+              "size": 0,
+              "title": "OpenAI Rate Limiting (HTTP 429)",
+              "queryType": 0,
+              "resourceType": "microsoft.insights/components",
+              "crossComponentResources": ["{AppInsightsResource}"],
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "timestamp",
+                "yAxis": ["throttle_count"],
+                "ySettings": { "unit": "Count" }
+              }
+            },
+            "name": "openai-throttling"
+          }
+        ],
+        "title": "Pipeline Health",
+        "exportParameters": true
+      },
+      "conditionalVisibility": {
+        "parameterName": "tab",
+        "comparison": "isEqualTo",
+        "value": "health"
+      },
+      "name": "group-health"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "styleSettings": {},
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
