@@ -9,6 +9,60 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-21 — E2E Gap Analysis: 15 Critical/High Issues Beyond #34–#39
+
+**Gap analysis completed on first real-world 95-page E2E run.** Found 15 issues not captured in issues #34–#39:
+
+**P0 (Production Blockers):**
+- **Job tracker not persistent** (api.py): In-memory `_jobs` dict lost on container restart. Multi-replica deployments will see "book not found" after restart.
+- **Lock TTL not enforced** (cache.py): Pipeline crash leaves book permanently locked. No auto-cleanup. Manual DB intervention required.
+- **Content filter blocks not retryable** (llm_client.py): Blocked chunks become permanent placeholders. No fallback (rephrased prompt, different model). Unacceptable for religious/cultural texts.
+- **Export renders without quality validation** (export.py): PDF passes all gates but can be unpublishable (Devanagari garbled, issue #39). Gate 7 checks structural presence, not rendering quality.
+
+**P1 (High Impact):**
+- **Content filter blocks retried like transient failures** (llm_client.py): Blocked chunks get 3 retries × 6 seconds = 12+ seconds wasted per book on guaranteed-to-fail retries.
+- **Per-chunk translation failures not retryable** (translate.py): Transient error → placeholder → locked. Recovery = manually delete record + re-run entire translate stage (1.5+ hours).
+- **Progress not visible** (runner.py): No chunk-level progress exposed. Cannot monitor 3.6-hour run. Unknown which stage is bottleneck.
+- **Cost tracking missing** (runner.py, api.py): Total tokens tracked but no cost mapping. No per-book cost visibility. Budget blind.
+- **Resume-from re-translates completed chunks** (runner.py): Operator loses confidence if resume wastes $2–4 on duplicate work.
+- **No LLM request timeouts** (llm_client.py): Service degradation can turn 3.6-hour pipeline into 12+ hours.
+
+**P2 (Medium):**
+- Gate metrics missing, DB pool not sized for concurrency, no config validation at startup, translate concurrency hardcoded, resume test coverage missing.
+
+**Lesson:** Operational visibility (progress, cost, metrics) is completely missing. Critical production risks (persistence, timeouts, content filter fallback) are uncovered. Gates check structural presence, not quality (why Devanagari garbling passed Gate 7).
+
+**Action:** Immediate fixes needed for P0 issues before any production deployment beyond single-book tests. Job tracker must use DB, lock TTL must work, export must validate rendering, content filters need fallback.
+
+**Full report:** `.squad/gap_analysis.md`
+
+### 2026-04-21 — Visual QA Gap Identified from E2E Output Review
+
+Operator reviewed the PDF output from the first real-world E2E run and identified critical visual/structural defects that passed all 7 quality gates:
+- **Title discrepancy** — Source title not preserved in output
+- **Table of Contents nearly empty** — Should list all chapters; shows minimal structure
+- **Duplicate chapter names** — Headings rendered twice (bold + normal), formatting bleed
+- **Other rendering inconsistencies** — Font weights, spacing, layout issues
+
+**Root cause:** Gate 7 (Production Readiness) validates **structural presence** (e.g., "does a ToC exist?") but NOT **quality** (e.g., "is it complete and correctly formatted?"). No automated visual/structural comparison gate exists. Manual PDF review by operators is the only control.
+
+**Lesson:** Gates are metrics-driven and miss human-visible defects. Visual/structural comparison must be automated and enforced. Issue #39 created to address the systematic QA gap. Proposal: either enhance Gate 7 or add Gate 8 (Visual QA) with checks for ToC completeness, title fidelity, heading consistency, and Devanagari rendering.
+
+**Next:** Prioritize Gate 7 enhancement in backlog. Visual QA should block publication (fail-fast).
+
+### 2026-04-21 — E2E Run Feedback: 5 Issues Created
+
+During first real-world E2E pipeline run on 95-page Osho Hindi book ("Vigyan Bhairav Tantra Volume 1"), team discovered critical gaps in production readiness:
+- **Issue #34 (Content Filtering):** 2/72 chunks blocked by Azure content filters (Tantra content flagged as sexual:high). No graceful degradation or retry logic.
+- **Issue #36 (Performance):** E2E run took 3.6 hours. No per-stage timing instrumentation; unknown which stage is bottleneck (translate stage suspected at 58%+ of runtime).
+- **Issue #35 (QA Gate Regression):** Table of Contents quality defective in output PDF. Gate 7 (Document Structure) did not catch ToC issues, suggesting gate logic regressed or is incomplete.
+- **Issue #37 (Observability):** Application Insights workbooks useless — no single-pane-of-glass visibility into pipeline execution. Operators cannot see: current stage, chunk progress, stage durations, errors, health status.
+- **Issue #38 (Cost Tracking):** No cost reporting. Operators cannot answer: "How much did this book cost?" No per-service cost breakdown, no integration with Azure billing, no cost per page metric.
+
+**Lesson:** 3.6-hour E2E runs exposed that gates validate structural presence (e.g., "is there a ToC?") but not quality (e.g., "is the ToC correct?"). Observability was built for development; production visibility completely absent. Cost is invisible.
+
+**Next:** Prioritize issues for sprint. Content filtering and cost tracking are blockers for production. Performance optimization and observability are operational must-haves.
+
 ### 2026-04-19 — Issues Closed on Validation Proof
 
 - **Resolved issues:** #7 (OCR pipeline), #8 (Translation completeness), #9 (Glossary Unicode), #6 (Paragraph splitting), #10 (Cover page), #12 (Foreword), #13 (Table of Contents) — all closed with proof-based comments citing validation report commit `4f4f16a`.
@@ -110,3 +164,32 @@
 - **14 items verified working:** Tracing wired, all 7 stages connected, all 7 gates invoked, all 6 metrics used, all models active, all services initialized, DB schema matches code, idempotency enforced, Managed Identity throughout, NFC normalization consistent, seed glossary loaded, health probes in Bicep, CI gates workflow exists, validation reports generated.
 - **Proposed Gate 8 (Operational Readiness):** Preflight checks at container startup — DB connectivity, blob access, OpenAI reachability, env vars set, fonts present, schema version, golden target valid. Runs at startup, not per-book.
 - **Key lesson:** "Configure but never call" is a recurring pattern. `configure_tracing()` was fixed; `acquire_lock()` and `keyvault_url` are the same class of bug. Audit-by-grep-for-unused-definitions should be a standard review step.
+
+### 2026-04-21 — Gap Analysis Issues Created (15 Issues #40–#54)
+
+Created 15 GitHub issues from `.squad/gap_analysis.md` gap analysis:
+
+| # | Gap Analysis | Issue # | Title | Priority |
+|---|---|---|---|---|
+| 1 | Content Filter Blocks | #48 | Content Filter Blocks Not Distinguished from Transient Failures | P1 |
+| 2 | Per-Chunk Retry | #47 | Per-Chunk Translation Failures Are Not Retryable | P1 |
+| 3 | Progress Visibility | #50 | Pipeline Progress Not Visible to Operators | P1 |
+| 4 | Cost Visibility | #46 | No Per-Translation Cost Visibility | P1 |
+| 5 | Resume After Gate | #45 | Resume-From After Gate Failure Re-Translates Completed Chunks | P1 |
+| 6 | In-Memory Job Tracker | #52 | In-Memory API Job Tracker Lost on Container Restart | P0 |
+| 7 | Lock TTL | #54 | Distributed Lock Has No TTL Enforcement | P0 |
+| 8 | Gate Metrics | #44 | No Gate Performance Metrics | P2 |
+| 9 | Content Filter Retry | #51 | Content-Filtered Chunks Not Retryable Without Manual Intervention | P0 |
+| 10 | Export Validation | #53 | Export Stage Produces PDFs Without Rendering Quality Validation | P0 |
+| 11 | LLM Timeouts | #43 | No Request Timeouts on LLM API Calls | P1 |
+| 12 | DB Pool Sizing | #42 | Database Connection Pool Not Sized for Concurrent Translate Stage | P2 |
+| 13 | Config Validation | #41 | No Environment Variable Validation at Startup | P2 |
+| 14 | Concurrency Config | #40 | Translate Concurrency Hardcoded, Not Configurable | P2 |
+| 15 | Resume Tests | #49 | No Test Coverage for Resume-From Functionality | P2 |
+
+**Priority distribution:**
+- **P0 (4 issues):** #52, #54, #51, #53 — production blockers (job persistence, lock TTL, content filter fallback, export quality)
+- **P1 (6 issues):** #48, #47, #50, #46, #45, #43 — high impact (retry logic, progress, cost, operational)
+- **P2 (5 issues):** #44, #42, #41, #40, #49 — medium (observability, performance, config, tests)
+
+**All issues labeled with priority (P0/P1/P2), category (bug/enhancement), and cross-referenced to existing issues #34–#39 where applicable.**
