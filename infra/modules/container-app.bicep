@@ -46,10 +46,17 @@ param keyVaultUri string
 @description('Container image (defaults to placeholder)')
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
+@description('Minimum number of replicas (0 = scale to zero)')
+param minReplicas int = 1
+
+@description('Maximum number of replicas')
+param maxReplicas int = 5
+
+@description('HTTP concurrent requests threshold for scaling')
+param httpScaleConcurrency int = 10
+
 @description('Container registry server (leave empty for public registries)')
 param containerRegistryServer string = ''
-
-// Extract Log Analytics customer ID and shared key
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' existing = {
   name: last(split(logAnalyticsWorkspaceId, '/'))
 }
@@ -188,9 +195,18 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         }
       ]
       scale: {
-        minReplicas: 0
-        maxReplicas: 3
-        rules: []
+        minReplicas: minReplicas
+        maxReplicas: maxReplicas
+        rules: [
+          {
+            name: 'http-concurrency'
+            http: {
+              metadata: {
+                concurrentRequests: '${httpScaleConcurrency}'
+              }
+            }
+          }
+        ]
       }
     }
   }
