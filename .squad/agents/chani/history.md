@@ -44,11 +44,13 @@ Delivered all 7 pipeline stages (Ingest → OCR → Chunk → Translate → Glos
 
 **Cover/ToC/Numbering:** HTML assembly for cover title, generated ToC with page numbers via CSS `target-counter()`, automatic page numbering.
 
-**Foreword:** Auto-generated Translator's Foreword using LLM with glossary context.
+**Translator's Note:** Factual, non-AI-generated note replaces the former LLM-generated foreword (Issue #64). Stored in `manuscript.metadata["translator_note"]`.
 
 ## Learnings
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
+   - Never use LLM to generate content that could be mistaken for author-written text (Issue #64). Factual translator's notes only.
+   - Translator's Note metadata key is `translator_note` (not `foreword`). Export reads from `manuscript.metadata["translator_note"]`.
    - `.title-page` and `.toc-page` use `page: frontmatter` named page with roman numerals
    - `<div style='counter-reset: page 1;'>` inserted before first chapter resets to arabic numbering
 
