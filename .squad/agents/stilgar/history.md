@@ -9,6 +9,17 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
+### 2026-04-22 — Word Count Gap Investigation (Issue #60)
+
+**Root cause of 30% word gap (55K Hindi → 38K English) identified and quantified:**
+- **Failed chunks (53% of gap):** 9/72 chunks replaced with placeholder text = ~9K missing words. Fix is Issue #59.
+- **Natural Hindi→English compression (35% of gap):** Compound words, postpositions, literary verbosity naturally compress 15-25% in fluent translation. 55K Hindi ≈ 44K expected English. This is acceptable.
+- **LLM condensation (12% of gap):** Translation prompt said "not word-for-word" without completeness instruction. LLM took liberty to condense. Fixed by adding Rule #5 (translate all content completely) to system prompt and user prompt in `llm_client.py`.
+
+**Key insight:** Assembly stage (`assemble.py`) is NOT losing text. Chunk boundaries (`chunk.py`) are NOT losing text. The gap is almost entirely explained by failed chunks + natural language compression. The prompt fix addresses the remaining ~2K words.
+
+**Lesson:** LLM prompts for translation must explicitly require completeness. "Literary tone" without "translate everything" gives GPT-4o permission to abridge. Always pair style instructions with completeness instructions.
+
 ### 2026-04-21 — E2E Gap Analysis: 15 Critical/High Issues Beyond #34–#39
 
 **Gap analysis completed on first real-world 95-page E2E run.** Found 15 issues not captured in issues #34–#39:

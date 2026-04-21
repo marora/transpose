@@ -483,3 +483,254 @@ class TestRenderedGlossaryHtml:
         # Valid rendering should not have replacement chars
         valid = "dharma (धर्म)"
         assert self.REPLACEMENT_CHAR not in valid
+
+
+# ---------------------------------------------------------------------------
+# Issue #56 — Gurmukhi script validation for Hindi books
+# ---------------------------------------------------------------------------
+
+
+class TestGurmukhiScriptValidation:
+    """Issue #56: Hindi glossary must not contain Gurmukhi script."""
+
+    def test_contains_gurmukhi_detects_gurmukhi(self) -> None:
+        """Gurmukhi codepoints (U+0A00–U+0A7F) are detected."""
+        from transpose.utils.unicode import contains_gurmukhi
+
+        assert contains_gurmukhi("ਅੰਮ੍ਰਿਤ")  # amrit in Gurmukhi
+        assert not contains_gurmukhi("अमृत")   # amrit in Devanagari
+        assert not contains_gurmukhi("amrit")  # Latin only
+        assert not contains_gurmukhi("")
+
+    def test_contains_devanagari_detects_devanagari(self) -> None:
+        """Devanagari codepoints (U+0900–U+097F) are detected."""
+        from transpose.utils.unicode import contains_devanagari
+
+        assert contains_devanagari("अमृत")
+        assert not contains_devanagari("ਅੰਮ੍ਰਿਤ")
+        assert not contains_devanagari("dharma")
+        assert not contains_devanagari("")
+
+    def test_validate_script_hindi_rejects_gurmukhi(self) -> None:
+        """Hindi language should reject Gurmukhi script."""
+        from transpose.utils.unicode import validate_script_for_language
+
+        assert validate_script_for_language("अमृत", "hindi") is True
+        assert validate_script_for_language("ਅੰਮ੍ਰਿਤ", "hindi") is False
+        assert validate_script_for_language("amrit", "hindi") is True
+        assert validate_script_for_language("", "hindi") is True
+
+    def test_validate_script_punjabi_rejects_devanagari(self) -> None:
+        """Punjabi language should reject Devanagari script."""
+        from transpose.utils.unicode import validate_script_for_language
+
+        assert validate_script_for_language("ਅੰਮ੍ਰਿਤ", "punjabi") is True
+        assert validate_script_for_language("अमृत", "punjabi") is False
+
+    def test_strip_gurmukhi_removes_gurmukhi_chars(self) -> None:
+        """strip_gurmukhi removes Gurmukhi-block characters."""
+        from transpose.utils.unicode import strip_gurmukhi
+
+        assert strip_gurmukhi("ਅੰਮ੍ਰਿਤ") == ""
+        assert strip_gurmukhi("test ਅੰ text") == "test text"
+        assert strip_gurmukhi("अमृत") == "अमृत"  # Devanagari untouched
+        assert strip_gurmukhi("") == ""
+
+    def test_mixed_script_gurmukhi_stripped_for_hindi(self) -> None:
+        """Mixed Devanagari+Gurmukhi text: only Gurmukhi is stripped."""
+        from transpose.utils.unicode import strip_gurmukhi
+
+        mixed = "अमृत ਅੰਮ੍ਰਿਤ"
+        result = strip_gurmukhi(mixed)
+        assert "अमृत" in result
+        assert "ਅ" not in result
+
+
+# ---------------------------------------------------------------------------
+# Issue #58 — Deduplication of spelling variants
+# ---------------------------------------------------------------------------
+
+
+class TestRomanizedTermNormalization:
+    """Issue #58: Romanized term normalization for dedup."""
+
+    def test_trailing_a_stripped(self) -> None:
+        from transpose.utils.unicode import normalize_romanized_term
+
+        assert normalize_romanized_term("bhairava") == normalize_romanized_term("bhairav")
+
+    def test_trailing_ah_stripped(self) -> None:
+        from transpose.utils.unicode import normalize_romanized_term
+
+        assert normalize_romanized_term("brahmah") == normalize_romanized_term("brahm")
+
+    def test_case_insensitive(self) -> None:
+        from transpose.utils.unicode import normalize_romanized_term
+
+        assert normalize_romanized_term("Dharma") == normalize_romanized_term("dharma")
+
+    def test_hyphens_collapsed(self) -> None:
+        from transpose.utils.unicode import normalize_romanized_term
+
+        assert normalize_romanized_term("mool-mantar") == normalize_romanized_term("moolmantar")
+
+    def test_short_terms_not_over_stripped(self) -> None:
+        """Terms <= 3 chars should not have suffixes stripped."""
+        from transpose.utils.unicode import normalize_romanized_term
+
+        # "om" + "a" = "oma" — should not strip to "om" since len("oma") == 3
+        assert normalize_romanized_term("oma") == "oma"
+
+    def test_identical_terms_same_norm(self) -> None:
+        from transpose.utils.unicode import normalize_romanized_term
+
+        assert normalize_romanized_term("karma") == normalize_romanized_term("karma")
+
+
+class TestGlossaryDeduplicationVariants:
+    """Issue #58: Spelling variants are merged in glossary."""
+
+    def test_deduplicate_bhairav_bhairava(self) -> None:
+        """bhairav and bhairava should merge into one entry."""
+        import logging
+
+        from transpose.pipeline.glossary import _deduplicate_spelling_variants
+        logger = logging.getLogger("test")
+
+        term_data = {
+            "bhairav": {
+                "original_script": "",
+                "definitions": ["A fierce form of Shiva"],
+                "source": TermSource.LLM_DETECTED,
+                "occurrences": 3,
+                "first_chapter": "Chapter 1",
+            },
+            "bhairava": {
+                "original_script": "",
+                "definitions": ["A fierce form of Shiva"],
+                "source": TermSource.LLM_DETECTED,
+                "occurrences": 2,
+                "first_chapter": "Chapter 2",
+            },
+        }
+
+        merged = _deduplicate_spelling_variants(term_data, logger)
+        assert len(merged) == 1
+        canonical = list(merged.values())[0]
+        assert canonical["occurrences"] == 5
+        assert "variants" in canonical
+
+    def test_seed_term_preferred_as_canonical(self) -> None:
+        """Seed terms should be preferred over LLM-detected as canonical."""
+        import logging
+
+        from transpose.pipeline.glossary import _deduplicate_spelling_variants
+        logger = logging.getLogger("test")
+
+        term_data = {
+            "bhakti": {
+                "original_script": "भक्ति",
+                "definitions": ["Devotional worship"],
+                "source": TermSource.SEED,
+                "occurrences": 5,
+                "first_chapter": "Chapter 1",
+            },
+            "bhaktia": {
+                "original_script": "",
+                "definitions": ["Devotion"],
+                "source": TermSource.LLM_DETECTED,
+                "occurrences": 1,
+                "first_chapter": "Chapter 3",
+            },
+        }
+
+        merged = _deduplicate_spelling_variants(term_data, logger)
+        assert len(merged) == 1
+        assert "bhakti" in merged
+        assert merged["bhakti"]["source"] == TermSource.SEED
+
+    def test_non_overlapping_terms_not_merged(self) -> None:
+        """Distinct terms should not be merged."""
+        import logging
+
+        from transpose.pipeline.glossary import _deduplicate_spelling_variants
+        logger = logging.getLogger("test")
+
+        term_data = {
+            "dharma": {
+                "original_script": "धर्म",
+                "definitions": ["Righteous duty"],
+                "source": TermSource.SEED,
+                "occurrences": 10,
+                "first_chapter": "Chapter 1",
+            },
+            "karma": {
+                "original_script": "कर्म",
+                "definitions": ["Action"],
+                "source": TermSource.SEED,
+                "occurrences": 8,
+                "first_chapter": "Chapter 1",
+            },
+        }
+
+        merged = _deduplicate_spelling_variants(term_data, logger)
+        assert len(merged) == 2
+        assert "dharma" in merged
+        assert "karma" in merged
+
+    def test_variant_names_recorded(self) -> None:
+        """Merged variants should be recorded in the canonical entry."""
+        import logging
+
+        from transpose.pipeline.glossary import _deduplicate_spelling_variants
+        logger = logging.getLogger("test")
+
+        term_data = {
+            "bhairav": {
+                "original_script": "",
+                "definitions": ["A fierce form of Shiva, the destroyer"],
+                "source": TermSource.LLM_DETECTED,
+                "occurrences": 5,
+                "first_chapter": "Chapter 1",
+            },
+            "bhairava": {
+                "original_script": "",
+                "definitions": ["Fierce Shiva"],
+                "source": TermSource.LLM_DETECTED,
+                "occurrences": 2,
+                "first_chapter": "Chapter 3",
+            },
+        }
+
+        merged = _deduplicate_spelling_variants(term_data, logger)
+        canonical = list(merged.values())[0]
+        assert canonical.get("variants")
+        assert len(canonical["variants"]) == 1
+
+    def test_definitions_merged_across_variants(self) -> None:
+        """Unique definitions from variants should be collected."""
+        import logging
+
+        from transpose.pipeline.glossary import _deduplicate_spelling_variants
+        logger = logging.getLogger("test")
+
+        term_data = {
+            "bhairav": {
+                "original_script": "",
+                "definitions": ["A fierce form of Shiva"],
+                "source": TermSource.LLM_DETECTED,
+                "occurrences": 3,
+                "first_chapter": "Chapter 1",
+            },
+            "bhairava": {
+                "original_script": "",
+                "definitions": ["The terrible aspect of Shiva, god of destruction"],
+                "source": TermSource.LLM_DETECTED,
+                "occurrences": 2,
+                "first_chapter": "Chapter 2",
+            },
+        }
+
+        merged = _deduplicate_spelling_variants(term_data, logger)
+        canonical = list(merged.values())[0]
+        assert len(canonical["definitions"]) == 2

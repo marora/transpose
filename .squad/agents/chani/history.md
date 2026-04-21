@@ -740,3 +740,48 @@ Fixed type inconsistencies in pipeline serialization layer, added queue isolatio
 
 **Test Status:** 666/666 passing  
 **Key Learnings:** Concurrent pipeline stages need explicit semaphore boundaries; serialization type safety prevents silent data corruption in cached results.
+
+### Session: Issues #56 and #58 — Glossary Script Validation & Deduplication
+
+**Issue #56 (Gurmukhi in Hindi glossary):**
+- Added `contains_gurmukhi()`, `contains_devanagari()`, `strip_gurmukhi()`, `validate_script_for_language()`, `normalize_romanized_term()` to `src/transpose/utils/unicode.py`
+- Glossary stage (`pipeline/glossary.py`) now fetches book metadata to determine `source_language`, then validates every `original_script` field. For Hindi books, Gurmukhi characters are stripped; if the field was entirely Gurmukhi it's cleared to prevent wrong-script rendering
+- LLM system prompt (`services/llm_client.py`) now explicitly instructs: "Use {Devanagari|Gurmukhi} script for ALL original_script values — do NOT mix scripts"
+
+**Issue #58 (Duplicate spelling variants):**
+- Added `normalize_romanized_term()` to unicode utils — lowercases, removes hyphens/spaces, strips trailing vowel suffixes (a/ah/ha) so "bhairav" and "bhairava" normalize to the same key
+- Added `_deduplicate_spelling_variants()` in `pipeline/glossary.py` — groups entries by normalized form, picks canonical entry (prefers seed, longest definition, highest occurrence), merges occurrence counts and definitions, records variant spellings
+- Canonical entry's definition gets "Also: variant1, variant2" suffix
+- Dedup runs BEFORE glossary assembly into final output
+
+**Testing:** 17 new tests added to `test_glossary.py` covering script detection, validation, stripping, romanized normalization, and variant dedup. Full suite: 499 pass (1 deselected pre-existing failure from another branch), 4 xfail. Ruff clean on all changed files.
+
+## Learnings
+
+- For Hindi books, the LLM sometimes returns Gurmukhi script (U+0A00–U+0A7F) instead of Devanagari (U+0900–U+097F) for terms that exist in both Sikh and Hindu traditions (e.g. amrit, kirtan). The seed glossary correctly uses Gurmukhi for Sikh-specific terms but the LLM conflates the two.
+- Romanized transliterations of Sanskrit/Hindi terms often appear with trailing vowel variations (bhairav/bhairava, brahman/brahma). Normalizing by stripping trailing a/ah/ha before comparison catches most variants without false positives on short terms.
+
+## Session 2026-07-15: Issues #59, #57, #55 — Translation Fallback, TOC Depth, Cover Image
+
+**Issue #59 (P0): Translation failure markers visible in output**
+- Added `_retry_with_split()` in `translate.py` — second-layer retry that splits a failed chunk in half and translates each half with `content_filter_context=True`
+- If split-retry also fails, stores original Hindi/Punjabi source text prefixed with `[Original text — translation unavailable]` instead of the raw `[TRANSLATION FAILED — REVIEW REQUIRED]` marker
+- Merged the two `except` blocks (TranslationError + Exception) into one unified handler with split-retry + original-text fallback
+- In `assemble.py`: any remaining `TRANSLATION_FAILED_PLACEHOLDER` markers get replaced with the original text + fallback note; rendered in a styled `.untranslated-note` div
+- Foreword automatically gets a note about untranslated passages when any exist
+
+**Issue #57 (P1): TOC only had 4 entries vs 22 discourse chapters**
+- Added `_detect_heading()` in `assemble.py` with regex patterns for: Discourse N, Part N, Section N, Lecture N, Talk N, Sermon N, Session N, and numbered headings (e.g. "15. Beyond the Mind")
+- During chapter HTML build, detected headings become `<h2 id='chapter-N-sM'>` elements with corresponding level-2 TOC entries
+- Updated `_build_toc_html()` in `export.py` to handle multi-level TOC with `.toc-sub` CSS class for indented sub-entries
+- TOC entries now include `level` and `anchor` fields for sub-headings
+
+**Issue #55 (P1): No cover image in generated PDF**
+- In `ocr.py`: after opening PDF with PyMuPDF, render first page as 200 DPI PNG and upload to blob storage
+- `OcrOutput` gained `cover_image_blob_uri` field; URI persisted to book metadata via SQL UPDATE
+- In `export.py` `run()`: retrieves cover image from blob storage (checks manuscript metadata, then book metadata)
+- `_assemble_full_html()`: when cover image available, renders as base64-embedded `<img>` in `.cover-image` div; falls back to text-only title page
+- `_generate_epub()`: when cover image available, uses `set_cover()` + image item; falls back to text cover page
+
+**Test Status:** 500/500 passing, 4 xfailed
+**Files changed:** `translate.py`, `assemble.py`, `ocr.py`, `export.py`

@@ -78,6 +78,7 @@ class OcrOutput:
     pages_skipped: int
     low_confidence_count: int
     page_results: list[Page] = field(default_factory=list)
+    cover_image_blob_uri: str | None = None
 
 
 async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def]
@@ -118,6 +119,28 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
     pdf_doc = fitz.open(stream=pdf_data, filetype="pdf")
     page_results: list[Page] = []
     low_confidence_count = 0
+    cover_image_blob_uri: str | None = None
+
+    # --- Issue #55: Extract cover page as high-resolution image ---
+    try:
+        if len(pdf_doc) > 0:
+            cover_page = pdf_doc[0]
+            # Render at 2x resolution (144 DPI) for quality
+            pix = cover_page.get_pixmap(dpi=200)
+            cover_png = pix.tobytes("png")
+            if len(cover_png) > 1000:  # sanity check: not a blank page
+                cover_blob_name = f"{input.book_id}_cover.png"
+                cover_image_blob_uri = await ctx.blob.upload_output(
+                    container=ctx.settings.blob_container_source,
+                    blob_name=cover_blob_name,
+                    data=cover_png,
+                )
+                logger.info(
+                    "Extracted cover image: %d bytes → %s",
+                    len(cover_png), cover_image_blob_uri,
+                )
+    except Exception:
+        logger.warning("Failed to extract cover image — continuing without it", exc_info=True)
 
     # Check if PDF has text layers (digital PDF)
     has_text_layer = False
@@ -227,11 +250,27 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
         book.page_count,
     )
 
+    # Store cover image URI in pipeline state for downstream stages
+    if cover_image_blob_uri:
+        await ctx.state.set_progress(
+            str(input.book_id), "cover_image_uri", 1, 1,
+        )
+        # Also store in state as a key-value for the assemble/export stages
+        try:
+            await ctx.db.execute(
+                "UPDATE books SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2",
+                f'{{"cover_image_uri": "{cover_image_blob_uri}"}}',
+                input.book_id,
+            )
+        except Exception:
+            logger.warning("Could not persist cover_image_uri to book metadata", exc_info=True)
+
     return OcrOutput(
         book_id=input.book_id,
         pages_processed=len(page_results),
         pages_skipped=len(existing_pages),
         low_confidence_count=low_confidence_count,
         page_results=page_results,
+        cover_image_blob_uri=cover_image_blob_uri,
     )
 

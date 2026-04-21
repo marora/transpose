@@ -56,11 +56,37 @@ async def run(input: ExportInput, ctx) -> ExportOutput:  # type: ignore[no-untyp
 
     logger.info(f"Exporting manuscript for: {book.title}")
 
+    # --- Issue #55: Retrieve cover image if available ---
+    cover_image_data: bytes | None = None
+    cover_image_uri = (manuscript.metadata or {}).get("cover_image_uri")
+    if not cover_image_uri:
+        # Try book metadata via raw DB query (set by OCR stage)
+        try:
+            row = await ctx.db.fetch_one(
+                "SELECT metadata->>'cover_image_uri' AS uri FROM books WHERE id = $1",
+                input.book_id,
+            )
+            if row and row.get("uri"):
+                cover_image_uri = row["uri"]
+        except Exception:
+            pass
+
+    if cover_image_uri:
+        try:
+            cover_blob_name = cover_image_uri.split("/")[-1]
+            cover_image_data = await ctx.blob.download_blob(
+                container=ctx.settings.blob_container_source,
+                blob_name=cover_blob_name,
+            )
+            logger.info("Loaded cover image: %d bytes", len(cover_image_data))
+        except Exception:
+            logger.warning("Could not download cover image — using text title page", exc_info=True)
+
     artifacts: list[ExportArtifact] = []
 
     # Generate ePub if requested
     if "epub" in input.formats:
-        epub_data = await _generate_epub(manuscript, glossary, book)
+        epub_data = await _generate_epub(manuscript, glossary, book, cover_image_data)
         epub_name = f"{_sanitize_filename(book.title)}.epub"
 
         # Upload to blob storage
@@ -81,7 +107,7 @@ async def run(input: ExportInput, ctx) -> ExportOutput:  # type: ignore[no-untyp
 
     # Generate PDF if requested
     if "pdf" in input.formats:
-        pdf_data = await _generate_pdf(manuscript, glossary, book)
+        pdf_data = await _generate_pdf(manuscript, glossary, book, cover_image_data)
         pdf_name = f"{_sanitize_filename(book.title)}.pdf"
 
         # Upload to blob storage
@@ -111,7 +137,7 @@ async def run(input: ExportInput, ctx) -> ExportOutput:  # type: ignore[no-untyp
     )
 
 
-async def _generate_epub(manuscript, glossary, book) -> bytes:
+async def _generate_epub(manuscript, glossary, book, cover_image_data: bytes | None = None) -> bytes:
     """Generate ePub file from manuscript."""
     import io
 
@@ -151,28 +177,57 @@ async def _generate_epub(manuscript, glossary, book) -> bytes:
     )
     ebook.add_item(nav_css)
 
-    # Cover page as first chapter — Issue #10
-    subtitle = (manuscript.metadata or {}).get("subtitle", "")
-    cover_html = "<div style='text-align: center;'>\n"
-    cover_html += f"<div class='cover-title'>{manuscript.title}</div>\n"
-    if subtitle:
-        cover_html += f"<div class='cover-subtitle'>{subtitle}</div>\n"
-    cover_html += "<hr class='cover-separator'>\n"
-    if manuscript.author:
-        cover_html += f"<div class='cover-author'>{manuscript.author}</div>\n"
-    cover_html += "</div>\n"
+    # --- Issue #55: Use cover image if available ---
+    epub_chapters = []
+    if cover_image_data:
+        # Add the cover image as an ePub item
+        cover_img_item = epub.EpubItem(
+            uid="cover-image",
+            file_name="images/cover.png",
+            media_type="image/png",
+            content=cover_image_data,
+        )
+        ebook.add_item(cover_img_item)
+        ebook.set_cover("images/cover.png", cover_image_data)
 
-    cover_page = epub.EpubHtml(
-        title="Cover",
-        file_name="cover.xhtml",
-        lang="en",
-    )
-    cover_page.content = cover_html
-    cover_page.add_item(nav_css)
-    ebook.add_item(cover_page)
+        cover_html = (
+            "<div style='text-align: center;'>\n"
+            "<img src='images/cover.png' alt='Cover' "
+            "style='max-width:100%; max-height:95vh;'/>\n"
+            "</div>\n"
+        )
+        cover_page = epub.EpubHtml(
+            title="Cover",
+            file_name="cover.xhtml",
+            lang="en",
+        )
+        cover_page.content = cover_html
+        cover_page.add_item(nav_css)
+        ebook.add_item(cover_page)
+        epub_chapters.append(cover_page)
+    else:
+        # Text-only cover page fallback — Issue #10
+        subtitle = (manuscript.metadata or {}).get("subtitle", "")
+        cover_html = "<div style='text-align: center;'>\n"
+        cover_html += f"<div class='cover-title'>{manuscript.title}</div>\n"
+        if subtitle:
+            cover_html += f"<div class='cover-subtitle'>{subtitle}</div>\n"
+        cover_html += "<hr class='cover-separator'>\n"
+        if manuscript.author:
+            cover_html += f"<div class='cover-author'>{manuscript.author}</div>\n"
+        cover_html += "</div>\n"
+
+        cover_page = epub.EpubHtml(
+            title="Cover",
+            file_name="cover.xhtml",
+            lang="en",
+        )
+        cover_page.content = cover_html
+        cover_page.add_item(nav_css)
+        ebook.add_item(cover_page)
+        epub_chapters.append(cover_page)
 
     # Add Translator's Foreword if present
-    epub_chapters = [cover_page]
     foreword_text = manuscript.metadata.get("foreword") if manuscript.metadata else None
     if foreword_text:
         foreword_html = "<h1>Translator's Foreword</h1>\n<div class='foreword-content'>\n"
@@ -239,7 +294,7 @@ async def _generate_epub(manuscript, glossary, book) -> bytes:
     return output.getvalue()
 
 
-async def _generate_pdf(manuscript, glossary, book) -> bytes:
+async def _generate_pdf(manuscript, glossary, book, cover_image_data: bytes | None = None) -> bytes:
     """Generate PDF file from manuscript HTML.
 
     Uses a two-pass approach:
@@ -273,7 +328,7 @@ async def _generate_pdf(manuscript, glossary, book) -> bytes:
         devanagari_font, gurmukhi_font, font_config_1, use_target_counter=True
     )
     toc_html_pass1 = _build_toc_html(manuscript.table_of_contents, page_map=None)
-    full_html_1 = _assemble_full_html(manuscript, toc_html_pass1, body_html)
+    full_html_1 = _assemble_full_html(manuscript, toc_html_pass1, body_html, cover_image_data)
     full_html_1 = normalize_unicode(full_html_1)
 
     pdf_pass1 = HTML(string=full_html_1).write_pdf(
@@ -290,7 +345,7 @@ async def _generate_pdf(manuscript, glossary, book) -> bytes:
         devanagari_font, gurmukhi_font, font_config_2, use_target_counter=False
     )
     toc_html_pass2 = _build_toc_html(manuscript.table_of_contents, page_map=page_map)
-    full_html_2 = _assemble_full_html(manuscript, toc_html_pass2, body_html)
+    full_html_2 = _assemble_full_html(manuscript, toc_html_pass2, body_html, cover_image_data)
     full_html_2 = normalize_unicode(full_html_2)
 
     pdf_bytes = HTML(string=full_html_2).write_pdf(
@@ -474,6 +529,25 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
         margin: 0.5em 0;
         font-style: italic;
     }}
+    .toc-sub {{
+        padding-left: 2em;
+        font-size: 12pt;
+    }}
+    .untranslated-note {{
+        background: #f9f5e3;
+        border-left: 3px solid #c9a94e;
+        padding: 0.5em 1em;
+        margin: 1em 0;
+        font-style: italic;
+    }}
+    .cover-image {{
+        text-align: center;
+        page-break-after: always;
+    }}
+    .cover-image img {{
+        max-width: 100%;
+        max-height: 90vh;
+    }}
     """
     return CSS(string=css_text, font_config=font_config)
 
@@ -492,22 +566,27 @@ def _build_toc_html(table_of_contents, *, page_map):
     parts = ["<div class='toc-page'>\n", "<h1>Table of Contents</h1>\n", "<ul class='toc'>\n"]
     for toc_entry in table_of_contents:
         chapter_num = toc_entry.get("chapter", "")
-        chapter_id = f"chapter-{chapter_num}"
+        level = toc_entry.get("level", 1)
+        # Use explicit anchor if provided (sub-headings), else chapter-N
+        anchor = toc_entry.get("anchor", f"chapter-{chapter_num}")
         title = _escape_html(toc_entry["title"])
 
-        if page_map and chapter_num in page_map:
+        # Indent sub-entries
+        li_class = "toc-entry" if level == 1 else "toc-entry toc-sub"
+
+        if page_map and chapter_num in page_map and level == 1:
             page_num = page_map[chapter_num]
             parts.append(
-                f"<li class='toc-entry'>"
-                f"<a href='#{chapter_id}'>"
+                f"<li class='{li_class}'>"
+                f"<a href='#{anchor}'>"
                 f"<span class='toc-title'>{title}</span>"
                 f"<span class='toc-page-num'>{page_num}</span>"
                 f"</a></li>\n"
             )
         else:
             parts.append(
-                f"<li class='toc-entry'>"
-                f"<a href='#{chapter_id}'>"
+                f"<li class='{li_class}'>"
+                f"<a href='#{anchor}'>"
                 f"<span class='toc-title'>{title}</span>"
                 f"</a></li>\n"
             )
@@ -561,22 +640,31 @@ def _build_pdf_body_html(manuscript, glossary):
     return "".join(parts)
 
 
-def _assemble_full_html(manuscript, toc_html, body_html):
+def _assemble_full_html(manuscript, toc_html, body_html, cover_image_data: bytes | None = None):
     """Combine title page, ToC, and body into a complete HTML document."""
+    import base64
+
     parts = [
         "<!DOCTYPE html>\n<html>\n<head><meta charset='UTF-8'></head>\n<body>\n",
     ]
 
-    # Title page (cover) — Issue #10
-    subtitle = (manuscript.metadata or {}).get("subtitle", "")
-    parts.append("<div class='title-page'>\n")
-    parts.append(f"<div class='title'>{_escape_html(manuscript.title)}</div>\n")
-    if subtitle:
-        parts.append(f"<div class='subtitle'>{_escape_html(subtitle)}</div>\n")
-    parts.append("<hr class='title-separator'>\n")
-    if manuscript.author:
-        parts.append(f"<div class='author'>{_escape_html(manuscript.author)}</div>\n")
-    parts.append("</div>\n")
+    # --- Issue #55: Cover image page (if available) ---
+    if cover_image_data:
+        b64 = base64.b64encode(cover_image_data).decode("ascii")
+        parts.append("<div class='cover-image'>\n")
+        parts.append(f"<img src='data:image/png;base64,{b64}' alt='Cover'/>\n")
+        parts.append("</div>\n")
+    else:
+        # Text-only title page (cover) — Issue #10
+        subtitle = (manuscript.metadata or {}).get("subtitle", "")
+        parts.append("<div class='title-page'>\n")
+        parts.append(f"<div class='title'>{_escape_html(manuscript.title)}</div>\n")
+        if subtitle:
+            parts.append(f"<div class='subtitle'>{_escape_html(subtitle)}</div>\n")
+        parts.append("<hr class='title-separator'>\n")
+        if manuscript.author:
+            parts.append(f"<div class='author'>{_escape_html(manuscript.author)}</div>\n")
+        parts.append("</div>\n")
 
     # ToC
     parts.append(toc_html)

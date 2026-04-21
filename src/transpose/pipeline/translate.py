@@ -36,6 +36,12 @@ class TranslationResult:
 TRANSLATION_FAILED_PLACEHOLDER = "[TRANSLATION FAILED — REVIEW REQUIRED]"
 
 
+ORIGINAL_TEXT_FALLBACK_PREFIX = "[Original text — translation unavailable]"
+
+# Maximum number of split-retry attempts when translation fails
+_MAX_SPLIT_RETRIES = 2
+
+
 @dataclass
 class TranslateOutput:
     book_id: UUID
@@ -46,6 +52,67 @@ class TranslateOutput:
     cultural_terms_found: int
     translations: list[TranslationResult] = field(default_factory=list)
     failed_count: int = 0
+
+
+async def _retry_with_split(
+    ctx,
+    source_text: str,
+    source_language,
+    previous_context: str | None,
+    seed_terms: dict | None,
+) -> tuple[str, int, int, list]:
+    """Retry translation by splitting the chunk in half.
+
+    Returns (translated_text, prompt_tokens, completion_tokens, cultural_terms).
+    Raises TranslationError if both halves still fail after retry.
+    """
+    import logging
+
+    from transpose.services.llm_client import TranslationError
+
+    logger = logging.getLogger(__name__)
+
+    # Split text roughly in half at a paragraph or sentence boundary
+    mid = len(source_text) // 2
+    # Find a good split point near the midpoint (paragraph break, then sentence end)
+    split_at = source_text.rfind("\n\n", 0, mid + 200)
+    if split_at < len(source_text) // 4:
+        split_at = source_text.rfind("।", 0, mid + 200)  # Devanagari danda
+    if split_at < len(source_text) // 4:
+        split_at = source_text.rfind(". ", 0, mid + 200)
+    if split_at < len(source_text) // 4:
+        split_at = mid  # fallback: raw midpoint
+
+    first_half = source_text[: split_at + 1].strip()
+    second_half = source_text[split_at + 1 :].strip()
+
+    if not first_half or not second_half:
+        raise TranslationError("permanent", "Cannot split chunk meaningfully")
+
+    logger.info("Split-retrying chunk: %d + %d chars", len(first_half), len(second_half))
+
+    combined_text = ""
+    total_pt, total_ct = 0, 0
+    combined_terms: list = []
+
+    for part_idx, part_text in enumerate([first_half, second_half]):
+        try:
+            resp = await ctx.llm.translate_chunk(
+                source_text=part_text,
+                source_language=source_language,
+                previous_context=previous_context if part_idx == 0 else None,
+                seed_terms=seed_terms,
+                content_filter_context=True,
+            )
+            combined_text += resp.translated_text + "\n\n"
+            total_pt += resp.prompt_tokens
+            total_ct += resp.completion_tokens
+            combined_terms.extend(resp.cultural_terms)
+        except (TranslationError, Exception):
+            logger.warning("Split-retry part %d/%d also failed", part_idx + 1, 2)
+            raise
+
+    return combined_text.strip(), total_pt, total_ct, combined_terms
 
 
 async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no-untyped-def]
@@ -205,27 +272,104 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
                 )
                 return result, response
 
-            except TranslationError as exc:
-                error_label = exc.error_type
-                if error_label == "content_filter":
+            except (TranslationError, Exception) as exc:
+                # Classify error
+                if isinstance(exc, TranslationError):
+                    error_label = exc.error_type
+                    if error_label == "content_filter":
+                        logger.warning(
+                            f"Content filter blocked chunk {chunk.id} "
+                            f"(sequence {chunk.sequence}): {exc}"
+                        )
+                        content_filter_blocks.add(1, {"book_id": str(input.book_id)})
+                    else:
+                        logger.warning(
+                            f"{error_label.replace('_', ' ').title()} error on chunk "
+                            f"{chunk.id} (sequence {chunk.sequence}): {exc}"
+                        )
+                else:
+                    error_label = "unknown"
                     logger.warning(
-                        f"Content filter blocked chunk {chunk.id} "
+                        f"Translation failed for chunk {chunk.id} "
                         f"(sequence {chunk.sequence}): {exc}"
                     )
-                    content_filter_blocks.add(1, {"book_id": str(input.book_id)})
-                else:
-                    logger.warning(
-                        f"{error_label.replace('_', ' ').title()} error on chunk "
-                        f"{chunk.id} (sequence {chunk.sequence}): {exc}"
-                    )
+
                 translation_errors.add(
                     1, {"book_id": str(input.book_id), "error_type": error_label}
                 )
+
+                # --- Second-layer retry: split chunk and translate halves ---
+                try:
+                    logger.info(
+                        "Attempting split-retry for chunk %s (sequence %d)",
+                        chunk.id, chunk.sequence,
+                    )
+                    split_text, spt, sct, split_terms = await _retry_with_split(
+                        ctx,
+                        source_text=chunk.source_text,
+                        source_language=book.source_language,
+                        previous_context=prev_context,
+                        seed_terms=seed_terms,
+                    )
+                    logger.info("Split-retry succeeded for chunk %s", chunk.id)
+
+                    translation = Translation(
+                        chunk_id=chunk.id,
+                        book_id=input.book_id,
+                        translated_text=split_text,
+                        model_version="split-retry",
+                        cultural_terms=[],
+                        prompt_tokens=spt,
+                        completion_tokens=sct,
+                        raw_response={},
+                    )
+                    await ctx.db.create_translation(translation)
+
+                    result = TranslationResult(
+                        chunk_id=chunk.id,
+                        translated_text=split_text,
+                        cultural_terms=[
+                            ExtractedTerm(
+                                term=t.term,
+                                original_script=normalize_unicode(t.original_script),
+                                definition=t.definition,
+                                source=t.source,
+                            )
+                            for t in split_terms
+                        ],
+                        prompt_tokens=spt,
+                        completion_tokens=sct,
+                        model_version="split-retry",
+                    )
+
+                    completed_count += 1
+                    chunk_elapsed = time.monotonic() - chunk_start_time
+                    logger.info(
+                        "📊 Translation: chunk %d/%d split-retried in %.1fs | book_id=%s",
+                        completed_count, len(chunks_to_translate), chunk_elapsed,
+                        str(input.book_id),
+                    )
+                    await ctx.state.set_progress(
+                        str(input.book_id), "translate",
+                        completed_count, len(chunks_to_translate),
+                    )
+                    return result, None
+
+                except Exception as split_exc:
+                    logger.warning(
+                        "Split-retry also failed for chunk %s: %s",
+                        chunk.id, split_exc,
+                    )
+
+                # --- Final fallback: preserve original source text ---
                 failed_count += 1
+                fallback_text = (
+                    f"{ORIGINAL_TEXT_FALLBACK_PREFIX}\n\n{chunk.source_text}"
+                )
                 placeholder = Translation(
                     chunk_id=chunk.id,
                     book_id=input.book_id,
-                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                    translated_text=fallback_text,
                     model_version="n/a",
                     cultural_terms=[],
                     prompt_tokens=0,
@@ -239,7 +383,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
                 completed_count += 1
                 chunk_elapsed = time.monotonic() - chunk_start_time
                 logger.info(
-                    "📊 Translation: chunk %d/%d failed in %.1fs | book_id=%s",
+                    "📊 Translation: chunk %d/%d failed (original preserved) in %.1fs | book_id=%s",
                     completed_count, len(chunks_to_translate), chunk_elapsed,
                     str(input.book_id),
                 )
@@ -249,50 +393,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
                 )
                 return TranslationResult(
                     chunk_id=chunk.id,
-                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
-                    cultural_terms=[],
-                    prompt_tokens=0,
-                    completion_tokens=0,
-                    model_version="n/a",
-                ), None
-
-            except Exception as exc:
-                logger.warning(
-                    f"Translation failed for chunk {chunk.id} "
-                    f"(sequence {chunk.sequence}): {exc}"
-                )
-                translation_errors.add(
-                    1, {"book_id": str(input.book_id), "error_type": "unknown"}
-                )
-                failed_count += 1
-                placeholder = Translation(
-                    chunk_id=chunk.id,
-                    book_id=input.book_id,
-                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
-                    model_version="n/a",
-                    cultural_terms=[],
-                    prompt_tokens=0,
-                    completion_tokens=0,
-                    raw_response={},
-                    error_type="unknown",
-                    error_reason=str(exc),
-                )
-                await ctx.db.create_translation(placeholder)
-
-                completed_count += 1
-                chunk_elapsed = time.monotonic() - chunk_start_time
-                logger.info(
-                    "📊 Translation: chunk %d/%d failed in %.1fs | book_id=%s",
-                    completed_count, len(chunks_to_translate), chunk_elapsed,
-                    str(input.book_id),
-                )
-                await ctx.state.set_progress(
-                    str(input.book_id), "translate",
-                    completed_count, len(chunks_to_translate),
-                )
-                return TranslationResult(
-                    chunk_id=chunk.id,
-                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                    translated_text=fallback_text,
                     cultural_terms=[],
                     prompt_tokens=0,
                     completion_tokens=0,

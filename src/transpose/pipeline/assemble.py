@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from transpose.pipeline.translate import (
+    ORIGINAL_TEXT_FALLBACK_PREFIX,
+    TRANSLATION_FAILED_PLACEHOLDER,
+)
 from transpose.utils import escape_html as _escape_html
 
 
@@ -85,6 +90,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
     # Build chapters
     chapters: list[ManuscriptChapter] = []
     toc: list[dict] = []
+    untranslated_passages = 0  # track for foreword note
 
     for chapter_num, (chapter_ref, chapter_chunks) in enumerate(
         sorted(chapters_data.items()), start=1
@@ -98,11 +104,30 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         content_html = "<div class='chapter'>\n"
         content_html += f"<h1 id='{chapter_id}'>{_escape_html(english_title)}</h1>\n"
 
+        # Sub-heading counter for within-chapter headings (Discourse N, Part N, etc.)
+        sub_heading_idx = 0
+
         for item_idx, item in enumerate(chapter_chunks):
             chunk = item["chunk"]
             translation = item["translation"]
 
             text = translation.translated_text
+
+            # --- Issue #59: sanitize failure markers ---
+            if TRANSLATION_FAILED_PLACEHOLDER in text:
+                # Replace raw failure marker with original text fallback
+                text = text.replace(
+                    TRANSLATION_FAILED_PLACEHOLDER,
+                    f"{ORIGINAL_TEXT_FALLBACK_PREFIX}\n\n{chunk.source_text}",
+                )
+                untranslated_passages += 1
+
+            # Count passages that used the original-text fallback path
+            if ORIGINAL_TEXT_FALLBACK_PREFIX in text:
+                # Already counted above if we just replaced; also count if
+                # translate stage stored it this way directly
+                if TRANSLATION_FAILED_PLACEHOLDER not in translation.translated_text:
+                    untranslated_passages += 1
 
             # Strip duplicate chapter title from first chunk's text.
             # The LLM translation often starts with "Chapter N: Title — ..."
@@ -110,11 +135,37 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
             if item_idx == 0:
                 text = _strip_leading_chapter_title(text)
 
-            # Convert text to paragraphs
+            # Convert text to paragraphs, detecting sub-headings (Issue #57)
             paragraphs = text.split("\n\n")
             for para in paragraphs:
-                if para.strip():
-                    content_html += f"<p>{_escape_html(para.strip())}</p>\n"
+                stripped = para.strip()
+                if not stripped:
+                    continue
+
+                # Check if this paragraph is a sub-heading
+                heading_match = _detect_heading(stripped)
+                if heading_match:
+                    sub_heading_idx += 1
+                    sub_id = f"{chapter_id}-s{sub_heading_idx}"
+                    content_html += (
+                        f"<h2 id='{sub_id}'>{_escape_html(stripped)}</h2>\n"
+                    )
+                    # Add sub-heading to TOC
+                    toc.append({
+                        "chapter": chapter_num,
+                        "title": stripped,
+                        "level": 2,
+                        "anchor": sub_id,
+                    })
+                elif ORIGINAL_TEXT_FALLBACK_PREFIX in stripped:
+                    # Render original text in a styled note block
+                    content_html += (
+                        "<div class='untranslated-note'>"
+                        f"<p><em>{_escape_html(stripped)}</em></p>"
+                        "</div>\n"
+                    )
+                else:
+                    content_html += f"<p>{_escape_html(stripped)}</p>\n"
 
         content_html += "</div>\n"
 
@@ -125,7 +176,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         )
         chapters.append(chapter)
 
-        # Add to TOC (with English title)
+        # Add to TOC (with English title) — level-1 entry
         toc.append({"chapter": chapter_num, "title": english_title})
 
     # Derive the manuscript title from the translated content, not the
@@ -157,6 +208,14 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
         try:
             foreword_text = await _generate_foreword(ctx, translated_title, cultural_terms)
             foreword_text = _clean_foreword(foreword_text)
+            # Append note about untranslated passages if any
+            if untranslated_passages > 0:
+                foreword_text += (
+                    f"\n\nNote: {untranslated_passages} passage(s) in this text could not "
+                    "be fully translated due to content processing limitations. These "
+                    "passages are presented in their original language and marked "
+                    "accordingly."
+                )
             manuscript.metadata["foreword"] = foreword_text
             logger.info("Generated Translator's Foreword (%d chars)", len(foreword_text))
         except Exception:
@@ -402,3 +461,34 @@ async def _generate_foreword(ctx, book_title: str, cultural_terms: list[dict]) -
 
     return await ctx.llm.chat(prompt)
 
+
+# ---------------------------------------------------------------------------
+# Heading detection for Issue #57 (multi-level TOC)
+# ---------------------------------------------------------------------------
+
+# Patterns that identify discourse/chapter sub-headings in translated text
+_HEADING_PATTERNS: list[re.Pattern] = [
+    re.compile(r"^Discourse\s+\d+", re.IGNORECASE),
+    re.compile(r"^Part\s+[IVXLCDM\d]+", re.IGNORECASE),
+    re.compile(r"^Section\s+\d+", re.IGNORECASE),
+    re.compile(r"^Lecture\s+\d+", re.IGNORECASE),
+    re.compile(r"^Talk\s+\d+", re.IGNORECASE),
+    re.compile(r"^Sermon\s+\d+", re.IGNORECASE),
+    re.compile(r"^Session\s+\d+", re.IGNORECASE),
+    # Numbered heading like "1. The Nature of Reality" or "15. Beyond the Mind"
+    re.compile(r"^\d{1,3}\.\s+[A-Z]"),
+]
+
+
+def _detect_heading(text: str) -> bool:
+    """Return True if *text* looks like a discourse/section heading.
+
+    Only short lines (< 120 chars) are considered — long paragraphs that
+    happen to start with "Discourse" are not headings.
+    """
+    if len(text) > 120:
+        return False
+    # Must be a single line (no internal line breaks)
+    if "\n" in text:
+        return False
+    return any(p.match(text) for p in _HEADING_PATTERNS)

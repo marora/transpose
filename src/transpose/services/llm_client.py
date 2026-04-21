@@ -404,6 +404,7 @@ class LlmClient:
                 spiritual/religious texts.
         """
         lang_name = "Hindi" if source_language == SourceLanguage.HINDI else "Punjabi"
+        script_name = "Devanagari" if source_language == SourceLanguage.HINDI else "Gurmukhi"
 
         # Stage 0: prepend spiritual-text scholarly context when flagged
         preamble = _SPIRITUAL_TEXT_PREAMBLE if content_filter_context else ""
@@ -427,8 +428,13 @@ literary style and cultural context.
 CRITICAL RULES:
 1. Preserve cultural and spiritual terms in their transliterated form (e.g., dharma, karma, guru).
 2. For preserved terms, provide the original script and a brief definition.
-3. Maintain narrative flow and literary tone — this is not a word-for-word translation.
-4. Keep sentence structure natural in English while preserving the meaning and tone of the original.
+3. Use {script_name} script for ALL original_script values in {lang_name} terms. \
+Do NOT mix scripts (e.g., do not use Gurmukhi for Hindi terms or Devanagari for Punjabi terms).
+4. Maintain narrative flow and literary tone — this is not a word-for-word translation.
+5. Keep sentence structure natural in English while preserving the meaning and tone of the original.
+6. TRANSLATE ALL CONTENT COMPLETELY. Do not skip, summarize, or condense any part of the \
+source text. Every sentence in the source must have a corresponding translation in the output. \
+The translated text should be approximately the same length as the source — do not abridge.
 
 CULTURAL TERMS:
 - Known terms that MUST be preserved (with their original script and definitions):
@@ -476,7 +482,8 @@ Include ALL cultural terms that appear in this chunk (both from the seed list an
 
 {source_text}
 
-Remember to output valid JSON with both translated_text and cultural_terms fields."""
+Remember to output valid JSON with both translated_text and cultural_terms fields.
+IMPORTANT: Translate ALL content completely — do not skip or summarize any sentences."""
 
         return prompt
 
