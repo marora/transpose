@@ -201,19 +201,37 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         import hashlib
         from pathlib import Path
 
+        existing = None
         pdf_path = Path(input.source_path)
         if pdf_path.exists():
             source_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
             existing = await ctx.db.get_book_by_hash(source_hash)
-            if existing:
-                book_id = str(existing.id)
-                cost_tracker = CostTracker(book_id)
-                logger.info(f"Resumed with book_id={book_id} from hash {source_hash}")
-            else:
-                raise ValueError(
-                    f"Cannot resume: no book found for source hash {source_hash}. "
-                    "Run from the beginning first."
+        else:
+            # Source is a URL — try to extract hash from blob name or look up by URI
+            source_str = str(input.source_path)
+            # Blob names are often the sha256 hash: {hash}.pdf
+            blob_name = source_str.rsplit("/", 1)[-1].removesuffix(".pdf")
+            if len(blob_name) == 64:
+                existing = await ctx.db.get_book_by_hash(blob_name)
+            if not existing:
+                # Fall back: look up the most recent book by title
+                row = await ctx.db.fetch_one(
+                    "SELECT id FROM books WHERE title = $1 ORDER BY created_at DESC LIMIT 1",
+                    input.title,
                 )
+                if row:
+                    from types import SimpleNamespace
+                    existing = SimpleNamespace(id=row["id"])
+
+        if existing:
+            book_id = str(existing.id)
+            cost_tracker = CostTracker(book_id)
+            logger.info(f"Resumed with book_id={book_id}")
+        else:
+            raise ValueError(
+                "Cannot resume: no book found for the given source. "
+                "Run from the beginning first."
+            )
 
     # --- Operational Readiness Preflight (Gate 8) ---
     # Non-blocking by default — logs failures as warnings.

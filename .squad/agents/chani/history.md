@@ -53,6 +53,8 @@ Delivered all 7 pipeline stages (Ingest → OCR → Chunk → Translate → Glos
    - Translator's Note metadata key is `translator_note` (not `foreword`). Export reads from `manuscript.metadata["translator_note"]`.
    - `.title-page` and `.toc-page` use `page: frontmatter` named page with roman numerals
    - `<div style='counter-reset: page 1;'>` inserted before first chapter resets to arabic numbering
+   - Devanagari OCR fallback text must be cleaned before preserving — raw OCR contains isolated ASCII digits/letters between Devanagari chars, zero-width chars, control chars. `clean_devanagari_ocr()` in `utils/unicode.py` handles this (#63).
+   - ZWJ (U+200D) is valid in Devanagari conjuncts and must NOT be stripped; ZWSP/ZWNJ/BOM are noise and should be removed.
 
 **Key decisions:**
 - Kept `padding-top: 3cm` on title page (not 5cm from issue spec) — 5cm caused overflow in visual tests, 3cm was proven safe in earlier fix
