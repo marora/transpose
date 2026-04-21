@@ -19,9 +19,11 @@ from transpose.pipeline.gates import (
     QualityGateError,
     artifact_availability_gate,
     document_structure_gate,
+    export_rendering_gate,
     glossary_integrity_gate,
     golden_targeted_qa_gate,
     ocr_sanity_gate,
+    source_output_comparison_gate,
     translation_completeness_gate,
     validate_production_readiness,
 )
@@ -373,7 +375,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             # Quality Gate: Artifact Availability
             _run_gate(artifact_availability_gate, export_output, gate_results)
 
-            # Quality Gate: Golden-Targeted QA (runs after all other gates)
+            # Quality Gate: Export Rendering Quality
             # Find the PDF artifact path for golden comparison
             pdf_artifact_path = None
             for artifact in export_output.artifacts:
@@ -393,6 +395,13 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
             if pdf_artifact_path:
                 _run_gate(
+                    lambda _inp: export_rendering_gate(pdf_artifact_path),
+                    None,
+                    gate_results,
+                )
+
+                # Quality Gate: Golden-Targeted QA (runs after all other gates)
+                _run_gate(
                     lambda _inp: golden_targeted_qa_gate(pdf_artifact_path),
                     None,
                     gate_results,
@@ -401,6 +410,14 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 # --- Gate 7: Production Readiness ---
                 _run_gate(
                     lambda _inp: validate_production_readiness(pdf_artifact_path),
+                    None,
+                    gate_results,
+                )
+
+                # Quality Gate: Source-Output Structural Comparison
+                source_pdf = input.source_path if input.source_path and Path(input.source_path).exists() else None
+                _run_gate(
+                    lambda _inp: source_output_comparison_gate(source_pdf, pdf_artifact_path),
                     None,
                     gate_results,
                 )

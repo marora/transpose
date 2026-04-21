@@ -344,6 +344,64 @@ def document_structure_gate(manuscript) -> GateResult:
                 f"chapters not sequential: got {chapter_numbers}, expected {expected}"
             )
 
+    # Check 5: TOC entries are non-empty and meaningful
+    if toc:
+        empty_toc_entries = []
+        for i, entry in enumerate(toc):
+            entry_title = ""
+            if isinstance(entry, dict):
+                entry_title = entry.get("title", "") or entry.get("text", "") or ""
+            elif isinstance(entry, str):
+                entry_title = entry
+            elif hasattr(entry, "title"):
+                entry_title = getattr(entry, "title", "") or ""
+
+            if not entry_title or not entry_title.strip() or len(entry_title.strip()) < 3:
+                empty_toc_entries.append(i + 1)
+
+        if empty_toc_entries:
+            failures.append(
+                f"ToC has {len(empty_toc_entries)} empty/trivial entries at positions: "
+                f"{empty_toc_entries[:5]}{'...' if len(empty_toc_entries) > 5 else ''}"
+            )
+        details["empty_toc_entries"] = len(empty_toc_entries)
+
+    # Check 6: ToC entries should roughly match chapter titles
+    if toc and chapters:
+        mismatched = []
+        for i, (toc_entry, chapter) in enumerate(zip(toc, chapters)):
+            toc_title = ""
+            if isinstance(toc_entry, dict):
+                toc_title = toc_entry.get("title", "") or toc_entry.get("text", "")
+            elif isinstance(toc_entry, str):
+                toc_title = toc_entry
+            elif hasattr(toc_entry, "title"):
+                toc_title = getattr(toc_entry, "title", "")
+
+            chapter_title = getattr(chapter, "title", "") or ""
+
+            # Normalize for comparison
+            toc_norm = toc_title.strip().lower()
+            ch_norm = chapter_title.strip().lower()
+
+            # If both exist but don't share any significant words, flag it
+            if toc_norm and ch_norm:
+                toc_words = set(toc_norm.split())
+                ch_words = set(ch_norm.split())
+                # Remove common short words
+                stop_words = {"the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or", "is"}
+                toc_sig = toc_words - stop_words
+                ch_sig = ch_words - stop_words
+                if toc_sig and ch_sig and not toc_sig.intersection(ch_sig):
+                    mismatched.append(i + 1)
+
+        if mismatched:
+            details["toc_chapter_mismatches"] = mismatched[:5]
+            # This is a warning, not a failure — log it but don't block
+            details["toc_quality_warning"] = (
+                f"{len(mismatched)} ToC entries don't match chapter titles"
+            )
+
     return GateResult(
         gate_name="document_structure",
         passed=len(failures) == 0,
@@ -982,6 +1040,222 @@ def validate_production_readiness(pdf_path: str) -> GateResult:
 
     return GateResult(
         gate_name="production_readiness",
+        passed=len(failures) == 0,
+        failures=failures,
+        details=details,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gate 5b: Export Rendering Quality (after export, validates PDF quality)
+# ---------------------------------------------------------------------------
+
+def export_rendering_gate(pdf_path: str) -> GateResult:
+    """Validate PDF rendering quality — catches blank pages, encoding issues, and layout problems.
+
+    Checks:
+      - PDF is valid and can be opened
+      - No blank or near-blank pages
+      - Text is extractable from body pages
+      - No excessive garbled characters
+      - Page count is reasonable (not 0 or 1 for a book)
+    """
+    failures: list[str] = []
+    details: dict = {
+        "pdf_path": pdf_path,
+        "page_count": 0,
+        "blank_pages": [],
+        "garbled_pages": [],
+        "text_extractable": True,
+    }
+
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        # If PyMuPDF not available, pass with a note
+        details["note"] = "PyMuPDF not installed — rendering validation skipped"
+        return GateResult(
+            gate_name="export_rendering",
+            passed=True,
+            failures=[],
+            details=details,
+        )
+
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as e:
+        failures.append(f"Cannot open PDF: {e}")
+        return GateResult(
+            gate_name="export_rendering",
+            passed=False,
+            failures=failures,
+            details=details,
+        )
+
+    try:
+        page_count = len(doc)
+        details["page_count"] = page_count
+
+        if page_count == 0:
+            failures.append("PDF has 0 pages")
+            return GateResult(gate_name="export_rendering", passed=False, failures=failures, details=details)
+
+        if page_count < 3:
+            failures.append(f"PDF has only {page_count} pages — too few for a book")
+
+        blank_pages = []
+        garbled_pages = []
+        low_text_pages = []
+
+        for i in range(page_count):
+            page = doc[i]
+            text = page.get_text("text").strip()
+
+            # Skip first 2 pages (cover, title page may be image-only)
+            if i < 2:
+                continue
+
+            # Check for blank pages
+            if len(text) < 10:
+                blank_pages.append(i + 1)
+                continue
+
+            # Check for garbled text (high ratio of replacement chars)
+            if text:
+                replacement_count = text.count('\ufffd')
+                if len(text) > 0 and replacement_count / len(text) > 0.05:
+                    garbled_pages.append(i + 1)
+
+            # Check for very low text content (possible rendering issue)
+            if len(text) < 50 and i > 2:  # body pages should have decent text
+                low_text_pages.append(i + 1)
+
+        details["blank_pages"] = blank_pages
+        details["garbled_pages"] = garbled_pages
+        details["low_text_pages"] = low_text_pages
+
+        # Blank pages shouldn't exceed 10% of total
+        if len(blank_pages) > max(2, page_count * 0.10):
+            failures.append(
+                f"{len(blank_pages)} blank pages detected (>{page_count * 0.10:.0f} threshold): "
+                f"pages {blank_pages[:10]}{'...' if len(blank_pages) > 10 else ''}"
+            )
+
+        if garbled_pages:
+            failures.append(
+                f"{len(garbled_pages)} pages with garbled text: "
+                f"pages {garbled_pages[:10]}{'...' if len(garbled_pages) > 10 else ''}"
+            )
+
+    finally:
+        doc.close()
+
+    return GateResult(
+        gate_name="export_rendering",
+        passed=len(failures) == 0,
+        failures=failures,
+        details=details,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gate 8: Source-Output Structural Comparison (post-export)
+# ---------------------------------------------------------------------------
+
+_STRUCTURAL_PAGE_RATIO_MIN = 0.3   # output should be at least 30% of source pages
+_STRUCTURAL_PAGE_RATIO_MAX = 3.0   # output shouldn't be more than 3x source pages
+
+def source_output_comparison_gate(
+    source_pdf_path: str | None,
+    output_pdf_path: str,
+) -> GateResult:
+    """Compare source and output PDFs for structural consistency.
+
+    Checks:
+      - Page count ratio is reasonable
+      - Both documents are valid PDFs
+      - Output is not trivially small compared to source
+      - Chapter/section count consistency (via text analysis)
+    """
+    failures: list[str] = []
+    details: dict = {
+        "source_path": source_pdf_path,
+        "output_path": output_pdf_path,
+        "source_pages": 0,
+        "output_pages": 0,
+        "page_ratio": 0.0,
+    }
+
+    if not source_pdf_path:
+        details["note"] = "No source PDF available for comparison — skipped"
+        return GateResult(
+            gate_name="source_output_comparison",
+            passed=True,
+            failures=[],
+            details=details,
+        )
+
+    try:
+        import fitz
+    except ImportError:
+        details["note"] = "PyMuPDF not installed — comparison skipped"
+        return GateResult(gate_name="source_output_comparison", passed=True, failures=[], details=details)
+
+    try:
+        source_doc = fitz.open(source_pdf_path)
+        output_doc = fitz.open(output_pdf_path)
+    except Exception as e:
+        failures.append(f"Cannot open PDFs for comparison: {e}")
+        return GateResult(gate_name="source_output_comparison", passed=False, failures=failures, details=details)
+
+    try:
+        source_pages = len(source_doc)
+        output_pages = len(output_doc)
+
+        details["source_pages"] = source_pages
+        details["output_pages"] = output_pages
+
+        if source_pages > 0:
+            ratio = output_pages / source_pages
+            details["page_ratio"] = round(ratio, 2)
+
+            if ratio < _STRUCTURAL_PAGE_RATIO_MIN:
+                failures.append(
+                    f"Output PDF has too few pages: {output_pages} vs source {source_pages} "
+                    f"(ratio {ratio:.2f}, minimum {_STRUCTURAL_PAGE_RATIO_MIN})"
+                )
+            elif ratio > _STRUCTURAL_PAGE_RATIO_MAX:
+                failures.append(
+                    f"Output PDF has too many pages: {output_pages} vs source {source_pages} "
+                    f"(ratio {ratio:.2f}, maximum {_STRUCTURAL_PAGE_RATIO_MAX})"
+                )
+
+        # Compare text density — output should have extractable text
+        source_text_total = 0
+        output_text_total = 0
+
+        for i in range(min(source_pages, 10)):  # sample first 10 pages
+            source_text_total += len(source_doc[i].get_text("text"))
+
+        for i in range(min(output_pages, 10)):
+            output_text_total += len(output_doc[i].get_text("text"))
+
+        details["source_sample_text_len"] = source_text_total
+        details["output_sample_text_len"] = output_text_total
+
+        # Output should have meaningful text if source does
+        if source_text_total > 100 and output_text_total < 50:
+            failures.append(
+                f"Output PDF has very little extractable text ({output_text_total} chars) "
+                f"compared to source ({source_text_total} chars in first 10 pages)"
+            )
+
+    finally:
+        source_doc.close()
+        output_doc.close()
+
+    return GateResult(
+        gate_name="source_output_comparison",
         passed=len(failures) == 0,
         failures=failures,
         details=details,

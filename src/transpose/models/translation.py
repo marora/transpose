@@ -47,6 +47,8 @@ class Translation:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     raw_response: dict = field(default_factory=dict)
+    error_type: str | None = None
+    error_reason: str | None = None
     id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 

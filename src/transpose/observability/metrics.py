@@ -40,3 +40,19 @@ pipeline_errors = meter.create_counter(
     name="transpose.errors",
     description="Pipeline errors by stage and type",
 )
+
+# Content filter tracking
+content_filter_blocks = meter.create_counter(
+    name="transpose.translation.content_filter_blocks",
+    description="Chunks blocked by Azure content filter",
+)
+
+content_filter_fallback_success = meter.create_counter(
+    name="transpose.translation.content_filter_fallback_success",
+    description="Content filter blocks recovered via academic reframing",
+)
+
+translation_errors = meter.create_counter(
+    name="transpose.translation.errors",
+    description="Translation errors by type",
+)

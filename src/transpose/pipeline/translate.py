@@ -61,7 +61,13 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     from transpose.config.seed_glossary import get_seed_glossary
     from transpose.models.enums import BookStatus
     from transpose.models.translation import Translation
-    from transpose.observability.metrics import chunks_translated, tokens_used
+    from transpose.observability.metrics import (
+        chunks_translated,
+        content_filter_blocks,
+        tokens_used,
+        translation_errors,
+    )
+    from transpose.services.llm_client import TranslationError
     from transpose.utils.unicode import normalize_unicode
 
     logger = logging.getLogger(__name__)
@@ -185,14 +191,24 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
             total_cultural_terms += len(result.cultural_terms)
 
             previous_translation = response
-        except Exception as exc:
-            logger.warning(
-                f"Translation failed for chunk {chunk.id} "
-                f"(sequence {chunk.sequence}): {exc}"
+        except TranslationError as exc:
+            error_label = exc.error_type
+            if error_label == "content_filter":
+                logger.warning(
+                    f"Content filter blocked chunk {chunk.id} "
+                    f"(sequence {chunk.sequence}): {exc}"
+                )
+                content_filter_blocks.add(1, {"book_id": str(input.book_id)})
+            else:
+                logger.warning(
+                    f"{error_label.replace('_', ' ').title()} error on chunk {chunk.id} "
+                    f"(sequence {chunk.sequence}): {exc}"
+                )
+            translation_errors.add(
+                1, {"book_id": str(input.book_id), "error_type": error_label}
             )
             failed_count += 1
 
-            # Create placeholder translation so downstream stages have data
             placeholder = Translation(
                 chunk_id=chunk.id,
                 book_id=input.book_id,
@@ -202,6 +218,42 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
                 prompt_tokens=0,
                 completion_tokens=0,
                 raw_response={},
+                error_type=error_label,
+                error_reason=str(exc),
+            )
+            await ctx.db.create_translation(placeholder)
+
+            translations.append(
+                TranslationResult(
+                    chunk_id=chunk.id,
+                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                    cultural_terms=[],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    model_version="n/a",
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Translation failed for chunk {chunk.id} "
+                f"(sequence {chunk.sequence}): {exc}"
+            )
+            translation_errors.add(
+                1, {"book_id": str(input.book_id), "error_type": "unknown"}
+            )
+            failed_count += 1
+
+            placeholder = Translation(
+                chunk_id=chunk.id,
+                book_id=input.book_id,
+                translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                model_version="n/a",
+                cultural_terms=[],
+                prompt_tokens=0,
+                completion_tokens=0,
+                raw_response={},
+                error_type="unknown",
+                error_reason=str(exc),
             )
             await ctx.db.create_translation(placeholder)
 
