@@ -720,3 +720,14 @@ Full production pipeline run: **95-page Hindi → 381 KB English PDF (70/72 chun
 
 **Test status:** 492 tests passing. Await Thufir's test suite expansion for new settings coverage.
 
+### Session 2026-04-21: P2 Pipeline Hardening Verification (#20, #25, #30, #40)
+
+**Verified** that all four P2 issues were already resolved in the current codebase (implemented across prior sessions):
+
+1. **#20 UUID/str type mismatch** — `BookId = str` type alias in runner.py, `str()` at ingest/resume boundaries, `PROCESSING` added to BookStatus enum
+2. **#25 Fire-and-forget tasks** — `_background_tasks` set prevents GC, `_on_task_done` callback logs errors/completion, task references stored
+3. **#30 Dead code** — `_escape_html` consolidated into `utils/__init__.py`, removed from assemble.py and export.py. `get_book_by_title`/`delete_book` never existed. All BookStatus values are used.
+4. **#40 Concurrency config** — `--concurrency` CLI flag, `concurrency` API body field, `PipelineInput.concurrency` with fallback to `settings.translate_concurrency`
+
+**Test status:** 666 passing, 1 pre-existing environment-dependent failure (health endpoint returning degraded).
+
