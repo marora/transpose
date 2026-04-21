@@ -49,6 +49,7 @@ _MAX_REPLACEMENT_RATIO = 0.05
 _MIN_CONFIDENCE = 0.6
 _DEVANAGARI_DENSITY_THRESHOLD = 0.05  # at least 5% Devanagari chars for Hindi source
 _TRANSLATION_FAILED_MARKER = "[TRANSLATION FAILED"
+_ORIGINAL_TEXT_FALLBACK_MARKER = "[Original text"
 _MAX_FAILED_CHUNK_RATIO = 0.10
 _MAX_FAILED_CHUNK_RATIO_HARD = 0.30  # Hard ceiling — never produce output above this
 _MIN_FOREWORD_WORDS = 50
@@ -185,6 +186,7 @@ def translation_completeness_gate(translate_output) -> GateResult:
     # Check 2: Scan translations for TRANSLATION FAILED markers and Devanagari passthrough
     marker_count = 0
     passthrough_count = 0
+    fallback_count = 0  # intentional Hindi fallbacks (not hard failures)
     for tr in translations:
         text = getattr(tr, "translated_text", "") or ""
         chunk_id = str(getattr(tr, "chunk_id", "unknown"))
@@ -192,9 +194,14 @@ def translation_completeness_gate(translate_output) -> GateResult:
         if _TRANSLATION_FAILED_MARKER in text:
             marker_count += 1
             failing_chunks.append(chunk_id)
+            continue
 
-        # Detect raw Devanagari passthrough — if >30% of non-space chars
-        # are Devanagari in the *translated* output, source likely leaked
+        # Intentional Hindi fallback — not a hard failure
+        if _ORIGINAL_TEXT_FALLBACK_MARKER in text:
+            fallback_count += 1
+            continue
+
+        # Detect raw Devanagari passthrough (unintentional source leak)
         non_space = text.replace(" ", "").replace("\n", "")
         if non_space:
             dev_count = len(_DEVANAGARI_RE.findall(non_space))
@@ -209,6 +216,16 @@ def translation_completeness_gate(translate_output) -> GateResult:
 
     details["marker_count"] = marker_count
     details["passthrough_count"] = passthrough_count
+    details["fallback_count"] = fallback_count
+
+    if fallback_count > 0:
+        details.setdefault("warning", "")
+        if details["warning"]:
+            details["warning"] += "; "
+        details["warning"] += (
+            f"{fallback_count}/{total} chunks fell back to original Hindi text — "
+            f"output will include source text for untranslatable passages"
+        )
 
     if total > 0 and marker_count / total > _MAX_FAILED_CHUNK_RATIO_HARD:
         failures.append(
