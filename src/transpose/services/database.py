@@ -629,3 +629,56 @@ class Database:
                 created_at=row["created_at"],
             )
 
+    # --- Book Costs ---
+
+    async def ensure_book_costs_table(self) -> None:
+        """Create the book_costs table if it doesn't exist."""
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS book_costs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                book_id UUID NOT NULL,
+                service TEXT NOT NULL,
+                metric TEXT NOT NULL,
+                quantity BIGINT NOT NULL,
+                estimated_cost_usd NUMERIC(10, 6),
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+            """
+        )
+
+    async def save_book_costs(
+        self, book_id: UUID, rows: list[tuple[str, str, int, float]]
+    ) -> None:
+        """Persist cost breakdown rows for a book.
+
+        Args:
+            book_id: The book these costs belong to.
+            rows: List of (service, metric, quantity, estimated_cost_usd).
+        """
+        await self.execute_many(
+            """
+            INSERT INTO book_costs (book_id, service, metric, quantity, estimated_cost_usd)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            [(book_id, svc, metric, qty, cost) for svc, metric, qty, cost in rows],
+        )
+
+    async def get_book_costs(self, book_id: UUID) -> list[dict]:
+        """Retrieve cost rows for a book."""
+        rows = await self.fetch_many(
+            "SELECT service, metric, quantity, estimated_cost_usd, created_at "
+            "FROM book_costs WHERE book_id = $1 ORDER BY created_at",
+            book_id,
+        )
+        return [
+            {
+                "service": r["service"],
+                "metric": r["metric"],
+                "quantity": r["quantity"],
+                "estimated_cost_usd": float(r["estimated_cost_usd"]),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+

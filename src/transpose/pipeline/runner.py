@@ -58,6 +58,7 @@ class PipelineOutput:
     stages_completed: list[str]
     errors: list[dict]
     gate_results: list[dict] = field(default_factory=list)
+    cost_summary: dict | None = None
 
 
 STAGE_ORDER = ["ingest", "ocr", "chunk", "translate", "glossary", "assemble", "export"]
@@ -139,6 +140,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         ctx = ServiceContext()
         await ctx.connect()
 
+    # Cost tracking (initialized once we have a book_id)
+    from transpose.observability.cost_tracker import CostTracker
+
+    cost_tracker: CostTracker | None = None
+
     pipeline_start_time = datetime.now()
 
     stages_completed: list[str] = []
@@ -169,6 +175,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             existing = await ctx.db.get_book_by_hash(source_hash)
             if existing:
                 book_id = existing.id
+                cost_tracker = CostTracker(book_id)
                 logger.info(f"Resumed with book_id={book_id} from hash {source_hash}")
             else:
                 raise ValueError(
@@ -220,6 +227,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             )
 
             book_id = ingest_output.book_id
+            cost_tracker = CostTracker(book_id)
+
+            # Track blob upload from ingest (source PDF)
+            if not ingest_output.already_existed:
+                cost_tracker.record_blob_operation("write")
 
             # Acquire distributed lock before proceeding to expensive stages
             lock_acquired = await ctx.state.acquire_lock(str(book_id))
@@ -272,6 +284,10 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 raise ValueError("book_id required for resume_from")
 
             ocr_output = await ocr.run(ocr.OcrInput(book_id=book_id), ctx)
+
+            # Track OCR cost
+            if cost_tracker:
+                cost_tracker.record_ocr_pages(ocr_output.pages_processed)
 
             await ctx.state.set_pipeline_status(str(book_id), "ocr")
 
@@ -354,6 +370,13 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             total_tokens = (
                 translate_output.total_prompt_tokens + translate_output.total_completion_tokens
             )
+
+            # Track LLM cost
+            if cost_tracker:
+                cost_tracker.record_llm_usage(
+                    translate_output.total_prompt_tokens,
+                    translate_output.total_completion_tokens,
+                )
 
             logger.info(
                 f"Translate complete: chunks={translate_output.chunks_translated}, "
@@ -451,6 +474,11 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 for artifact in export_output.artifacts
             ]
 
+            # Track blob write operations (one per exported artifact)
+            if cost_tracker:
+                for _artifact in export_output.artifacts:
+                    cost_tracker.record_blob_operation("write")
+
             logger.info(f"Export complete: artifacts={len(artifacts)}")
 
             # Quality Gate: Artifact Availability
@@ -510,6 +538,14 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps(report, indent=2, default=str))
             logger.info("Validation report written to %s", report_path)
+
+        # Persist cost tracking
+        if cost_tracker:
+            try:
+                await ctx.db.ensure_book_costs_table()
+                await cost_tracker.persist(ctx.db)
+            except Exception as exc:
+                logger.warning("Failed to persist cost data: %s", exc)
 
         # Release lock
         if book_id:
@@ -597,6 +633,28 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
     )
     stage_duration.record(pipeline_elapsed, {"stage": "total", "book_id": str(book_id)})
 
+    # Build cost summary dict
+    cost_summary_dict = None
+    if cost_tracker:
+        s = cost_tracker.summary()
+        cost_summary_dict = {
+            "openai": {
+                "input_tokens": s.openai_input_tokens,
+                "output_tokens": s.openai_output_tokens,
+                "cost_usd": round(s.openai_cost_usd, 6),
+            },
+            "doc_intelligence": {
+                "pages": s.ocr_pages,
+                "cost_usd": round(s.ocr_cost_usd, 6),
+            },
+            "blob_storage": {
+                "read_ops": s.blob_read_ops,
+                "write_ops": s.blob_write_ops,
+                "cost_usd": round(s.blob_cost_usd, 6),
+            },
+            "total_cost_usd": round(s.total_cost_usd, 6),
+        }
+
     return PipelineOutput(
         book_id=book_id,
         status=final_status,
@@ -615,5 +673,6 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             }
             for g in gate_results
         ],
+        cost_summary=cost_summary_dict,
     )
 

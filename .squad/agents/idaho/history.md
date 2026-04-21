@@ -182,6 +182,18 @@ During observability dashboard deployment, Coordinator identified and fixed a cr
 3. Create GitHub Environment `production` with required reviewers (Manish)
 4. Set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` as GitHub repository secrets
 
+### 2026: Pipeline Operations Dashboard (Issue #37)
+
+**Commit:** 70f7575
+
+**Delivered:** Full observability stack for live pipeline monitoring during E2E runs.
+
+- **Pipeline Operations Workbook** (`infra/workbooks/pipeline-dashboard.json`): 5-tab workbook — Live Pipeline (Gantt timeline, stage status tiles), Translation Progress (cumulative chunks, throughput, token cost), Stage Timing (avg/P50/P95/max breakdown, stacked bars, trend lines), Errors & Content Filters (error rate by stage/type, content filter block vs recovery, translation error pie), Pipeline Health (success rate, OCR quality, dependency health, OpenAI throttling). All 22 query items bound to `{AppInsightsResource}` via `crossComponentResources`. Supports `BookId` parameter to scope all charts to a single pipeline run.
+- **KQL Query Templates** (`src/transpose/observability/queries.py`): 13 Python functions returning KQL strings — `stage_duration_breakdown`, `stage_timeline`, `pipeline_total_duration`, `translation_progress`, `translation_throughput`, `error_rate_by_stage`, `error_timeline`, `content_filter_summary`, `content_filter_timeline`, `ocr_quality`, `dependency_health`, `openai_throttling`, `pipeline_trace`. All support optional `book_id` filtering. Usable with Azure Monitor Query SDK from CLI/notebooks.
+- **Workbook Bicep module** (`infra/modules/workbook.bicep`): Deploys the workbook linked to App Insights with deterministic GUID for idempotent re-deploys. Uses `loadTextContent` to embed the JSON template.
+- **Operator Runbook** (appended to `docs/observability.md`): Pre-run setup checklist, during-run monitoring table (what to watch, where, normal vs warning), post-run review steps, and recommended alert thresholds (stage stuck >10 min, >10 errors/15 min, OCR quality <80%, token spike >500K/hr, content filter recovery <50%, OpenAI 429s >10/5 min).
+- **Key design decisions:** Separate workbook from existing `transpose-dashboard.json` — ops dashboard is focused on live runs, the original covers broader infrastructure health. All metric names match `src/transpose/observability/metrics.py` exactly. Query templates use `_book_filter()` helper for DRY book_id scoping.
+
 ### 2026-04-21 — CD Pipeline & OIDC Workload Identity
 
 **From Idaho #33, #18 and cross-team:**

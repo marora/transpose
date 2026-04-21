@@ -486,9 +486,11 @@ Remember to output valid JSON with both translated_text and cultural_terms field
         Used for non-translation tasks like foreword generation.
         """
         client = await self._get_client()
+        max_retries = self._max_retries
+        base_delay = self._retry_base_delay
 
         async def _call():
-            for attempt in range(_MAX_RETRIES):
+            for attempt in range(max_retries):
                 try:
                     return await client.chat.completions.create(
                         model=self._deployment,
@@ -500,18 +502,18 @@ Remember to output valid JSON with both translated_text and cultural_terms field
                         raise TranslationError("content_filter", str(e))
                     raise TranslationError("permanent", str(e))
                 except openai.RateLimitError:
-                    if attempt < _MAX_RETRIES - 1:
-                        await asyncio.sleep(2 ** attempt * 2)
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt * base_delay * 2)
                         continue
                     raise TranslationError("rate_limit", "Rate limit exceeded after retries")
                 except openai.APITimeoutError:
-                    if attempt < _MAX_RETRIES - 1:
-                        await asyncio.sleep(2 ** attempt)
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt * base_delay)
                         continue
                     raise TranslationError("timeout", "API timeout after retries")
                 except openai.APIError as e:
-                    if attempt < _MAX_RETRIES - 1:
-                        await asyncio.sleep(2 ** attempt)
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt * base_delay)
                         continue
                     raise TranslationError("transient", str(e))
                 except Exception as e:
