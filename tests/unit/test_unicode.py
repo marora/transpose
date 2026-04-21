@@ -11,7 +11,12 @@ from __future__ import annotations
 
 import unicodedata
 
-from transpose.utils.unicode import is_latin_only, normalize_unicode, strip_latin_from_indic
+from transpose.utils.unicode import (
+    clean_devanagari_ocr,
+    is_latin_only,
+    normalize_unicode,
+    strip_latin_from_indic,
+)
 
 # ---------------------------------------------------------------------------
 # normalize_unicode
@@ -164,3 +169,115 @@ class TestStripLatinFromIndic:
         result = strip_latin_from_indic(text)
         assert "।" in result
         assert "॥" in result
+
+
+# ---------------------------------------------------------------------------
+# clean_devanagari_ocr
+# ---------------------------------------------------------------------------
+
+
+class TestCleanDevanagariOcr:
+    """OCR artifact cleanup for Devanagari fallback text."""
+
+    def test_removes_isolated_digit_in_devanagari(self) -> None:
+        """Single digit between Devanagari chars is OCR noise: 'ध2र्म' → 'धर्म'."""
+        assert clean_devanagari_ocr("ध2र्म") == "धर्म"
+
+    def test_removes_isolated_letter_in_devanagari(self) -> None:
+        """Single ASCII letter between Devanagari chars: 'कLर्म' → 'कर्म'."""
+        assert clean_devanagari_ocr("कLर्म") == "कर्म"
+
+    def test_removes_two_char_ascii_noise(self) -> None:
+        """Two ASCII chars between Devanagari is still noise: 'य3bग' → 'यग'."""
+        assert clean_devanagari_ocr("य3bग") == "यग"
+
+    def test_preserves_full_english_word(self) -> None:
+        """A full English word (3+ chars) next to Devanagari is intentional."""
+        text = "यह dharma है"
+        result = clean_devanagari_ocr(text)
+        assert "dharma" in result
+
+    def test_preserves_english_proper_noun(self) -> None:
+        """Proper nouns like 'Delhi' should survive."""
+        text = "यह Delhi में है"
+        result = clean_devanagari_ocr(text)
+        assert "Delhi" in result
+
+    def test_removes_zero_width_chars(self) -> None:
+        """ZWSP (U+200B), ZWNJ (U+200C), BOM (U+FEFF) are stripped."""
+        text = "धर्म\u200Bकर्म\u200Cयोग\uFEFFसत्य"
+        result = clean_devanagari_ocr(text)
+        assert "\u200b" not in result
+        assert "\u200c" not in result
+        assert "\ufeff" not in result
+        assert "धर्म" in result
+
+    def test_preserves_zwj(self) -> None:
+        """ZWJ (U+200D) is valid in Devanagari conjuncts and must stay."""
+        text = "क\u200Dष"
+        result = clean_devanagari_ocr(text)
+        assert "\u200d" in result
+
+    def test_removes_control_characters(self) -> None:
+        """ASCII control chars (0x00-0x08, etc.) are removed."""
+        text = "धर्म\x01\x02कर्म"
+        result = clean_devanagari_ocr(text)
+        assert "\x01" not in result
+        assert "\x02" not in result
+        assert "धर्मकर्म" in result
+
+    def test_removes_nested_fail_marker(self) -> None:
+        """Nested [TRANSLATION FAILED ...] markers are stripped."""
+        text = "धर्म [TRANSLATION FAILED — content filter] कर्म"
+        result = clean_devanagari_ocr(text)
+        assert "[TRANSLATION FAILED" not in result
+        assert "धर्म" in result
+        assert "कर्म" in result
+
+    def test_collapses_duplicate_spaces(self) -> None:
+        """Multiple spaces become single space."""
+        text = "धर्म    कर्म"
+        result = clean_devanagari_ocr(text)
+        assert "    " not in result
+        assert "धर्म कर्म" == result
+
+    def test_nfc_normalization_applied(self) -> None:
+        """NFD Devanagari gets composed to NFC."""
+        nfd = unicodedata.normalize("NFD", "कर्म")
+        result = clean_devanagari_ocr(nfd)
+        assert unicodedata.is_normalized("NFC", result)
+        assert result == "कर्म"
+
+    def test_empty_string(self) -> None:
+        assert clean_devanagari_ocr("") == ""
+
+    def test_pure_devanagari_unchanged(self) -> None:
+        """Clean Devanagari text passes through without modification."""
+        text = "योगस्थः कुरु कर्माणि सङ्गं त्यक्त्वा धनञ्जय।"
+        result = clean_devanagari_ocr(text)
+        assert result == text
+
+    def test_realistic_garbled_ocr(self) -> None:
+        """Realistic garbled OCR with mixed artifacts."""
+        text = "ध2र्म क3ा मा4र्ग [TRANSLATION FAILED — blocked] स5त्य  है।"
+        result = clean_devanagari_ocr(text)
+        assert "2" not in result
+        assert "3" not in result
+        assert "4" not in result
+        assert "5" not in result
+        assert "[TRANSLATION FAILED" not in result
+        assert "  " not in result
+        assert "धर्म" in result
+        assert "है।" in result
+
+    def test_strips_leading_trailing_whitespace_per_line(self) -> None:
+        """Lines are stripped of leading/trailing whitespace."""
+        text = "  धर्म  \n  कर्म  "
+        result = clean_devanagari_ocr(text)
+        assert result == "धर्म\nकर्म"
+
+    def test_blank_lines_removed(self) -> None:
+        """Blank lines produced by cleanup are dropped."""
+        text = "धर्म\n  \n\nकर्म"
+        result = clean_devanagari_ocr(text)
+        assert result == "धर्म\nकर्म"

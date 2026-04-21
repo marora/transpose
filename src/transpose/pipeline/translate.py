@@ -137,7 +137,7 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
         translation_errors,
     )
     from transpose.services.llm_client import TranslationError
-    from transpose.utils.unicode import normalize_unicode
+    from transpose.utils.unicode import clean_devanagari_ocr, normalize_unicode
 
     logger = logging.getLogger(__name__)
 
@@ -363,8 +363,9 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
 
                 # --- Final fallback: preserve original source text ---
                 failed_count += 1
+                cleaned_source = clean_devanagari_ocr(chunk.source_text)
                 fallback_text = (
-                    f"{ORIGINAL_TEXT_FALLBACK_PREFIX}\n\n{chunk.source_text}"
+                    f"{ORIGINAL_TEXT_FALLBACK_PREFIX}\n\n{cleaned_source}"
                 )
                 placeholder = Translation(
                     chunk_id=chunk.id,

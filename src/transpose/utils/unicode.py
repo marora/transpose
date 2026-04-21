@@ -12,6 +12,22 @@ _LATIN_CHARS_RE = re.compile(r"[A-Za-z]")
 _DEVANAGARI_RANGE = (0x0900, 0x097F)
 _GURMUKHI_RANGE = (0x0A00, 0x0A7F)
 
+# Matches isolated ASCII letters/digits (1-2 chars) surrounded by Devanagari.
+# Lookbehind: Devanagari char; match: 1-2 ASCII alphanumeric; lookahead: Devanagari char.
+_ISOLATED_ASCII_IN_DEVANAGARI_RE = re.compile(
+    r"(?<=[\u0900-\u097F])[A-Za-z0-9]{1,2}(?=[\u0900-\u097F])"
+)
+
+# Zero-width and control characters that are OCR noise (not legitimate Devanagari joiners).
+# Keeps U+200D (ZWJ) which is valid in Devanagari conjuncts.
+_OCR_CONTROL_CHARS_RE = re.compile(
+    r"[\u200B\u200C\u200E\u200F\uFEFF\u00AD"
+    r"\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]"
+)
+
+_NESTED_FAIL_MARKER_RE = re.compile(r"\[TRANSLATION FAILED[^\]]*\]")
+_MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
+
 
 def normalize_unicode(text: str) -> str:
     """Apply NFC normalization to ensure consistent Unicode representation.
@@ -101,3 +117,46 @@ def normalize_romanized_term(term: str) -> str:
             t = t[: -len(suffix)]
             break
     return t
+
+
+def clean_devanagari_ocr(text: str) -> str:
+    """Clean garbled OCR output for Devanagari (Hindi) text.
+
+    Applies the following normalizations in order:
+
+    1. NFC Unicode normalization.
+    2. Remove zero-width / control character noise (keeps ZWJ U+200D).
+    3. Remove nested ``[TRANSLATION FAILED …]`` markers.
+    4. Remove isolated ASCII digits/letters (1-2 chars) embedded between
+       Devanagari characters — these are OCR artifacts.  Full English words
+       (3+ contiguous ASCII letters) are preserved as intentional loanwords
+       or proper nouns.
+    5. Collapse duplicate whitespace.
+    6. Strip leading/trailing whitespace on every line.
+
+    The function is intentionally conservative: it only removes characters
+    that are *very likely* OCR noise, never legitimate content.
+    """
+    if not text:
+        return text
+
+    # 1. NFC normalization
+    text = unicodedata.normalize("NFC", text)
+
+    # 2. Strip OCR control-character noise
+    text = _OCR_CONTROL_CHARS_RE.sub("", text)
+
+    # 3. Remove nested failure markers
+    text = _NESTED_FAIL_MARKER_RE.sub("", text)
+
+    # 4. Remove isolated ASCII (1-2 chars) between Devanagari characters
+    text = _ISOLATED_ASCII_IN_DEVANAGARI_RE.sub("", text)
+
+    # 5. Collapse multiple spaces / tabs (preserve newlines for structure)
+    text = _MULTI_SPACE_RE.sub(" ", text)
+
+    # 6. Strip each line and drop blank-only lines that result from cleanup
+    lines = [line.strip() for line in text.splitlines()]
+    text = "\n".join(line for line in lines if line)
+
+    return text
