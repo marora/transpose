@@ -159,6 +159,13 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     translated_chunk_ids = await ctx.db.get_translated_chunk_ids(input.book_id)
     logger.info(f"Already translated: {len(translated_chunk_ids)} chunks")
 
+    # Force retranslate: delete all existing translations first
+    if input.force_retranslate and translated_chunk_ids:
+        logger.info(f"Force retranslate: deleting {len(translated_chunk_ids)} existing translations")
+        for tid in translated_chunk_ids:
+            await ctx.db.delete_translation(tid)
+        translated_chunk_ids = set()
+
     # Check for placeholder translations that should be retried
     if translated_chunk_ids and not input.force_retranslate:
         placeholder_ids = await ctx.db.get_failed_translation_chunk_ids(input.book_id)

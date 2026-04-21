@@ -47,6 +47,7 @@ class PipelineInput:
     blob_uri: str | None = None
     output_dir: str | None = None
     concurrency: int | None = None
+    force_retranslate: bool = False
 
 
 @dataclass
@@ -197,20 +198,20 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             logger.warning(f"Unknown stage: {input.resume_from}, starting from beginning")
 
     # When resuming past ingest, look up the existing book_id from the source PDF hash
-    if start_index > STAGE_ORDER.index("ingest") and input.source_path:
+    source_or_blob = input.source_path or input.blob_uri
+    if start_index > STAGE_ORDER.index("ingest") and source_or_blob:
         import hashlib
         from pathlib import Path
 
         existing = None
-        pdf_path = Path(input.source_path)
-        if pdf_path.exists():
+        pdf_path = Path(input.source_path) if input.source_path else None
+        if pdf_path and pdf_path.exists():
             source_hash = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
             existing = await ctx.db.get_book_by_hash(source_hash)
         else:
-            # Source is a URL — try to extract hash from blob name or look up by URI
-            source_str = str(input.source_path)
-            # Blob names are often the sha256 hash: {hash}.pdf
-            blob_name = source_str.rsplit("/", 1)[-1].removesuffix(".pdf")
+            # Source is a URL/blob — try to extract hash from blob name
+            lookup_url = input.blob_uri or input.source_path
+            blob_name = str(lookup_url).rsplit("/", 1)[-1].removesuffix(".pdf")
             if len(blob_name) == 64:
                 existing = await ctx.db.get_book_by_hash(blob_name)
             if not existing:
@@ -402,6 +403,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 translate.TranslateInput(
                     book_id=book_id,
                     concurrency=input.concurrency or ctx.settings.translate_concurrency,
+                    force_retranslate=input.force_retranslate,
                 ),
                 ctx,
             )

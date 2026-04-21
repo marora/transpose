@@ -358,8 +358,8 @@ def document_structure_gate(manuscript) -> GateResult:
     details["has_title"] = bool(title and title.strip())
     details["has_foreword"] = bool(foreword and len(foreword.split()) >= _MIN_FOREWORD_WORDS)
 
-    # Check 1: ToC count matches chapter count
-    if toc and len(toc) != len(chapters):
+    # Check 1: ToC count should be >= chapter count (ToC includes front/back matter)
+    if toc and len(chapters) > 0 and len(toc) < len(chapters):
         failures.append(
             f"ToC has {len(toc)} entries but manuscript has {len(chapters)} chapters"
         )

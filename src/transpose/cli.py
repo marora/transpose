@@ -32,6 +32,7 @@ def main() -> None:
 @click.option("--format", "formats", multiple=True, default=["epub", "pdf"])
 @click.option("--resume-from", default=None, help="Stage to resume from")
 @click.option("--concurrency", type=int, default=None, help="Translation concurrency (default: from settings)")
+@click.option("--force", is_flag=True, default=False, help="Force re-translation of all chunks (ignore cache)")
 def run(
     source: str,
     title: str,
@@ -40,6 +41,7 @@ def run(
     formats: tuple[str, ...],
     resume_from: str | None,
     concurrency: int | None,
+    force: bool,
 ) -> None:
     """Run the translation pipeline on a book."""
     # Configure logging
@@ -51,7 +53,7 @@ def run(
     click.echo(f"Transpose: translating '{title}' from {language}")
 
     # Run the pipeline
-    asyncio.run(_run_pipeline(source, title, author, language, list(formats), resume_from, concurrency))
+    asyncio.run(_run_pipeline(source, title, author, language, list(formats), resume_from, concurrency, force))
 
 
 async def _run_pipeline(
@@ -62,6 +64,7 @@ async def _run_pipeline(
     formats: list[str],
     resume_from: str | None,
     concurrency: int | None = None,
+    force: bool = False,
 ) -> None:
     """Async pipeline runner."""
     from transpose.models.enums import SourceLanguage
@@ -76,14 +79,18 @@ async def _run_pipeline(
         # Build pipeline input
         source_language = SourceLanguage.HINDI if language == "hindi" else SourceLanguage.PUNJABI
 
+        # Detect URL sources and route to blob_uri for download
+        is_url = source.startswith("http://") or source.startswith("https://")
         pipeline_input = PipelineInput(
-            source_path=source,
+            source_path=source if not is_url else "",
             title=title,
             author=author,
             source_language=source_language,
             output_formats=formats,
             resume_from=resume_from,
+            blob_uri=source if is_url else None,
             concurrency=concurrency,
+            force_retranslate=force,
         )
 
         # Run pipeline
