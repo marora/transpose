@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     chunk_overlap_tokens: int = 150
     low_confidence_threshold: float = 0.7
 
+    # Database pool sizing
+    # Rationale: translate_concurrency workers each hold a connection, plus
+    # overhead for API requests, job tracker, and pipeline bookkeeping.
+    # Default max = translate_concurrency + 15 overhead ≈ 20.
+    pool_min_size: int = 5
+    pool_max_size: int = 20
+
     # Retry policy
     max_retries: int = 3
     retry_base_delay: float = 1.0

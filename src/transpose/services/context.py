@@ -28,7 +28,11 @@ class ServiceContext:
         self.settings = settings or get_settings()
 
         # Initialize service clients
-        self.db = Database(self._build_dsn())
+        self.db = Database(
+            self._build_dsn(),
+            pool_min_size=self.settings.pool_min_size,
+            pool_max_size=self.settings.pool_max_size,
+        )
         self.state = PipelineState(self.db)
         self.blob = BlobClient(self.settings.blob_storage_account_url)
         self.ocr = OcrClient(

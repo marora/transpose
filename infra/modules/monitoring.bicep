@@ -18,7 +18,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
     sku: {
       name: 'PerGB2018'
     }
-    retentionInDays: 30
+    retentionInDays: 90
     features: {
       enableLogAccessUsingOnlyResourcePermissions: true
     }
@@ -37,6 +37,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
     IngestionMode: 'LogAnalytics'
     publicNetworkAccessForIngestion: 'Enabled'
     publicNetworkAccessForQuery: 'Enabled'
+    RetentionInDays: 90
   }
 }
 

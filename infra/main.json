@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "16725576845642301556"
+      "templateHash": "10912019274781286200"
     }
   },
   "parameters": {
@@ -56,6 +56,32 @@
       "metadata": {
         "description": "Container registry server (leave empty for public registries)"
       }
+    },
+    "alertEmail": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Email address for alert and budget notifications"
+      }
+    },
+    "monthlyBudgetAmount": {
+      "type": "int",
+      "defaultValue": 100,
+      "metadata": {
+        "description": "Monthly budget amount in USD"
+      }
+    },
+    "acrSku": {
+      "type": "string",
+      "defaultValue": "Basic",
+      "allowedValues": [
+        "Basic",
+        "Standard",
+        "Premium"
+      ],
+      "metadata": {
+        "description": "SKU for Azure Container Registry"
+      }
     }
   },
   "variables": {
@@ -90,7 +116,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "13070303048820060998"
+              "templateHash": "15046132055703276620"
             }
           },
           "parameters": {
@@ -125,7 +151,7 @@
                 "sku": {
                   "name": "PerGB2018"
                 },
-                "retentionInDays": 30,
+                "retentionInDays": 90,
                 "features": {
                   "enableLogAccessUsingOnlyResourcePermissions": true
                 }
@@ -143,7 +169,8 @@
                 "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('namePrefix')))]",
                 "IngestionMode": "LogAnalytics",
                 "publicNetworkAccessForIngestion": "Enabled",
-                "publicNetworkAccessForQuery": "Enabled"
+                "publicNetworkAccessForQuery": "Enabled",
+                "RetentionInDays": 90
               },
               "dependsOn": [
                 "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('namePrefix')))]"
@@ -353,7 +380,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "10207896714521797428"
+              "templateHash": "2441528664822268357"
             }
           },
           "parameters": {
@@ -432,7 +459,7 @@
                 "model": {
                   "format": "OpenAI",
                   "name": "gpt-4o",
-                  "version": "2024-08-06"
+                  "version": "2024-11-20"
                 },
                 "versionUpgradeOption": "OnceCurrentVersionExpired",
                 "raiPolicyName": "Microsoft.Default"
@@ -690,7 +717,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "17573942908269013428"
+              "templateHash": "17703740417336545365"
             }
           },
           "parameters": {
@@ -730,7 +757,7 @@
             {
               "type": "Microsoft.KeyVault/vaults",
               "apiVersion": "2023-07-01",
-              "name": "[format('{0}-kv', parameters('namePrefix'))]",
+              "name": "[format('{0}-vault', parameters('namePrefix'))]",
               "location": "[parameters('location')]",
               "tags": "[parameters('tags')]",
               "properties": {
@@ -752,30 +779,30 @@
             {
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[format('Microsoft.KeyVault/vaults/{0}', format('{0}-kv', parameters('namePrefix')))]",
-              "name": "[guid(resourceId('Microsoft.KeyVault/vaults', format('{0}-kv', parameters('namePrefix'))), parameters('managedIdentityPrincipalId'), 'Key Vault Secrets User')]",
+              "scope": "[format('Microsoft.KeyVault/vaults/{0}', format('{0}-vault', parameters('namePrefix')))]",
+              "name": "[guid(resourceId('Microsoft.KeyVault/vaults', format('{0}-vault', parameters('namePrefix'))), parameters('managedIdentityPrincipalId'), 'Key Vault Secrets User')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
                 "principalId": "[parameters('managedIdentityPrincipalId')]",
                 "principalType": "ServicePrincipal"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.KeyVault/vaults', format('{0}-kv', parameters('namePrefix')))]"
+                "[resourceId('Microsoft.KeyVault/vaults', format('{0}-vault', parameters('namePrefix')))]"
               ]
             }
           ],
           "outputs": {
             "keyVaultId": {
               "type": "string",
-              "value": "[resourceId('Microsoft.KeyVault/vaults', format('{0}-kv', parameters('namePrefix')))]"
+              "value": "[resourceId('Microsoft.KeyVault/vaults', format('{0}-vault', parameters('namePrefix')))]"
             },
             "keyVaultName": {
               "type": "string",
-              "value": "[format('{0}-kv', parameters('namePrefix'))]"
+              "value": "[format('{0}-vault', parameters('namePrefix'))]"
             },
             "keyVaultUri": {
               "type": "string",
-              "value": "[reference(resourceId('Microsoft.KeyVault/vaults', format('{0}-kv', parameters('namePrefix'))), '2023-07-01').vaultUri]"
+              "value": "[reference(resourceId('Microsoft.KeyVault/vaults', format('{0}-vault', parameters('namePrefix'))), '2023-07-01').vaultUri]"
             }
           }
         }
@@ -823,7 +850,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "11617348355822997653"
+              "templateHash": "17078600470603862735"
             }
           },
           "parameters": {
@@ -903,19 +930,6 @@
               }
             },
             {
-              "type": "Microsoft.DBforPostgreSQL/flexibleServers/administrators",
-              "apiVersion": "2023-03-01-preview",
-              "name": "[format('{0}/{1}', format('{0}-psql', parameters('namePrefix')), parameters('managedIdentityObjectId'))]",
-              "properties": {
-                "principalName": "[parameters('managedIdentityName')]",
-                "principalType": "ServicePrincipal",
-                "tenantId": "[parameters('tenantId')]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', format('{0}-psql', parameters('namePrefix')))]"
-              ]
-            },
-            {
               "condition": "[parameters('allowPublicAccess')]",
               "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
               "apiVersion": "2023-03-01-preview",
@@ -968,6 +982,499 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
+      "name": "acr-deployment",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "name": {
+            "value": "[replace(format('{0}-acr', variables('namePrefix')), '-', '')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "sku": {
+            "value": "[parameters('acrSku')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "pullIdentityPrincipalId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'identity-deployment'), '2025-04-01').outputs.managedIdentityPrincipalId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "12272190429238602572"
+            }
+          },
+          "parameters": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the Azure Container Registry"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Azure region for the resource"
+              }
+            },
+            "sku": {
+              "type": "string",
+              "defaultValue": "Basic",
+              "allowedValues": [
+                "Basic",
+                "Standard",
+                "Premium"
+              ],
+              "metadata": {
+                "description": "SKU for the container registry"
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the resource"
+              }
+            },
+            "pullIdentityPrincipalId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Principal ID of the managed identity that needs AcrPull access"
+              }
+            }
+          },
+          "variables": {
+            "acrPullRoleId": "7f951dda-4ed3-4680-a7ca-43fe172d538d"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2023-11-01-preview",
+              "name": "[parameters('name')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "[parameters('sku')]"
+              },
+              "properties": {
+                "adminUserEnabled": false,
+                "publicNetworkAccess": "Enabled",
+                "dataEndpointEnabled": false,
+                "policies": {
+                  "retentionPolicy": {
+                    "days": 7,
+                    "status": "disabled"
+                  }
+                }
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('pullIdentityPrincipalId')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.ContainerRegistry/registries/{0}', parameters('name'))]",
+              "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('name')), parameters('pullIdentityPrincipalId'), variables('acrPullRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('acrPullRoleId'))]",
+                "principalId": "[parameters('pullIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ContainerRegistry/registries', parameters('name'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "loginServer": {
+              "type": "string",
+              "metadata": {
+                "description": "Container registry login server"
+              },
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('name')), '2023-11-01-preview').loginServer]"
+            },
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Container registry resource ID"
+              },
+              "value": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('name'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Container registry name"
+              },
+              "value": "[parameters('name')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'identity-deployment')]"
+      ]
+    },
+    {
+      "condition": "[not(empty(parameters('alertEmail')))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "alerts-deployment",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[variables('namePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "appInsightsId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring-deployment'), '2025-04-01').outputs.appInsightsId.value]"
+          },
+          "alertEmail": {
+            "value": "[parameters('alertEmail')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "11260031424380661014"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Name prefix for alert resources"
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for resource deployment"
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags"
+              }
+            },
+            "appInsightsId": {
+              "type": "string",
+              "metadata": {
+                "description": "Application Insights resource ID"
+              }
+            },
+            "alertEmail": {
+              "type": "string",
+              "metadata": {
+                "description": "Email address for alert notifications"
+              }
+            },
+            "errorRateThreshold": {
+              "type": "int",
+              "defaultValue": 5,
+              "metadata": {
+                "description": "Error rate threshold (percentage of 5xx responses)"
+              }
+            },
+            "latencyThresholdSeconds": {
+              "type": "int",
+              "defaultValue": 30,
+              "metadata": {
+                "description": "P95 latency threshold in seconds"
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Insights/actionGroups",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}-alerts-ag', parameters('namePrefix'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "groupShortName": "TransposeAG",
+                "enabled": true,
+                "emailReceivers": [
+                  {
+                    "name": "PrimaryEmail",
+                    "emailAddress": "[parameters('alertEmail')]",
+                    "useCommonAlertSchema": true
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Insights/scheduledQueryRules",
+              "apiVersion": "2023-03-15-preview",
+              "name": "[format('{0}-error-rate-alert', parameters('namePrefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "displayName": "High Error Rate (5xx)",
+                "description": "[format('Fires when more than {0}% of requests return 5xx status codes over a 5-minute window.', parameters('errorRateThreshold'))]",
+                "severity": 2,
+                "enabled": true,
+                "evaluationFrequency": "PT1M",
+                "windowSize": "PT5M",
+                "scopes": [
+                  "[parameters('appInsightsId')]"
+                ],
+                "criteria": {
+                  "allOf": [
+                    {
+                      "query": "            requests\n            | where timestamp > ago(5m)\n            | summarize totalRequests = count(), failedRequests = countif(toint(resultCode) >= 500)\n            | extend errorRate = iff(totalRequests == 0, 0.0, (toreal(failedRequests) / toreal(totalRequests)) * 100)\n            | project errorRate\n          ",
+                      "timeAggregation": "Maximum",
+                      "metricMeasureColumn": "errorRate",
+                      "operator": "GreaterThan",
+                      "threshold": "[parameters('errorRateThreshold')]",
+                      "failingPeriods": {
+                        "numberOfEvaluationPeriods": 1,
+                        "minFailingPeriodsToAlert": 1
+                      }
+                    }
+                  ]
+                },
+                "actions": {
+                  "actionGroups": [
+                    "[resourceId('Microsoft.Insights/actionGroups', format('{0}-alerts-ag', parameters('namePrefix')))]"
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', format('{0}-alerts-ag', parameters('namePrefix')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/scheduledQueryRules",
+              "apiVersion": "2023-03-15-preview",
+              "name": "[format('{0}-latency-alert', parameters('namePrefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "displayName": "High P95 Latency",
+                "description": "[format('Fires when P95 response time exceeds {0}s over a 5-minute window.', parameters('latencyThresholdSeconds'))]",
+                "severity": 3,
+                "enabled": true,
+                "evaluationFrequency": "PT1M",
+                "windowSize": "PT5M",
+                "scopes": [
+                  "[parameters('appInsightsId')]"
+                ],
+                "criteria": {
+                  "allOf": [
+                    {
+                      "query": "            requests\n            | where timestamp > ago(5m)\n            | summarize p95_duration_s = percentile(duration, 95) / 1000\n            | project p95_duration_s\n          ",
+                      "timeAggregation": "Maximum",
+                      "metricMeasureColumn": "p95_duration_s",
+                      "operator": "GreaterThan",
+                      "threshold": "[parameters('latencyThresholdSeconds')]",
+                      "failingPeriods": {
+                        "numberOfEvaluationPeriods": 1,
+                        "minFailingPeriodsToAlert": 1
+                      }
+                    }
+                  ]
+                },
+                "actions": {
+                  "actionGroups": [
+                    "[resourceId('Microsoft.Insights/actionGroups', format('{0}-alerts-ag', parameters('namePrefix')))]"
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', format('{0}-alerts-ag', parameters('namePrefix')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/scheduledQueryRules",
+              "apiVersion": "2023-03-15-preview",
+              "name": "[format('{0}-pipeline-failure-alert', parameters('namePrefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "displayName": "Pipeline Failure Detected",
+                "description": "Fires when any pipeline failure is recorded (pipeline_failures custom metric > 0).",
+                "severity": 1,
+                "enabled": true,
+                "evaluationFrequency": "PT1M",
+                "windowSize": "PT5M",
+                "scopes": [
+                  "[parameters('appInsightsId')]"
+                ],
+                "criteria": {
+                  "allOf": [
+                    {
+                      "query": "            customMetrics\n            | where timestamp > ago(5m)\n            | where name == 'pipeline_failures'\n            | summarize totalFailures = sum(value)\n            | project totalFailures\n          ",
+                      "timeAggregation": "Maximum",
+                      "metricMeasureColumn": "totalFailures",
+                      "operator": "GreaterThan",
+                      "threshold": 0,
+                      "failingPeriods": {
+                        "numberOfEvaluationPeriods": 1,
+                        "minFailingPeriodsToAlert": 1
+                      }
+                    }
+                  ]
+                },
+                "actions": {
+                  "actionGroups": [
+                    "[resourceId('Microsoft.Insights/actionGroups', format('{0}-alerts-ag', parameters('namePrefix')))]"
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', format('{0}-alerts-ag', parameters('namePrefix')))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "actionGroupId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Insights/actionGroups', format('{0}-alerts-ag', parameters('namePrefix')))]"
+            },
+            "actionGroupName": {
+              "type": "string",
+              "value": "[format('{0}-alerts-ag', parameters('namePrefix'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'monitoring-deployment')]"
+      ]
+    },
+    {
+      "condition": "[not(empty(parameters('alertEmail')))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "budget-deployment",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[variables('namePrefix')]"
+          },
+          "monthlyBudgetAmount": {
+            "value": "[parameters('monthlyBudgetAmount')]"
+          },
+          "alertEmail": {
+            "value": "[parameters('alertEmail')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "14278168731578930371"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Name prefix for budget resources"
+              }
+            },
+            "monthlyBudgetAmount": {
+              "type": "int",
+              "defaultValue": 100,
+              "metadata": {
+                "description": "Monthly budget amount in USD"
+              }
+            },
+            "alertEmail": {
+              "type": "string",
+              "metadata": {
+                "description": "Email address for budget notifications"
+              }
+            },
+            "startDate": {
+              "type": "string",
+              "defaultValue": "[format('{0}-01', utcNow('yyyy-MM'))]",
+              "metadata": {
+                "description": "Budget start date (YYYY-MM-01 format, defaults to current month)"
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Consumption/budgets",
+              "apiVersion": "2023-11-01",
+              "name": "[format('{0}-monthly-budget', parameters('namePrefix'))]",
+              "properties": {
+                "category": "Cost",
+                "amount": "[parameters('monthlyBudgetAmount')]",
+                "timeGrain": "Monthly",
+                "timePeriod": {
+                  "startDate": "[parameters('startDate')]"
+                },
+                "notifications": {
+                  "atEightyPercent": {
+                    "enabled": true,
+                    "operator": "GreaterThanOrEqualTo",
+                    "threshold": 80,
+                    "contactEmails": [
+                      "[parameters('alertEmail')]"
+                    ],
+                    "thresholdType": "Actual"
+                  },
+                  "atOneHundredPercent": {
+                    "enabled": true,
+                    "operator": "GreaterThanOrEqualTo",
+                    "threshold": 100,
+                    "contactEmails": [
+                      "[parameters('alertEmail')]"
+                    ],
+                    "thresholdType": "Actual"
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "budgetName": {
+              "type": "string",
+              "value": "[format('{0}-monthly-budget', parameters('namePrefix'))]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
       "name": "container-app-deployment",
       "properties": {
         "expressionEvaluationOptions": {
@@ -1008,9 +1515,6 @@
           "storageAccountBlobEndpoint": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.blobEndpoint.value]"
           },
-          "storageAccountName": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.storageAccountName.value]"
-          },
           "postgresFqdn": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'database-deployment'), '2025-04-01').outputs.postgresFqdn.value]"
           },
@@ -1034,7 +1538,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "13240401812945073571"
+              "templateHash": "13925739594564690019"
             }
           },
           "parameters": {
@@ -1103,12 +1607,6 @@
               "type": "string",
               "metadata": {
                 "description": "Storage Account Blob Endpoint"
-              }
-            },
-            "storageAccountName": {
-              "type": "string",
-              "metadata": {
-                "description": "Storage Account Name"
               }
             },
             "postgresFqdn": {
@@ -1207,44 +1705,40 @@
                           "value": "[parameters('managedIdentityClientId')]"
                         },
                         {
-                          "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
-                          "secretRef": "appinsights-connection-string"
-                        },
-                        {
-                          "name": "DOCUMENT_INTELLIGENCE_ENDPOINT",
-                          "value": "[parameters('documentIntelligenceEndpoint')]"
-                        },
-                        {
-                          "name": "OPENAI_ENDPOINT",
-                          "value": "[parameters('openAIEndpoint')]"
-                        },
-                        {
-                          "name": "OPENAI_DEPLOYMENT_NAME",
-                          "value": "[parameters('openAIDeploymentName')]"
-                        },
-                        {
-                          "name": "STORAGE_ACCOUNT_BLOB_ENDPOINT",
-                          "value": "[parameters('storageAccountBlobEndpoint')]"
-                        },
-                        {
-                          "name": "STORAGE_ACCOUNT_NAME",
-                          "value": "[parameters('storageAccountName')]"
-                        },
-                        {
-                          "name": "POSTGRES_HOST",
+                          "name": "TRANSPOSE_POSTGRES_HOST",
                           "value": "[parameters('postgresFqdn')]"
                         },
                         {
-                          "name": "POSTGRES_DATABASE",
+                          "name": "TRANSPOSE_POSTGRES_DB",
                           "value": "[parameters('postgresDatabaseName')]"
                         },
                         {
-                          "name": "POSTGRES_USER",
+                          "name": "TRANSPOSE_POSTGRES_USER",
                           "value": "[parameters('managedIdentityClientId')]"
                         },
                         {
-                          "name": "KEY_VAULT_URI",
+                          "name": "TRANSPOSE_OPENAI_ENDPOINT",
+                          "value": "[parameters('openAIEndpoint')]"
+                        },
+                        {
+                          "name": "TRANSPOSE_OPENAI_DEPLOYMENT",
+                          "value": "[parameters('openAIDeploymentName')]"
+                        },
+                        {
+                          "name": "TRANSPOSE_DOC_INTELLIGENCE_ENDPOINT",
+                          "value": "[parameters('documentIntelligenceEndpoint')]"
+                        },
+                        {
+                          "name": "TRANSPOSE_BLOB_STORAGE_ACCOUNT_URL",
+                          "value": "[parameters('storageAccountBlobEndpoint')]"
+                        },
+                        {
+                          "name": "TRANSPOSE_KEYVAULT_URL",
                           "value": "[parameters('keyVaultUri')]"
+                        },
+                        {
+                          "name": "TRANSPOSE_APPLICATIONINSIGHTS_CONNECTION_STRING",
+                          "secretRef": "appinsights-connection-string"
                         }
                       ],
                       "probes": [
@@ -1405,6 +1899,14 @@
     "managedIdentityClientId": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'identity-deployment'), '2025-04-01').outputs.managedIdentityClientId.value]"
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr-deployment'), '2025-04-01').outputs.loginServer.value]"
+    },
+    "acrName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr-deployment'), '2025-04-01').outputs.name.value]"
     },
     "containerAppName": {
       "type": "string",

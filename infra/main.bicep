@@ -27,6 +27,16 @@ param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-hellowo
 @description('Container registry server (leave empty for public registries)')
 param containerRegistryServer string = ''
 
+@description('Email address for alert and budget notifications')
+param alertEmail string = ''
+
+@description('Monthly budget amount in USD')
+param monthlyBudgetAmount int = 100
+
+@description('SKU for Azure Container Registry')
+@allowed(['Basic', 'Standard', 'Premium'])
+param acrSku string = 'Basic'
+
 // Naming convention: transpose-{env}-{service}
 var namePrefix = 'transpose-${environmentName}'
 
@@ -121,7 +131,47 @@ module database './modules/database.bicep' = {
 }
 
 // ============================================================================
-// MODULE 8: Container App (Compute runtime)
+// MODULE 8: Azure Container Registry
+// ============================================================================
+module acr './modules/acr.bicep' = {
+  name: 'acr-deployment'
+  params: {
+    name: replace('${namePrefix}-acr', '-', '')
+    location: location
+    sku: acrSku
+    tags: tags
+    pullIdentityPrincipalId: identity.outputs.managedIdentityPrincipalId
+  }
+}
+
+// ============================================================================
+// MODULE 9: Azure Monitor Alert Rules
+// ============================================================================
+module alerts './modules/alerts.bicep' = if (!empty(alertEmail)) {
+  name: 'alerts-deployment'
+  params: {
+    namePrefix: namePrefix
+    location: location
+    tags: tags
+    appInsightsId: monitoring.outputs.appInsightsId
+    alertEmail: alertEmail
+  }
+}
+
+// ============================================================================
+// MODULE 10: Budget Alerts
+// ============================================================================
+module budget './modules/budget.bicep' = if (!empty(alertEmail)) {
+  name: 'budget-deployment'
+  params: {
+    namePrefix: namePrefix
+    monthlyBudgetAmount: monthlyBudgetAmount
+    alertEmail: alertEmail
+  }
+}
+
+// ============================================================================
+// MODULE 11: Container App (Compute runtime)
 // ============================================================================
 module containerApp './modules/container-app.bicep' = {
   name: 'container-app-deployment'
@@ -182,6 +232,10 @@ output keyVaultUri string = keyVault.outputs.keyVaultUri
 // Identity
 output managedIdentityName string = identity.outputs.managedIdentityName
 output managedIdentityClientId string = identity.outputs.managedIdentityClientId
+
+// Container Registry
+output acrLoginServer string = acr.outputs.loginServer
+output acrName string = acr.outputs.name
 
 // Container App
 output containerAppName string = containerApp.outputs.containerAppName

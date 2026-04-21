@@ -21,16 +21,18 @@ class Database:
     Supports Managed Identity auth via Entra token or password fallback.
     """
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool_min_size: int = 5, pool_max_size: int = 20) -> None:
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
+        self._pool_min_size = pool_min_size
+        self._pool_max_size = pool_max_size
 
     async def connect(self, ssl: str | None = None) -> None:
         """Initialize the connection pool with keepalive for long-running pipelines."""
         kwargs: dict = {
             "dsn": self._dsn,
-            "min_size": 2,
-            "max_size": 10,
+            "min_size": self._pool_min_size,
+            "max_size": self._pool_max_size,
             "command_timeout": 60,
             # TCP keepalive to prevent Azure PostgreSQL idle disconnects
             "server_settings": {
