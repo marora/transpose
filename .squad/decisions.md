@@ -1259,3 +1259,28 @@ The `chat()` method in `src/transpose/services/llm_client.py` referenced an unde
 
 **Impact:** Chani — the chat() method (used for foreword generation in Assemble stage) was broken. This fix makes it consistent with translate_chunk()'s retry pattern.
 
+---
+
+### Decision: Separate Pipeline Operations Dashboard
+
+**Author:** Idaho  
+**Date:** 2026-04-21  
+**Status:** Active  
+
+Created a **separate** workbook (`pipeline-dashboard.json`) for real-time pipeline visibility rather than extending the existing `transpose-dashboard.json`, because:
+
+1. **Different audience:** Ops dashboard for operators watching live runs; existing dashboard for post-hoc analysis and infrastructure review.
+2. **Different refresh cadence:** Ops dashboard refreshes frequently (every 30s–1 min) with tight time windows (last 1 hour); infrastructure dashboard uses wider windows (24h–7d).
+3. **Book-scoped filtering:** Every query in the ops dashboard supports a `BookId` parameter to focus on a single pipeline run. The existing dashboard aggregates across all runs.
+4. **Simpler to maintain:** Two focused workbooks are easier to evolve than one monolithic workbook with 10+ tabs.
+
+**Also Delivered:**
+- Reusable KQL queries as Python functions (`queries.py`) for CLI/notebook use
+- Bicep module (`workbook.bicep`) for IaC deployment with `loadTextContent`
+- Operator runbook with alert thresholds appended to `docs/observability.md`
+
+**Impact:** 
+- **All team members:** Can use `queries.py` from notebooks to investigate pipeline runs
+- **Operators:** Open the Pipeline Operations workbook during E2E runs for real-time visibility
+- **Idaho (future):** Workbook Bicep module is ready to wire into `main.bicep` when deploying infra
+
