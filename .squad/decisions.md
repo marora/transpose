@@ -1352,3 +1352,27 @@ OTel spans and metrics for quality gate executions instrumented centrally in `_r
 - `transpose_gate_duration_ms` (histogram)
 - `transpose_gate_errors_total` (counter)
 - OTel spans with gate name, status, and error details
+
+---
+
+### Decision: Alembic uses raw SQL migrations (not SQLAlchemy ORM)
+
+**Author:** Idaho  
+**Date:** 2026-04-21  
+**Status:** Proposed
+
+## Context
+Transpose uses asyncpg with raw SQL everywhere — no SQLAlchemy ORM. Adding Alembic for schema migrations required choosing between SQLAlchemy model-based autogenerate and raw SQL migrations.
+
+## Decision
+Use `op.execute()` with raw SQL in Alembic migrations. No SQLAlchemy metadata or models.
+
+## Rationale
+- Consistent with the project's asyncpg/raw-SQL pattern — no ORM layer to maintain
+- Baseline migration mirrors `init-db.sql` exactly
+- Future migrations should also use raw SQL for DDL changes
+- Autogenerate would require maintaining parallel SQLAlchemy models that serve no other purpose
+
+## Impact
+- **Chani/Thufir:** When changing the schema, create a new migration with `alembic revision -m "description"` and write raw SQL in upgrade/downgrade
+- **All:** Run `alembic upgrade head` to apply migrations; for existing DBs, `alembic stamp head` to mark current state
