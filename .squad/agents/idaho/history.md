@@ -223,3 +223,19 @@ During observability dashboard deployment, Coordinator identified and fixed a cr
 
 **Next:** Execute Azure AD setup; perform first test deploy.
 
+### 2026: P2 Infrastructure Fixes (#22, #23, #27, #28)
+
+**Commit:** a2cf9a4
+
+**Delivered:** Four infrastructure gaps closed in a single commit.
+
+- **#22 — Alert rules** (`infra/modules/alerts.bicep`): Three scheduled query rules — error rate (>5% 5xx over 5m, Sev2), P95 latency (>30s over 5m, Sev3), pipeline failures (custom metric >0, Sev1). Action group with parameterized email. Conditionally deployed when `alertEmail` is provided.
+- **#23 — Budget alerts** (`infra/modules/budget.bicep`): Monthly consumption budget with configurable threshold (default $100). Notifications at 80% and 100%. Email-based — no action group needed (Consumption API has built-in email).
+- **#27 — ACR wired into main.bicep**: Module reference added with identity-based AcrPull role assignment. ACR name strips hyphens for registry naming rules. Outputs `acrLoginServer` and `acrName`.
+- **#28 — 90-day retention**: Both Log Analytics workspace (`retentionInDays: 90`) and App Insights component (`RetentionInDays: 90`) updated from 30-day default.
+
+**Key decisions:**
+- Alerts and budget are conditional on `alertEmail` parameter — no empty action groups created when email isn't provided.
+- Budget uses `targetScope = 'resourceGroup'` to stay within the RG scope of main.bicep.
+- Alert thresholds are parameterized but have sensible defaults matching observability doc recommendations.
+

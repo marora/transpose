@@ -65,8 +65,37 @@ STAGE_ORDER = ["ingest", "ocr", "chunk", "translate", "glossary", "assemble", "e
 
 
 def _run_gate(gate_fn, gate_input, gate_results: list[GateResult]) -> GateResult:
-    """Execute a quality gate, log the result, and raise on failure."""
-    result = gate_fn(gate_input)
+    """Execute a quality gate, log the result, and raise on failure.
+
+    Emits an OpenTelemetry span and records gate metrics (execution count
+    and duration) so dashboards and traces capture gate behaviour.
+    """
+    import time
+
+    from opentelemetry import trace
+
+    from transpose.observability.metrics import gate_duration_seconds, gate_executions
+
+    tracer = trace.get_tracer("transpose")
+
+    # Run the gate inside a span so it shows up in distributed traces
+    start = time.monotonic()
+    with tracer.start_as_current_span("quality_gate") as span:
+        result = gate_fn(gate_input)
+        duration = time.monotonic() - start
+
+        # Annotate the span with gate metadata
+        span.set_attribute("gate.name", result.gate_name)
+        span.set_attribute("gate.passed", result.passed)
+        span.set_attribute("gate.duration_ms", round(duration * 1000, 2))
+        if not result.passed:
+            span.set_attribute("gate.failure_reason", "; ".join(result.failures))
+
+        # Record metrics for dashboards
+        result_label = "pass" if result.passed else "fail"
+        gate_executions.add(1, {"gate_name": result.gate_name, "result": result_label})
+        gate_duration_seconds.record(duration, {"gate_name": result.gate_name})
+
     gate_results.append(result)
 
     if result.passed:

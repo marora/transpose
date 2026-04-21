@@ -70,3 +70,15 @@ pipeline_duration = meter.create_histogram(
     description="Total pipeline execution time in seconds",
     unit="s",
 )
+
+# Quality gate metrics
+gate_executions = meter.create_counter(
+    name="transpose.gates.executions",
+    description="Number of quality gate executions by gate name and result",
+)
+
+gate_duration_seconds = meter.create_histogram(
+    name="transpose.gates.duration_seconds",
+    description="Duration of quality gate execution in seconds",
+    unit="s",
+)
