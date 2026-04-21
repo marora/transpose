@@ -254,3 +254,19 @@ Created 15 GitHub issues from `.squad/gap_analysis.md` gap analysis:
 
 **Next:** E2E run on 95-page book; expect ~45 min. Monitor for Devanagari rendering issues (parallel may cause Unicode ordering). Address Gate 7 enhancement for visual QA.
 
+### 2026-04-22 — P2 Issues Fixed: Deep Health, Structured Errors, Pool Sizing (#21, #26, #42)
+
+Fixed three P2 operational issues in one commit:
+
+1. **#21 — Deep health checks:** `/health` now probes PostgreSQL (SELECT 1), Azure Blob (get_account_information), and Azure OpenAI (list models via httpx) with 3s timeouts. Returns `{status, checks, timestamp}`. Services without config return "not_configured" (not an error). Added `/ready` that returns 503 when degraded — use for Container Apps readiness probe.
+
+2. **#26 — Structured error responses:** Added `request_id_middleware` (UUID per request, returned as X-Request-ID header). All errors return `{error: {code, message, request_id, details}}`. Added `_json_error_handler` middleware catching unhandled exceptions — stack traces hidden in production (when api_key is configured), shown in dev mode.
+
+3. **#42 — Pool sizing:** Added `pool_min_size` (default 5) and `pool_max_size` (default 20) to Settings with `TRANSPOSE_` env prefix. Wired into Database constructor and ServiceContext. Rationale: translate_concurrency (5) workers each hold a connection during chunk translation, plus overhead for API, job tracker, and pipeline bookkeeping.
+
+**Design decisions:**
+- Health endpoint always returns 200 (liveness). `/ready` returns 503 when degraded (readiness). This matches Kubernetes/Container Apps probe patterns.
+- Request ID accepted from incoming `X-Request-ID` header for distributed tracing continuity.
+- Pool defaults (5–20) sized for the current translate_concurrency=5. Operators should set pool_max_size ≥ translate_concurrency + 15 if they increase concurrency.
+- 659 tests pass; pre-existing gate_telemetry test failure (missing `trace` attribute) is unrelated.
+

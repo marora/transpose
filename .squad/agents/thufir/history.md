@@ -371,3 +371,17 @@ Known WeasyPrint issue: ToUnicode CMap produces garbled text extraction for Deva
 
 **Next:** Monitor for test failures on subsequent commits; add parallel translate edge case coverage.
 
+
+### Session: Gate Telemetry & Resume-From Tests (#29, #44, #49)
+
+**Changes:**
+- **metrics.py**: Added `gate_executions` counter (labels: gate_name, result=pass|fail) and `gate_duration_seconds` histogram (labels: gate_name).
+- **runner.py `_run_gate()`**: Wrapped gate invocations in OTel spans with attributes (gate.name, gate.passed, gate.duration_ms, gate.failure_reason). Records metrics via the new counters/histograms.
+- **test_gate_telemetry.py** (10 tests): Validates span attributes, metric recording for pass/fail, result appending, and metric module existence.
+- **test_resume_from.py** (33 tests): Comprehensive coverage of resume_from stage selection, idempotency, stage guard logic, PipelineInput defaults, and lock handling semantics.
+
+**Test count:** 657 passing (up from 624). Pre-existing failure in test_api.py (health endpoint) is unrelated.
+
+**Key learnings:**
+- `_run_gate` imports are local (inside the function body), so patches must target the source modules (`opentelemetry.trace.get_tracer`, `transpose.observability.metrics.*`), not the runner module namespace.
+- `--timeout=30` pytest flag no longer works — `pytest-timeout` not installed. Run tests without it.
