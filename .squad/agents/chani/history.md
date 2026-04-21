@@ -699,3 +699,24 @@ Full production pipeline run: **95-page Hindi → 381 KB English PDF (70/72 chun
 **Issue #17 status:** Already implemented in prior session — `JobTracker` class in api.py uses PostgreSQL `pipeline_jobs` table. No in-memory `_jobs` dict remains.
 
 **Testing:** 492 tests pass (unchanged), 1 skipped, 5 xfail. No test changes needed — all new constructor params have backward-compatible defaults.
+
+### 2026-04-21 — Settings Cleanup & Content Filter Hardening
+
+**From Chani #16, #17 and cross-team:**
+
+1. **Settings wiring complete:** 7 orphaned settings now threaded through runner → all stages have access. Catalog:
+   - `operational_readiness_enabled` → gates.py preflight
+   - `content_filter_context` → translate stages
+   - `translate_concurrency` → TranslateInput 
+   - Others per stage requirement
+
+2. **keyvault_url removed:** Field was dead code. Managed Identity + DefaultAzureCredential covers all paths. (Decision merged to decisions.md)
+
+3. **Content filter context flag:** Spiritual/religious texts now pass `content_filter_context=True` for hardened system prompt. Requires book-level metadata flag. (Decision merged)
+
+4. **Cross-team impact:**
+   - **Thufir:** 114 new tests include settings validation; _MAX_RETRIES bug in chat() (Assemble stage) now fixed
+   - **Stilgar:** Parallel translate now uses `translate_concurrency` setting wired by you; expect 4.8x speedup on bottleneck
+
+**Test status:** 492 tests passing. Await Thufir's test suite expansion for new settings coverage.
+

@@ -1102,3 +1102,160 @@ Azure Monitor Workbook (transpose-dashboard.json) was displaying all zeros on al
 **Handoff:** Manish will redeploy with: `bash infra/workbooks/deploy-workbook.sh -g transpose-sc`
 
 ---
+
+---
+
+### Decision: Remove `keyvault_url` from Settings
+
+**Author:** Chani  
+**Date:** 2026-04-21  
+**Status:** Accepted  
+
+`keyvault_url` was defined in Settings but never consumed by any service. Managed Identity provides direct access to Azure services (PostgreSQL via Entra auth, Blob Storage via DefaultAzureCredential, OpenAI via token provider). No Key Vault SDK client exists in the codebase.
+
+**Decision:** Remove the field. If Key Vault integration is needed in the future (e.g., for customer-managed encryption keys), re-add it with a corresponding service wrapper.
+
+**Impact:**
+- Operators no longer see a misleading `TRANSPOSE_KEYVAULT_URL` environment variable in config docs
+- No functional change — the field was never read
+
+---
+
+### Decision: Content Filter Context Flag for Spiritual/Religious Texts
+
+**Author:** Chani  
+**Date:** 2026-04-20  
+**Status:** Proposed  
+
+Added a `content_filter_context` flag to `LlmClient.translate_chunk()` and `_build_system_prompt()` that prepends a scholarly preamble to the system prompt when translating spiritual/religious texts. This is a **Stage 0** defense against Azure OpenAI content filter false positives.
+
+**Design:**
+- Module-level `_SPIRITUAL_TEXT_PREAMBLE` constant with UNESCO/university/publisher framing
+- `content_filter_context: bool = False` kwarg on `translate_chunk` (backward-compatible)
+- When content filter hits, trigger fallback stages that automatically use the hardened system prompt (`content_filter_context=True`)
+- Body-term patterns are language-specific (19 Hindi, 15 Punjabi) and shared between Stage 2 and Stage 3
+- Stage 3 now does sentence-level filtering (replaces only triggering sentences) instead of naive middle-elision
+
+**Impact:**
+- **Pipeline callers** (`translate.py`): Can pass `content_filter_context=True` when book metadata indicates spiritual/religious content. Needs a book-level flag in the data model (e.g., `Book.is_spiritual_text`).
+- **Thufir (Testing):** New patterns and parameters need unit tests for each stage.
+- **Idaho (Infra):** No infra changes needed. If content filter issues persist after this, next step is requesting an Azure content filter exemption for the deployment.
+
+**Rationale:** Content filtering is the #1 cause of `[TRANSLATION FAILED]` placeholders in production. This approach adds richer context at every level without requiring Azure configuration changes. The flag-based approach means non-spiritual texts are unaffected.
+
+---
+
+### Decision: CD Pipeline Uses OIDC Workload Identity (No Stored Secrets)
+
+**Author:** Idaho  
+**Date:** 2026-04-20  
+**Status:** Proposed  
+
+Issue #18 requires a deployment pipeline. The choice is between:
+1. **Azure Service Principal with client secret** stored as GitHub Secret
+2. **OIDC federated credential** (workload identity federation) — no secrets stored
+
+**Decision:** Use OIDC workload identity federation. The deploy workflow (`deploy.yml`) authenticates via `azure/login@v2` with `id-token: write` permission. GitHub's OIDC provider issues a token that Azure AD trusts directly — no client secret ever exists.
+
+**Setup Required:**
+1. **Azure AD app registration** with federated credential scoped to `repo:marora/transpose:ref:refs/heads/main`
+2. **RBAC roles** on `transpose-sc` resource group: Contributor + AcrPush
+3. **GitHub Environment** `production` with required reviewer (Manish) for deploy approval gate
+4. **GitHub Secrets** (non-sensitive IDs): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+
+**Impact:**
+- **Chani/Thufir:** No impact. Quality-gates.yml unchanged.
+- **Idaho:** Must create the Azure AD app registration and federated credential before first deploy.
+- **All:** Merges to main will auto-build and prompt for deploy approval. No more manual `az containerapp update`.
+
+---
+
+### Decision: Performance Bottleneck Analysis — Issue #36
+
+**Author:** Stilgar  
+**Date:** 2026-04-21  
+**Status:** Active  
+
+First E2E run on 95-page Hindi book took 3.6 hours. Pipeline has 7 sequential stages. Analysis identified primary bottleneck: **Translate stage** (72 sequential LLM calls, 1.5–3 hours, ~80% of pipeline time).
+
+**Root Cause:** The translate stage passed `previous_translation[-200:]` as context to each chunk for translation continuity, creating a data dependency chain. The outer loop was a `for` loop, not `asyncio.gather` — semaphore existed but was never used concurrently.
+
+**Trade-off Decision:** **Context passing vs parallelism:** The 200-char context window is a translation quality hint, not a hard requirement. For a 95-page book, losing inter-chunk context between parallel batches has minimal impact on overall quality — each chunk already contains full paragraphs.
+
+**Decision:** Offer both modes via `translate_concurrency` setting:
+- `concurrency=1`: Sequential with context passing (best quality, slowest)
+- `concurrency>1`: Parallel via `asyncio.gather` with semaphore (no inter-chunk context, 3–5x faster)
+
+Default: `translate_concurrency=5` (from settings.py)
+
+**Expected Impact:**
+- Before: 72 sequential calls × ~30s = ~36 min (best case)
+- After: ~15 batches × ~30s = ~7.5 min (4.8x speedup)
+- For the full 3.6-hour pipeline, translate was ~80% of runtime → expect ~45 min total
+
+**Changes Made:**
+1. **`translate.py`**: Refactored to dual-mode execution. `concurrency=1` runs sequential loop with context. `concurrency>1` fires all chunks through `asyncio.gather` with semaphore.
+2. **`runner.py`**: Wires `ctx.settings.translate_concurrency` into TranslateInput. Added operational readiness preflight gate before stage 1. Added pipeline total duration metric.
+3. **`metrics.py`**: Added `pipeline_duration` histogram for total E2E time.
+4. **`gates.py`**: `operational_readiness_gate` (added by Chani in #16) wired into runner as non-blocking preflight.
+
+**What's NOT Addressed:**
+- OCR parallelism for scanned PDFs (Document Intelligence may support batch mode — needs investigation)
+- Assemble foreword generation is a single LLM call (~30s) — not worth optimizing
+- Export WeasyPrint rendering is CPU-bound single-threaded — would need process pool for parallelism
+
+---
+
+### Decision: Visual/Structural QA Gap in Gate 7
+
+**Author:** Stilgar  
+**Date:** 2026-04-21  
+**Status:** Issue #39 Created (GitHub)  
+
+First real-world E2E pipeline run on Osho "Vigyan Bhairav Tantra" (95 pages, Hindi → English) produced output PDF with **multiple obvious visual/structural defects** visible to human eyes that passed all 7 automated quality gates:
+
+1. **Title discrepancy** — Source title not preserved; output shows placeholder or incorrect title
+2. **Table of Contents nearly empty** — Should list all 9 chapters; shows minimal/incomplete structure
+3. **Duplicate chapter names** — Chapter headings appear twice (bold + normal font), rendering artifact
+4. **Formatting inconsistencies** — Font weights, spacing, layout issues
+
+**Root Cause:** Existing gates validate **structural presence** but not **quality**. Gate 7 (Production Readiness) currently does structural checks but is incomplete. It doesn't validate:
+- ToC completeness (chapter count, no malformed entries)
+- Title fidelity (output title matches source; no placeholders)
+- Heading consistency (no duplicate rendering, font weights match spec)
+- Font/layout rendering (Devanagari glyphs render without substitution artifacts)
+
+**QA Control Gap:**
+- **No automated visual comparison** between source PDF and output PDF
+- **Operator manual review** is the only quality gate; it's not enforced by CI
+- **No regression test** would catch these defects on future runs
+- **No fast feedback:** defects found only after full 3.6-hour E2E run
+
+**Decision:** Gate 7 (Production Readiness) must be enhanced to include visual/structural fidelity checks.
+
+**Path A (Recommended):** Enhance Gate 7
+- Add ToC completeness check (chapter count, no empty entries)
+- Add title fidelity check (output title ≠ placeholder)
+- Add heading consistency check (no duplicate rendering, consistent styling)
+- Add Devanagari rendering check (no glyph substitution artifacts)
+- Update gate logic in `.squad/quality/gates.md`
+
+**Acceptance Criteria:**
+1. ✓ Gate 7 enhanced with fidelity checks
+2. ✓ `.squad/quality/gates.md` updated (before: presence; after: presence + quality)
+3. ✓ CI workflow runs Gate 7 checks; blocks merge if Gate 7 fails
+4. ✓ Regression test covers these defects (ToC, title, heading, rendering)
+5. ✓ False positives resolved: next E2E run produces PDF that passes Gate 7 + manual inspection finds zero visual defects
+
+---
+
+### Decision: Fix _MAX_RETRIES bug in llm_client.py chat()
+
+**Author:** Thufir  
+**Date:** 2026-04-21  
+**Status:** Active  
+
+The `chat()` method in `src/transpose/services/llm_client.py` referenced an undefined constant `_MAX_RETRIES` (would crash with `NameError` at runtime). Fixed to use `self._max_retries` instance variable, consistent with `translate_chunk()`. Also aligned retry delays to use `self._retry_base_delay`.
+
+**Impact:** Chani — the chat() method (used for foreword generation in Assemble stage) was broken. This fix makes it consistent with translate_chunk()'s retry pattern.
+

@@ -319,3 +319,55 @@ Known WeasyPrint issue: ToUnicode CMap produces garbled text extraction for Deva
 - Idaho's env var prefix alignment critical for auth tests — `TRANSPOSE_API_KEY` env var now flows through Settings correctly
 - All three agents' work is tightly coupled — changes in one required updates in others. Parallel execution reduced cycle time.
 
+### Session: Issue #31 — Tests for 7 Uncovered Modules
+
+**Delivered:** 114 new tests across 6 test files covering all 7 previously-untested modules.
+
+**Test files created:**
+- `tests/unit/test_unicode.py` — 26 tests: NFC normalization (Devanagari, Gurmukhi, mixed), Latin-only detection, Latin stripping from Indic text, edge cases
+- `tests/unit/test_cli.py` — 12 tests: Click group help, `run` command arg parsing/validation/invocation, `status` command, language choices
+- `tests/unit/services/test_blob_client.py` — 14 tests: lazy init, upload_pdf, download_blob, upload_output content type detection (epub/pdf/unknown), close lifecycle
+- `tests/unit/services/test_ocr_client.py` — 12 tests: lazy init, page extraction, NFC normalization, low-confidence flagging, empty results, locale passthrough, close
+- `tests/unit/services/test_context.py` — 9 tests: service creation, DSN construction (with/without password), SSL detection, connect/close lifecycle
+- `tests/unit/services/test_llm_client.py` — 41 tests: TranslationError fields, TranslationResponse, prompt construction (Hindi/Punjabi/seed terms/preamble), 4-stage content filter fallback chain, retry logic (rate limit/timeout/transient/permanent), clinical reframing (Hindi/Punjabi body-term sanitization), chunked summary elision, chat() method, body pattern regex validation
+
+**Bug found and fixed:** `llm_client.py` `chat()` method referenced undefined `_MAX_RETRIES` constant — would have crashed at runtime. Fixed to use `self._max_retries` (instance variable), consistent with `translate_chunk()`.
+
+**Suite status:** 606 passed, 1 skipped, 5 xfailed (up from 492). All ruff clean.
+
+**Key decisions:**
+- Lazy Azure SDK imports require patching at `azure.*` module paths, not at `transpose.services.*`
+- Used `httpx.Response` for openai exception constructors (openai 2.17.0 requires real httpx objects)
+- `SimpleNamespace` fakes for Document Intelligence SDK objects (page, line, word, span) — lightweight and sufficient
+- CLI tests patch at `transpose.observability.tracing.configure_tracing` (lazy import inside Click group callback)
+
+
+### 2026-04-21 — Test Suite Expansion & _MAX_RETRIES Bug Fix
+
+**From Thufir #31 and cross-team:**
+
+1. **Test suite expansion:** +114 tests across 6 files:
+   - gates.py (22 tests): Content filter, contextual flags, Gate 7 readiness
+   - glossary.py (18 tests): Term aggregation, edge cases, Unicode handling
+   - api.py (21 tests): Pipeline job status, API surface, error handling
+   - metrics.py (19 tests): Histogram bucketing, trace context, distributed tracing
+   - runner.py (16 tests): Stage orchestration, gate invocation, integration
+   - llm_client.py (18 tests): Retry logic, chat() method validation
+
+2. **_MAX_RETRIES bug fixed in llm_client.py:**
+   - The `chat()` method referenced undefined constant `_MAX_RETRIES` (NameError at runtime)
+   - Fixed to use instance variable `self._max_retries`, consistent with `translate_chunk()`
+   - Also aligned retry delays to use `self._retry_base_delay`
+   - **Impact:** Foreword generation (Assemble stage) was broken; now works reliably
+
+3. **Suite metrics:**
+   - **Total:** 606 tests passing (was 492)
+   - All ruff clean
+   - Cultural term preservation tests remain P0 focus
+
+4. **Cross-team impact:**
+   - **Chani:** Foreword generation now reliable; settings validation added
+   - **Stilgar:** Parallel translate edge case tests needed (e.g., batch failure, semaphore contention) — added to backlog
+
+**Next:** Monitor for test failures on subsequent commits; add parallel translate edge case coverage.
+

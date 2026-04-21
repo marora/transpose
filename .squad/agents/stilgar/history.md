@@ -210,3 +210,47 @@ Created 15 GitHub issues from `.squad/gap_analysis.md` gap analysis:
 - **Previous-context trade-off:** The 200-char translation context window creates a sequential dependency chain. Parallel mode sacrifices this for throughput — acceptable for long books, may matter for short texts with critical narrative flow.
 - **Pre-existing test failures:** `test_ocr_client.py` has import error (`_LOW_CONFIDENCE_THRESHOLD` → `_DEFAULT_LOW_CONFIDENCE_THRESHOLD`), `test_llm_client.py` has assertion mismatch. Both are from Chani's uncommitted test files — not from my changes.
 - **Advisory locks + DB state:** Pipeline uses PostgreSQL advisory locks for concurrency safety. The mock_database fixture in conftest.py returns empty results for lock queries, so preflight gate must be non-blocking in test context.
+
+### 2026-04-21 — Performance Optimization & Operational Readiness
+
+**From Stilgar #36, #32 and cross-team:**
+
+1. **Translate bottleneck identified & fixed (#36):**
+   - **Root cause:** 72 sequential LLM calls (1.5–3 hours). Outer loop was `for`, not `asyncio.gather`. Semaphore existed but unused.
+   - **Context dependency:** Previous chunk context (`[-200:]`) created sequential chain. Decided that 200-char context is quality hint, not hard requirement.
+   - **Dual-mode solution:** `translate_concurrency` setting:
+     - `concurrency=1`: Sequential with context (best quality, slowest)
+     - `concurrency>1`: Parallel via `asyncio.gather` with semaphore (no inter-chunk context, 3–5x faster)
+     - Default: `concurrency=5`
+   - **Expected speedup:** 72 calls × ~30s → ~15 batches × ~30s = 4.8x faster (~7.5 min). Full pipeline: 3.6h → ~45 min expected.
+
+2. **Changes made (#36, #32):**
+   - **translate.py:** Dual-mode execution (sequential vs. parallel branches)
+   - **runner.py:** 
+     - Wired `ctx.settings.translate_concurrency` into TranslateInput
+     - Added `operational_readiness_gate` preflight check (non-blocking, from Chani #16)
+     - Added `pipeline_duration` metric (total E2E time)
+   - **metrics.py:** Added `pipeline_duration` histogram
+   - **gates.py:** Already had gate; now wired into runner
+
+3. **Operational readiness gate (#32):**
+   - Runs as startup/preflight check (non-blocking)
+   - 8 sub-checks: telemetry, DB connectivity, blob access, OpenAI reachability, env vars, fonts, schema version, golden target
+
+4. **Commits:**
+   - **aecb19b** — Parallel translate + operational readiness + pipeline metrics
+   - 554 tests passing (green)
+
+5. **Cross-team impact:**
+   - **Chani:** Parallel translation uses `translate_concurrency` setting (wired by you)
+   - **Thufir:** Parallel path needs edge case tests (batch failure, semaphore contention) — added to backlog
+   - **API/CLI callers:** Default is parallel (concurrency=5); sequential available via config
+
+6. **Visual QA gap (#39):**
+   - First E2E on Osho "Vigyan Bhairav Tantra" (95p, Hindi) revealed visual/structural defects passing all 7 gates
+   - **Defects:** Title discrepancy, empty ToC, duplicate chapter names, formatting inconsistencies
+   - **Gap:** Gate 7 validates presence, not quality (ToC completeness, title fidelity, heading consistency, Devanagari rendering)
+   - **Decision:** Enhance Gate 7 with fidelity checks; issue #39 created
+
+**Next:** E2E run on 95-page book; expect ~45 min. Monitor for Devanagari rendering issues (parallel may cause Unicode ordering). Address Gate 7 enhancement for visual QA.
+

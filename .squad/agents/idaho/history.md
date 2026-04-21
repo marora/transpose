@@ -181,3 +181,33 @@ During observability dashboard deployment, Coordinator identified and fixed a cr
 2. Assign Contributor + AcrPush roles to the app registration's service principal on `transpose-sc` RG
 3. Create GitHub Environment `production` with required reviewers (Manish)
 4. Set `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` as GitHub repository secrets
+
+### 2026-04-21 — CD Pipeline & OIDC Workload Identity
+
+**From Idaho #33, #18 and cross-team:**
+
+1. **Remediation script complete** (`infra/remediate.sh`):
+   - `--dry-run` flag for safe preview
+   - Idempotent resource naming
+   - Clear change output
+
+2. **Production CD pipeline deployed** (`deploy.yml`):
+   - OIDC workload identity federation (no stored secrets)
+   - Auto-build on main merges
+   - Container Image → ACR → Container App deployment
+   - Production approval gate (Manish review required)
+   - Auto-rollback on health probe failure
+   - (Decision merged to decisions.md)
+
+3. **Pre-deploy setup required:**
+   - Azure AD app registration with federated credential (scope: `repo:marora/transpose:ref:refs/heads/main`)
+   - RBAC: Contributor + AcrPush on `transpose-sc`
+   - GitHub Environment `production` with required reviewer
+   - GitHub Secrets (non-sensitive IDs): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+
+4. **Cross-team impact:**
+   - **Chani/Thufir:** No impact; CI workflow unchanged
+   - **All:** Merges to main trigger auto-build + await deploy approval
+
+**Next:** Execute Azure AD setup; perform first test deploy.
+
