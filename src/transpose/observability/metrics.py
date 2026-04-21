@@ -63,3 +63,10 @@ estimated_cost = meter.create_counter(
     description="Estimated translation cost in USD (based on token pricing)",
     unit="usd",
 )
+
+# Pipeline total duration
+pipeline_duration = meter.create_histogram(
+    name="transpose.pipeline.total_duration",
+    description="Total pipeline execution time in seconds",
+    unit="s",
+)

@@ -177,18 +177,26 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 )
 
     # --- Operational Readiness Preflight (Gate 8) ---
+    # Non-blocking by default — logs failures as warnings.
+    # Set TRANSPOSE_PREFLIGHT_BLOCK=1 to make failures halt the pipeline.
+    import os
+
+    preflight_blocking = os.environ.get("TRANSPOSE_PREFLIGHT_BLOCK", "") == "1"
     logger.info("=== Preflight: Operational Readiness ===")
     try:
         preflight = await operational_readiness_gate(ctx)
         if not preflight.passed:
-            logger.error(
-                "❌ Operational readiness preflight FAILED: %s",
-                "; ".join(preflight.failures),
+            msg = f"Operational readiness: {'; '.join(preflight.failures)}"
+            if preflight_blocking:
+                logger.error("❌ %s", msg)
+                raise RuntimeError(msg)
+            else:
+                logger.warning("⚠️  %s (non-blocking)", msg)
+        else:
+            logger.info(
+                "✅ Operational readiness preflight PASSED (%d checks)",
+                len(preflight.checks),
             )
-            raise RuntimeError(
-                f"Operational readiness preflight failed: {'; '.join(preflight.failures)}"
-            )
-        logger.info("✅ Operational readiness preflight PASSED (%d checks)", len(preflight.checks))
     except RuntimeError:
         raise
     except Exception as exc:

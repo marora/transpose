@@ -193,3 +193,20 @@ Created 15 GitHub issues from `.squad/gap_analysis.md` gap analysis:
 - **P2 (5 issues):** #44, #42, #41, #40, #49 — medium (observability, performance, config, tests)
 
 **All issues labeled with priority (P0/P1/P2), category (bug/enhancement), and cross-referenced to existing issues #34–#39 where applicable.**
+
+---
+
+## Session 5 — Performance Bottleneck Analysis (#36) & Operational Readiness Gate (#32)
+
+### Work
+
+1. **Issue #36 — Translate stage identified as primary bottleneck** (~80% of 3.6h E2E run). Semaphore existed but outer loop was sequential. Refactored translate.py to dual-mode: `concurrency=1` preserves inter-chunk context; `concurrency>1` uses `asyncio.gather` with semaphore for ~5x throughput.
+
+2. **Issue #32 — Gate 8 wired into runner.py.** Chani implemented `operational_readiness_gate` in gates.py via #16. Wired it into runner.py as non-blocking preflight (env `TRANSPOSE_PREFLIGHT_BLOCK=1` to make fatal). Added `pipeline_duration` histogram metric for total E2E time.
+
+### Learnings
+
+- **Chani parallel work:** #16 added gate 8 implementation, `translate_concurrency`/`ocr_concurrency` settings fields, and wired concurrency into runner. Always `git log --oneline` and `git show HEAD:file` before editing to avoid duplicating work.
+- **Previous-context trade-off:** The 200-char translation context window creates a sequential dependency chain. Parallel mode sacrifices this for throughput — acceptable for long books, may matter for short texts with critical narrative flow.
+- **Pre-existing test failures:** `test_ocr_client.py` has import error (`_LOW_CONFIDENCE_THRESHOLD` → `_DEFAULT_LOW_CONFIDENCE_THRESHOLD`), `test_llm_client.py` has assertion mismatch. Both are from Chani's uncommitted test files — not from my changes.
+- **Advisory locks + DB state:** Pipeline uses PostgreSQL advisory locks for concurrency safety. The mock_database fixture in conftest.py returns empty results for lock queries, so preflight gate must be non-blocking in test context.

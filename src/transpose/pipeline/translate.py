@@ -134,171 +134,205 @@ async def run(input: TranslateInput, ctx) -> TranslateOutput:  # type: ignore[no
     total_completion_tokens = 0
     total_cultural_terms = 0
     failed_count = 0
-    previous_translation = None
+    completed_count = 0
 
-    async def translate_chunk(chunk, prev_context: str | None):
-        async with semaphore:
-            logger.info(f"Translating chunk {chunk.sequence + 1}/{len(chunks)}")
-
-            # Call LLM
-            response = await ctx.llm.translate_chunk(
-                source_text=chunk.source_text,
-                source_language=book.source_language,
-                previous_context=prev_context,
-                seed_terms=seed_terms,
-            )
-
-            # Create translation record
-            translation = Translation(
-                chunk_id=chunk.id,
-                book_id=input.book_id,
-                translated_text=response.translated_text,
-                model_version=response.model_version,
-                cultural_terms=response.cultural_terms,
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                raw_response=response.raw_response,
-            )
-
-            # Save to database
-            await ctx.db.create_translation(translation)
-
-            # Record metrics
-            chunks_translated.add(1, {"book_id": str(input.book_id)})
-            tokens_used.add(
-                response.prompt_tokens + response.completion_tokens,
-                {"book_id": str(input.book_id), "type": "translation"},
-            )
-
-            # Estimate cost (GPT-4o: $2.50/1M input, $10.00/1M output)
-            chunk_cost = (response.prompt_tokens * 2.50 / 1_000_000) + (response.completion_tokens * 10.00 / 1_000_000)
-            estimated_cost.add(chunk_cost, {"book_id": str(input.book_id)})
-
-            return TranslationResult(
-                chunk_id=chunk.id,
-                translated_text=response.translated_text,
-                cultural_terms=[
-                    ExtractedTerm(
-                        term=term.term,
-                        original_script=normalize_unicode(term.original_script),
-                        definition=term.definition,
-                        source=term.source,
-                    )
-                    for term in response.cultural_terms
-                ],
-                prompt_tokens=response.prompt_tokens,
-                completion_tokens=response.completion_tokens,
-                model_version=response.model_version,
-            ), response
-
-    # Translate chunks sequentially to maintain context
-    for i, chunk in enumerate(chunks_to_translate):
-        # Get previous context (last 200 chars of previous translation)
-        prev_context = None
-        if previous_translation and len(previous_translation.translated_text) > 200:
-            prev_context = previous_translation.translated_text[-200:]
-
+    async def translate_single_chunk(
+        chunk, chunk_index: int, prev_context: str | None,
+    ) -> tuple[TranslationResult, object | None]:
+        """Translate one chunk, respecting the concurrency semaphore."""
+        nonlocal failed_count, completed_count
         chunk_start_time = time.monotonic()
-        try:
-            result, response = await translate_chunk(chunk, prev_context)
-            translations.append(result)
+        async with semaphore:
+            try:
+                logger.info(f"Translating chunk {chunk.sequence + 1}/{len(chunks)}")
 
+                response = await ctx.llm.translate_chunk(
+                    source_text=chunk.source_text,
+                    source_language=book.source_language,
+                    previous_context=prev_context,
+                    seed_terms=seed_terms,
+                )
+
+                translation = Translation(
+                    chunk_id=chunk.id,
+                    book_id=input.book_id,
+                    translated_text=response.translated_text,
+                    model_version=response.model_version,
+                    cultural_terms=response.cultural_terms,
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    raw_response=response.raw_response,
+                )
+                await ctx.db.create_translation(translation)
+
+                chunks_translated.add(1, {"book_id": str(input.book_id)})
+                tokens_used.add(
+                    response.prompt_tokens + response.completion_tokens,
+                    {"book_id": str(input.book_id), "type": "translation"},
+                )
+                chunk_cost = (response.prompt_tokens * 2.50 / 1_000_000) + (
+                    response.completion_tokens * 10.00 / 1_000_000
+                )
+                estimated_cost.add(chunk_cost, {"book_id": str(input.book_id)})
+
+                result = TranslationResult(
+                    chunk_id=chunk.id,
+                    translated_text=response.translated_text,
+                    cultural_terms=[
+                        ExtractedTerm(
+                            term=term.term,
+                            original_script=normalize_unicode(term.original_script),
+                            definition=term.definition,
+                            source=term.source,
+                        )
+                        for term in response.cultural_terms
+                    ],
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    model_version=response.model_version,
+                )
+
+                completed_count += 1
+                chunk_elapsed = time.monotonic() - chunk_start_time
+                logger.info(
+                    "📊 Translation: chunk %d/%d completed in %.1fs | book_id=%s",
+                    completed_count, len(chunks_to_translate), chunk_elapsed,
+                    str(input.book_id),
+                )
+                await ctx.state.set_progress(
+                    str(input.book_id), "translate",
+                    completed_count, len(chunks_to_translate),
+                )
+                return result, response
+
+            except TranslationError as exc:
+                error_label = exc.error_type
+                if error_label == "content_filter":
+                    logger.warning(
+                        f"Content filter blocked chunk {chunk.id} "
+                        f"(sequence {chunk.sequence}): {exc}"
+                    )
+                    content_filter_blocks.add(1, {"book_id": str(input.book_id)})
+                else:
+                    logger.warning(
+                        f"{error_label.replace('_', ' ').title()} error on chunk "
+                        f"{chunk.id} (sequence {chunk.sequence}): {exc}"
+                    )
+                translation_errors.add(
+                    1, {"book_id": str(input.book_id), "error_type": error_label}
+                )
+                failed_count += 1
+                placeholder = Translation(
+                    chunk_id=chunk.id,
+                    book_id=input.book_id,
+                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                    model_version="n/a",
+                    cultural_terms=[],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    raw_response={},
+                    error_type=error_label,
+                    error_reason=str(exc),
+                )
+                await ctx.db.create_translation(placeholder)
+
+                completed_count += 1
+                chunk_elapsed = time.monotonic() - chunk_start_time
+                logger.info(
+                    "📊 Translation: chunk %d/%d failed in %.1fs | book_id=%s",
+                    completed_count, len(chunks_to_translate), chunk_elapsed,
+                    str(input.book_id),
+                )
+                await ctx.state.set_progress(
+                    str(input.book_id), "translate",
+                    completed_count, len(chunks_to_translate),
+                )
+                return TranslationResult(
+                    chunk_id=chunk.id,
+                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                    cultural_terms=[],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    model_version="n/a",
+                ), None
+
+            except Exception as exc:
+                logger.warning(
+                    f"Translation failed for chunk {chunk.id} "
+                    f"(sequence {chunk.sequence}): {exc}"
+                )
+                translation_errors.add(
+                    1, {"book_id": str(input.book_id), "error_type": "unknown"}
+                )
+                failed_count += 1
+                placeholder = Translation(
+                    chunk_id=chunk.id,
+                    book_id=input.book_id,
+                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                    model_version="n/a",
+                    cultural_terms=[],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    raw_response={},
+                    error_type="unknown",
+                    error_reason=str(exc),
+                )
+                await ctx.db.create_translation(placeholder)
+
+                completed_count += 1
+                chunk_elapsed = time.monotonic() - chunk_start_time
+                logger.info(
+                    "📊 Translation: chunk %d/%d failed in %.1fs | book_id=%s",
+                    completed_count, len(chunks_to_translate), chunk_elapsed,
+                    str(input.book_id),
+                )
+                await ctx.state.set_progress(
+                    str(input.book_id), "translate",
+                    completed_count, len(chunks_to_translate),
+                )
+                return TranslationResult(
+                    chunk_id=chunk.id,
+                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
+                    cultural_terms=[],
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    model_version="n/a",
+                ), None
+
+    # Concurrency strategy:
+    # - concurrency=1: sequential with previous-context passing (best quality)
+    # - concurrency>1: parallel with asyncio.gather (best throughput)
+    if input.concurrency <= 1:
+        # Sequential mode — pass previous context for translation continuity
+        previous_translation = None
+        for chunk in chunks_to_translate:
+            prev_context = None
+            if previous_translation and len(previous_translation.translated_text) > 200:
+                prev_context = previous_translation.translated_text[-200:]
+
+            result, response = await translate_single_chunk(chunk, 0, prev_context)
+            translations.append(result)
             total_prompt_tokens += result.prompt_tokens
             total_completion_tokens += result.completion_tokens
             total_cultural_terms += len(result.cultural_terms)
-
-            previous_translation = response
-        except TranslationError as exc:
-            error_label = exc.error_type
-            if error_label == "content_filter":
-                logger.warning(
-                    f"Content filter blocked chunk {chunk.id} "
-                    f"(sequence {chunk.sequence}): {exc}"
-                )
-                content_filter_blocks.add(1, {"book_id": str(input.book_id)})
-            else:
-                logger.warning(
-                    f"{error_label.replace('_', ' ').title()} error on chunk {chunk.id} "
-                    f"(sequence {chunk.sequence}): {exc}"
-                )
-            translation_errors.add(
-                1, {"book_id": str(input.book_id), "error_type": error_label}
-            )
-            failed_count += 1
-
-            placeholder = Translation(
-                chunk_id=chunk.id,
-                book_id=input.book_id,
-                translated_text=TRANSLATION_FAILED_PLACEHOLDER,
-                model_version="n/a",
-                cultural_terms=[],
-                prompt_tokens=0,
-                completion_tokens=0,
-                raw_response={},
-                error_type=error_label,
-                error_reason=str(exc),
-            )
-            await ctx.db.create_translation(placeholder)
-
-            translations.append(
-                TranslationResult(
-                    chunk_id=chunk.id,
-                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
-                    cultural_terms=[],
-                    prompt_tokens=0,
-                    completion_tokens=0,
-                    model_version="n/a",
-                )
-            )
-        except Exception as exc:
-            logger.warning(
-                f"Translation failed for chunk {chunk.id} "
-                f"(sequence {chunk.sequence}): {exc}"
-            )
-            translation_errors.add(
-                1, {"book_id": str(input.book_id), "error_type": "unknown"}
-            )
-            failed_count += 1
-
-            placeholder = Translation(
-                chunk_id=chunk.id,
-                book_id=input.book_id,
-                translated_text=TRANSLATION_FAILED_PLACEHOLDER,
-                model_version="n/a",
-                cultural_terms=[],
-                prompt_tokens=0,
-                completion_tokens=0,
-                raw_response={},
-                error_type="unknown",
-                error_reason=str(exc),
-            )
-            await ctx.db.create_translation(placeholder)
-
-            translations.append(
-                TranslationResult(
-                    chunk_id=chunk.id,
-                    translated_text=TRANSLATION_FAILED_PLACEHOLDER,
-                    cultural_terms=[],
-                    prompt_tokens=0,
-                    completion_tokens=0,
-                    model_version="n/a",
-                )
-            )
-            # Don't update previous_translation — keep last successful context
-
-        chunk_elapsed = time.monotonic() - chunk_start_time
+            if response is not None:
+                previous_translation = response
+    else:
+        # Parallel mode — fire all chunks through semaphore-controlled gather
         logger.info(
-            "📊 Translation: chunk %d/%d completed in %.1fs | book_id=%s",
-            i + 1, len(chunks_to_translate), chunk_elapsed, str(input.book_id),
+            "Using parallel translation with concurrency=%d for %d chunks",
+            input.concurrency, len(chunks_to_translate),
         )
-
-        # Update progress
-        await ctx.state.set_progress(
-            str(input.book_id),
-            "translate",
-            i + 1,
-            len(chunks_to_translate),
-        )
+        tasks = [
+            translate_single_chunk(chunk, i, None)
+            for i, chunk in enumerate(chunks_to_translate)
+        ]
+        results = await asyncio.gather(*tasks)
+        for result, _response in results:
+            translations.append(result)
+            total_prompt_tokens += result.prompt_tokens
+            total_completion_tokens += result.completion_tokens
+            total_cultural_terms += len(result.cultural_terms)
 
     # Completeness check: every input chunk must have a translation result
     if len(translations) != len(chunks_to_translate):
