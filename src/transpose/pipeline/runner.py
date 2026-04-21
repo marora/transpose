@@ -23,6 +23,7 @@ from transpose.pipeline.gates import (
     glossary_integrity_gate,
     golden_targeted_qa_gate,
     ocr_sanity_gate,
+    operational_readiness_gate,
     source_output_comparison_gate,
     translation_completeness_gate,
     validate_production_readiness,
@@ -175,6 +176,24 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                     "Run from the beginning first."
                 )
 
+    # --- Operational Readiness Preflight (Gate 8) ---
+    logger.info("=== Preflight: Operational Readiness ===")
+    try:
+        preflight = await operational_readiness_gate(ctx)
+        if not preflight.passed:
+            logger.error(
+                "❌ Operational readiness preflight FAILED: %s",
+                "; ".join(preflight.failures),
+            )
+            raise RuntimeError(
+                f"Operational readiness preflight failed: {'; '.join(preflight.failures)}"
+            )
+        logger.info("✅ Operational readiness preflight PASSED (%d checks)", len(preflight.checks))
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        logger.warning("⚠️  Preflight check error (non-blocking): %s", exc)
+
     try:
         # Stage 1: Ingest
         if start_index <= STAGE_ORDER.index("ingest"):
@@ -264,14 +283,28 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             )
 
             # Quality Gate: OCR Sanity
-            _run_gate(ocr_sanity_gate, ocr_output, gate_results)
+            _run_gate(
+                lambda out: ocr_sanity_gate(
+                    out,
+                    min_confidence=ctx.settings.low_confidence_threshold,
+                ),
+                ocr_output,
+                gate_results,
+            )
 
         # Stage 3: Chunk
         if start_index <= STAGE_ORDER.index("chunk"):
             logger.info("=== Stage 3: Chunk ===")
             start_time = datetime.now()
 
-            chunk_output = await chunk.run(chunk.ChunkInput(book_id=book_id), ctx)
+            chunk_output = await chunk.run(
+                chunk.ChunkInput(
+                    book_id=book_id,
+                    target_chunk_tokens=ctx.settings.chunk_target_tokens,
+                    overlap_tokens=ctx.settings.chunk_overlap_tokens,
+                ),
+                ctx,
+            )
 
             await ctx.state.set_pipeline_status(str(book_id), "chunk")
 
@@ -292,7 +325,10 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             start_time = datetime.now()
 
             translate_output = await translate.run(
-                translate.TranslateInput(book_id=book_id, concurrency=5),
+                translate.TranslateInput(
+                    book_id=book_id,
+                    concurrency=ctx.settings.translate_concurrency,
+                ),
                 ctx,
             )
 
@@ -544,6 +580,14 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
         final_status = BookStatus.FAILED
         raise
+
+    # Log pipeline timing summary
+    pipeline_elapsed = (datetime.now() - pipeline_start_time).total_seconds()
+    logger.info(
+        "🏁 Pipeline complete in %.1fs (%d stages) | book_id=%s",
+        pipeline_elapsed, len(stages_completed), str(book_id),
+    )
+    stage_duration.record(pipeline_elapsed, {"stage": "total", "book_id": str(book_id)})
 
     return PipelineOutput(
         book_id=book_id,

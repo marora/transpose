@@ -10,9 +10,8 @@ from transpose.models.book import Page
 
 logger = logging.getLogger(__name__)
 
-# Confidence threshold below which pages are flagged for manual review.
-# Chosen to catch garbled Devanagari output while allowing imperfect scans through.
-_LOW_CONFIDENCE_THRESHOLD = 0.5
+_DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.5
+_DEFAULT_OCR_CONCURRENCY = 5
 
 
 class OcrClient:
@@ -22,8 +21,15 @@ class OcrClient:
     call this interface — never the SDK directly.
     """
 
-    def __init__(self, endpoint: str) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        low_confidence_threshold: float = _DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+        ocr_concurrency: int = _DEFAULT_OCR_CONCURRENCY,
+    ) -> None:
         self._endpoint = endpoint
+        self._low_confidence_threshold = low_confidence_threshold
+        self._ocr_concurrency = ocr_concurrency
         # Initialized lazily on first use
         self._client = None
 
@@ -131,17 +137,17 @@ class OcrClient:
                     "locale_hint": locale,
                 }
 
-                needs_review = avg_confidence < _LOW_CONFIDENCE_THRESHOLD
+                needs_review = avg_confidence < self._low_confidence_threshold
                 if needs_review:
                     logger.warning(
                         "Page %d flagged for review: avg_confidence=%.3f (threshold=%.2f)",
                         page_num,
                         avg_confidence,
-                        _LOW_CONFIDENCE_THRESHOLD,
+                        self._low_confidence_threshold,
                     )
                     ocr_metadata["review_reason"] = (
                         f"confidence {avg_confidence:.3f} below threshold "
-                        f"{_LOW_CONFIDENCE_THRESHOLD}"
+                        f"{self._low_confidence_threshold}"
                     )
 
                 pages.append(

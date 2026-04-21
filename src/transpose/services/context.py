@@ -31,11 +31,17 @@ class ServiceContext:
         self.db = Database(self._build_dsn())
         self.state = PipelineState(self.db)
         self.blob = BlobClient(self.settings.blob_storage_account_url)
-        self.ocr = OcrClient(self.settings.doc_intelligence_endpoint)
+        self.ocr = OcrClient(
+            self.settings.doc_intelligence_endpoint,
+            low_confidence_threshold=self.settings.low_confidence_threshold,
+            ocr_concurrency=self.settings.ocr_concurrency,
+        )
         self.llm = LlmClient(
             endpoint=self.settings.openai_endpoint,
             deployment=self.settings.openai_deployment,
             api_version=self.settings.openai_api_version,
+            max_retries=self.settings.max_retries,
+            retry_base_delay=self.settings.retry_base_delay,
         )
 
     def _build_dsn(self) -> str:

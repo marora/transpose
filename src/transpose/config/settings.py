@@ -34,9 +34,6 @@ class Settings(BaseSettings):
     blob_container_source: str = "source-pdfs"
     blob_container_output: str = "output"
 
-    # Azure Key Vault
-    keyvault_url: str = ""
-
     # Application Insights
     applicationinsights_connection_string: str = ""
 

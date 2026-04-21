@@ -14,7 +14,8 @@ from transpose.models.translation import ExtractedTerm
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3
+_DEFAULT_MAX_RETRIES = 3
+_DEFAULT_RETRY_BASE_DELAY = 1.0
 
 # Scholarly context prepended to system prompt for spiritual/religious texts.
 # Driven by book-level metadata flag (content_filter_context=True).
@@ -99,10 +100,19 @@ class LlmClient:
     interface — never the OpenAI SDK directly.
     """
 
-    def __init__(self, endpoint: str, deployment: str, api_version: str) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        deployment: str,
+        api_version: str,
+        max_retries: int = _DEFAULT_MAX_RETRIES,
+        retry_base_delay: float = _DEFAULT_RETRY_BASE_DELAY,
+    ) -> None:
         self._endpoint = endpoint
         self._deployment = deployment
         self._api_version = api_version
+        self._max_retries = max_retries
+        self._retry_base_delay = retry_base_delay
         self._client = None
 
     async def _get_client(self):
@@ -163,8 +173,11 @@ class LlmClient:
             {"role": "user", "content": user_prompt},
         ]
 
+        max_retries = self._max_retries
+        base_delay = self._retry_base_delay
+
         async def _call_with_retry():
-            for attempt in range(_MAX_RETRIES):
+            for attempt in range(max_retries):
                 try:
                     return await client.chat.completions.create(
                         model=self._deployment,
@@ -202,22 +215,22 @@ class LlmClient:
                         raise TranslationError("content_filter", str(e), source_text[:100])
                     raise TranslationError("permanent", str(e))
                 except openai.RateLimitError:
-                    if attempt < _MAX_RETRIES - 1:
-                        wait = 2 ** attempt * 2
+                    if attempt < max_retries - 1:
+                        wait = 2 ** attempt * base_delay * 2
                         logger.info(f"Rate limited — retrying in {wait}s (attempt {attempt + 1})")
                         await asyncio.sleep(wait)
                         continue
                     raise TranslationError("rate_limit", "Rate limit exceeded after retries")
                 except openai.APITimeoutError:
-                    if attempt < _MAX_RETRIES - 1:
-                        wait = 2 ** attempt
+                    if attempt < max_retries - 1:
+                        wait = 2 ** attempt * base_delay
                         logger.info(f"API timeout — retrying in {wait}s (attempt {attempt + 1})")
                         await asyncio.sleep(wait)
                         continue
                     raise TranslationError("timeout", "API timeout after retries")
                 except openai.APIError as e:
-                    if attempt < _MAX_RETRIES - 1:
-                        wait = 2 ** attempt
+                    if attempt < max_retries - 1:
+                        wait = 2 ** attempt * base_delay
                         logger.info(f"Transient API error — retrying in {wait}s (attempt {attempt + 1})")
                         await asyncio.sleep(wait)
                         continue

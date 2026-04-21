@@ -683,3 +683,19 @@ Full production pipeline run: **95-page Hindi → 381 KB English PDF (70/72 chun
 - All existing function signatures preserved (new params have defaults)
 
 **Testing:** 492 tests pass, 5 xfail, ruff clean (pre-existing B904 warnings in retry blocks untouched).
+
+### Session 2026-04-21: Wire Orphaned Settings Fields (Issue #16)
+
+**Delivered:** Wired 7 of 8 orphaned `Settings` fields into their corresponding pipeline stages. Removed `keyvault_url` (unused — Managed Identity handles secrets, no Key Vault SDK client exists).
+
+**Changes:**
+1. **`max_retries` / `retry_base_delay`** → `LlmClient` constructor now accepts these; retry loop uses instance vars instead of module constant `_MAX_RETRIES`. Exponential backoff uses `base_delay` as multiplier.
+2. **`low_confidence_threshold`** → `OcrClient` constructor accepts it, uses it for page review flagging. `ocr_sanity_gate()` accepts `min_confidence` kwarg, runner passes `ctx.settings.low_confidence_threshold`.
+3. **`ocr_concurrency`** → `OcrClient` constructor accepts it (stored for future per-page parallelism; current architecture uses single Document Intelligence API call for whole PDF).
+4. **`chunk_target_tokens` / `chunk_overlap_tokens`** → Runner passes settings values to `ChunkInput` instead of relying on dataclass defaults.
+5. **`translate_concurrency`** → Runner passes `ctx.settings.translate_concurrency` to `TranslateInput` instead of hardcoded `5`.
+6. **`keyvault_url`** → Removed from Settings. Managed Identity handles all secret access; no Key Vault SDK client exists in the codebase.
+
+**Issue #17 status:** Already implemented in prior session — `JobTracker` class in api.py uses PostgreSQL `pipeline_jobs` table. No in-memory `_jobs` dict remains.
+
+**Testing:** 492 tests pass (unchanged), 1 skipped, 5 xfail. No test changes needed — all new constructor params have backward-compatible defaults.

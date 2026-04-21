@@ -59,13 +59,17 @@ _MIN_ARTIFACT_SIZE = 1024  # 1 KB
 # Gate 1: OCR Sanity (after OCR, before chunk)
 # ---------------------------------------------------------------------------
 
-def ocr_sanity_gate(ocr_output) -> GateResult:
+def ocr_sanity_gate(ocr_output, *, min_confidence: float = _MIN_CONFIDENCE) -> GateResult:
     """Validate OCR output quality before chunking.
 
     Checks:
       - Garbled Unicode (excessive U+FFFD replacement characters)
       - Devanagari codepoint density for Hindi source text
       - OCR confidence scores (reject pages below threshold)
+
+    Args:
+        min_confidence: Override the default confidence threshold
+            (wired from ``Settings.low_confidence_threshold``).
     """
     failures: list[str] = []
     failing_pages: list[int] = []
@@ -107,10 +111,10 @@ def ocr_sanity_gate(ocr_output) -> GateResult:
 
         # Check 3: OCR confidence
         confidence = getattr(page, "confidence", None)
-        if confidence is not None and confidence < _MIN_CONFIDENCE:
+        if confidence is not None and confidence < min_confidence:
             page_issues.append(
                 f"page {page_num}: confidence {confidence:.2f} "
-                f"below threshold {_MIN_CONFIDENCE}"
+                f"below threshold {min_confidence}"
             )
 
         if page_issues:
@@ -121,7 +125,7 @@ def ocr_sanity_gate(ocr_output) -> GateResult:
     details["checks"] = {
         "replacement_char_threshold": _MAX_REPLACEMENT_RATIO,
         "devanagari_density_threshold": _DEVANAGARI_DENSITY_THRESHOLD,
-        "min_confidence": _MIN_CONFIDENCE,
+        "min_confidence": min_confidence,
     }
 
     return GateResult(
@@ -1278,4 +1282,242 @@ def source_output_comparison_gate(
         passed=len(failures) == 0,
         failures=failures,
         details=details,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Operational Readiness Preflight (pre-pipeline)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PreflightCheckResult:
+    """Result of a single preflight check."""
+
+    name: str
+    passed: bool
+    message: str = ""
+
+
+@dataclass
+class OperationalReadinessResult:
+    """Aggregate result of all preflight checks."""
+
+    passed: bool
+    checks: list[PreflightCheckResult]
+    failures: list[str]
+
+
+async def operational_readiness_gate(ctx, *, skip_checks: set[str] | None = None) -> OperationalReadinessResult:
+    """Gate 8 — Operational readiness preflight.
+
+    Runs BEFORE the pipeline starts. Verifies that all required services
+    and configuration are present so the pipeline won't fail 2 hours in
+    due to a missing env var or unreachable database.
+
+    Checks:
+      1. database_reachable — can connect and required tables exist
+      2. blob_storage_accessible — can list containers
+      3. openai_endpoint — responds to a lightweight test
+      4. env_vars_present — required TRANSPOSE_* vars are set
+      5. fonts_available — Noto Sans Devanagari present for PDF rendering
+      6. no_stale_locks — no expired advisory locks in PostgreSQL
+      7. telemetry_configured — exporter connected (if configured)
+
+    Parameters:
+        ctx: ServiceContext with initialized clients
+        skip_checks: set of check names to skip (e.g. {"fonts_available"}
+                     for environments without PDF rendering)
+    """
+    import logging
+    import os
+    import shutil
+
+    logger = logging.getLogger(__name__)
+    skip = skip_checks or set()
+    checks: list[PreflightCheckResult] = []
+    failures: list[str] = []
+
+    # --- Check 1: Database reachable + schema ---
+    if "database_reachable" not in skip:
+        try:
+            row = await ctx.db.fetch_one("SELECT 1 AS ok")
+            if row is None:
+                checks.append(PreflightCheckResult("database_reachable", False, "Query returned no rows"))
+                failures.append("database_reachable: query returned no rows")
+            else:
+                # Verify required tables exist
+                table_query = """
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                      AND table_name IN ('books', 'pages', 'chunks', 'translations',
+                                         'glossaries', 'manuscripts', 'pipeline_state',
+                                         'pipeline_locks')
+                """
+                rows = await ctx.db.fetch_all(table_query)
+                found_tables = {r["table_name"] for r in rows} if rows else set()
+                required = {"books", "pages", "chunks", "translations", "manuscripts",
+                            "pipeline_state", "pipeline_locks"}
+                missing = required - found_tables
+                if missing:
+                    checks.append(PreflightCheckResult(
+                        "database_reachable", False,
+                        f"Missing tables: {', '.join(sorted(missing))}",
+                    ))
+                    failures.append(f"database_reachable: missing tables {sorted(missing)}")
+                else:
+                    checks.append(PreflightCheckResult("database_reachable", True, "OK"))
+        except Exception as exc:
+            checks.append(PreflightCheckResult("database_reachable", False, str(exc)))
+            failures.append(f"database_reachable: {exc}")
+    else:
+        checks.append(PreflightCheckResult("database_reachable", True, "skipped"))
+
+    # --- Check 2: Blob storage accessible ---
+    if "blob_storage_accessible" not in skip:
+        try:
+            await ctx.blob.list_containers()
+            checks.append(PreflightCheckResult("blob_storage_accessible", True, "OK"))
+        except Exception as exc:
+            checks.append(PreflightCheckResult("blob_storage_accessible", False, str(exc)))
+            failures.append(f"blob_storage_accessible: {exc}")
+    else:
+        checks.append(PreflightCheckResult("blob_storage_accessible", True, "skipped"))
+
+    # --- Check 3: OpenAI endpoint responding ---
+    if "openai_endpoint" not in skip:
+        try:
+            if ctx.settings.openai_endpoint:
+                # Lightweight health probe — list models or send a trivial chat
+                await ctx.llm.health_check()
+                checks.append(PreflightCheckResult("openai_endpoint", True, "OK"))
+            else:
+                checks.append(PreflightCheckResult(
+                    "openai_endpoint", False, "TRANSPOSE_OPENAI_ENDPOINT not configured",
+                ))
+                failures.append("openai_endpoint: endpoint not configured")
+        except Exception as exc:
+            checks.append(PreflightCheckResult("openai_endpoint", False, str(exc)))
+            failures.append(f"openai_endpoint: {exc}")
+    else:
+        checks.append(PreflightCheckResult("openai_endpoint", True, "skipped"))
+
+    # --- Check 4: Required env vars ---
+    if "env_vars_present" not in skip:
+        required_vars = [
+            "TRANSPOSE_OPENAI_ENDPOINT",
+            "TRANSPOSE_DOC_INTELLIGENCE_ENDPOINT",
+            "TRANSPOSE_BLOB_STORAGE_ACCOUNT_URL",
+            "TRANSPOSE_POSTGRES_HOST",
+        ]
+        missing_vars = [v for v in required_vars if not os.environ.get(v)]
+        if missing_vars:
+            checks.append(PreflightCheckResult(
+                "env_vars_present", False,
+                f"Missing: {', '.join(missing_vars)}",
+            ))
+            failures.append(f"env_vars_present: missing {missing_vars}")
+        else:
+            checks.append(PreflightCheckResult("env_vars_present", True, "OK"))
+    else:
+        checks.append(PreflightCheckResult("env_vars_present", True, "skipped"))
+
+    # --- Check 5: Fonts available ---
+    if "fonts_available" not in skip:
+        # Check for Noto Sans Devanagari (required for PDF Devanagari rendering)
+        font_found = False
+        # Check common font paths
+        font_dirs = ["/usr/share/fonts", "/usr/local/share/fonts", "fonts/"]
+        for fd in font_dirs:
+            if os.path.isdir(fd):
+                for root, _dirs, files in os.walk(fd):
+                    for f in files:
+                        if "noto" in f.lower() and "devanagari" in f.lower():
+                            font_found = True
+                            break
+                    if font_found:
+                        break
+            if font_found:
+                break
+        # Also check fc-list if available
+        if not font_found and shutil.which("fc-list"):
+            import subprocess
+
+            try:
+                result = subprocess.run(
+                    ["fc-list", ":family=Noto Sans Devanagari"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if result.stdout.strip():
+                    font_found = True
+            except Exception:
+                pass
+
+        if font_found:
+            checks.append(PreflightCheckResult("fonts_available", True, "Noto Sans Devanagari found"))
+        else:
+            checks.append(PreflightCheckResult(
+                "fonts_available", False,
+                "Noto Sans Devanagari not found — PDF Devanagari rendering will fail",
+            ))
+            failures.append("fonts_available: Noto Sans Devanagari not found")
+    else:
+        checks.append(PreflightCheckResult("fonts_available", True, "skipped"))
+
+    # --- Check 6: No stale advisory locks ---
+    if "no_stale_locks" not in skip:
+        try:
+            stale_query = """
+                SELECT book_id, locked_at, expires_at
+                FROM pipeline_locks
+                WHERE expires_at < now()
+            """
+            stale = await ctx.db.fetch_all(stale_query)
+            if stale:
+                stale_ids = [r["book_id"] for r in stale]
+                checks.append(PreflightCheckResult(
+                    "no_stale_locks", False,
+                    f"{len(stale)} stale lock(s): {stale_ids[:5]}",
+                ))
+                failures.append(f"no_stale_locks: {len(stale)} stale locks found")
+                # Auto-clean stale locks
+                await ctx.db.execute("DELETE FROM pipeline_locks WHERE expires_at < now()")
+                logger.info("Cleaned %d stale pipeline locks", len(stale))
+            else:
+                checks.append(PreflightCheckResult("no_stale_locks", True, "OK"))
+        except Exception as exc:
+            # Table might not exist yet — that's OK at first boot
+            checks.append(PreflightCheckResult("no_stale_locks", True, f"skipped ({exc})"))
+    else:
+        checks.append(PreflightCheckResult("no_stale_locks", True, "skipped"))
+
+    # --- Check 7: Telemetry configured ---
+    if "telemetry_configured" not in skip:
+        conn_str = ctx.settings.applicationinsights_connection_string
+        if not conn_str:
+            conn_str = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+        if conn_str:
+            checks.append(PreflightCheckResult("telemetry_configured", True, "App Insights configured"))
+        else:
+            # Telemetry is optional — warn but don't fail
+            checks.append(PreflightCheckResult(
+                "telemetry_configured", True,
+                "No Application Insights configured (optional)",
+            ))
+    else:
+        checks.append(PreflightCheckResult("telemetry_configured", True, "skipped"))
+
+    overall_passed = len(failures) == 0
+
+    # Log summary
+    passed_count = sum(1 for c in checks if c.passed)
+    logger.info(
+        "🔍 Operational readiness: %d/%d checks passed%s",
+        passed_count, len(checks),
+        "" if overall_passed else f" — BLOCKED: {failures}",
+    )
+
+    return OperationalReadinessResult(
+        passed=overall_passed,
+        checks=checks,
+        failures=failures,
     )
