@@ -86,16 +86,16 @@ class TestPipelineStateOperations:
 
 
 class TestPipelineStateLocking:
-    """Test distributed locking with PostgreSQL advisory locks."""
+    """Test distributed locking with row-based TTL locks."""
 
     @pytest.mark.asyncio
     async def test_acquire_lock(self) -> None:
         """Test acquiring a distributed lock."""
         book_id = str(uuid4())
 
-        # Mock database returning True (lock acquired)
+        # Mock database returning a row (lock acquired)
         mock_db = AsyncMock()
-        mock_db.fetch_one = AsyncMock(return_value={"pg_try_advisory_lock": True})
+        mock_db.fetch_one = AsyncMock(return_value={"book_id": book_id})
 
         state = PipelineState(mock_db)
         acquired = await state.acquire_lock(book_id)
@@ -103,16 +103,16 @@ class TestPipelineStateLocking:
         assert acquired is True
         mock_db.fetch_one.assert_called_once()
         call_args = mock_db.fetch_one.call_args
-        assert "pg_try_advisory_lock" in call_args[0][0]
+        assert "INSERT INTO pipeline_locks" in call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_lock_contention(self) -> None:
         """Test that lock cannot be acquired if already held."""
         book_id = str(uuid4())
 
-        # Mock database returning False (lock already held)
+        # Mock database returning None (lock already held, not expired)
         mock_db = AsyncMock()
-        mock_db.fetch_one = AsyncMock(return_value={"pg_try_advisory_lock": False})
+        mock_db.fetch_one = AsyncMock(return_value=None)
 
         state = PipelineState(mock_db)
         acquired = await state.acquire_lock(book_id)
@@ -131,7 +131,38 @@ class TestPipelineStateLocking:
         state = PipelineState(mock_db)
         await state.release_lock(book_id)
 
-        # Verify pg_advisory_unlock was called
+        # Verify DELETE was called
         mock_db.execute.assert_called_once()
         call_args = mock_db.execute.call_args
-        assert "pg_advisory_unlock" in call_args[0][0]
+        assert "DELETE FROM pipeline_locks" in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_refresh_lock(self) -> None:
+        """Test refreshing a lock TTL."""
+        book_id = str(uuid4())
+
+        mock_db = AsyncMock()
+        mock_db.fetch_one = AsyncMock(return_value={"book_id": book_id})
+
+        state = PipelineState(mock_db)
+        # First acquire to set holder_id
+        await state.acquire_lock(book_id)
+        mock_db.fetch_one.reset_mock()
+
+        mock_db.fetch_one.return_value = {"book_id": book_id}
+        refreshed = await state.refresh_lock(book_id)
+
+        assert refreshed is True
+        call_args = mock_db.fetch_one.call_args
+        assert "UPDATE pipeline_locks" in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_refresh_lock_without_holder(self) -> None:
+        """Test that refresh fails without a prior acquire."""
+        book_id = str(uuid4())
+
+        mock_db = AsyncMock()
+        state = PipelineState(mock_db)
+        refreshed = await state.refresh_lock(book_id)
+
+        assert refreshed is False

@@ -33,9 +33,76 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# In-memory job tracker (book_id → status dict).
-# For single-replica Container Apps this is sufficient; multi-replica would use Redis/DB.
-_jobs: dict[str, dict] = {}
+
+class JobTracker:
+    """PostgreSQL-backed job status tracker."""
+
+    def __init__(self):
+        self._ctx = None
+
+    async def connect(self):
+        """Initialize database connection."""
+        from transpose.services import ServiceContext
+
+        self._ctx = ServiceContext()
+        await self._ctx.connect()
+        # Ensure jobs table exists
+        await self._ctx.db.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_jobs (
+                book_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'accepted',
+                stage TEXT,
+                error TEXT,
+                result JSONB,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            )
+        """)
+
+    async def create_job(self, book_id: str) -> dict:
+        job = {"book_id": book_id, "status": "accepted", "stage": None, "error": None}
+        await self._ctx.db.execute(
+            """INSERT INTO pipeline_jobs (book_id, status) VALUES ($1, 'accepted')
+               ON CONFLICT (book_id) DO UPDATE SET status = 'accepted', updated_at = now()""",
+            book_id,
+        )
+        return job
+
+    async def update_job(self, book_id: str, **kwargs) -> None:
+        sets = []
+        args = []
+        i = 1
+        for key, val in kwargs.items():
+            if key in ('status', 'stage', 'error'):
+                sets.append(f"{key} = ${i}")
+                args.append(val)
+                i += 1
+            elif key == 'result':
+                sets.append(f"result = ${i}::jsonb")
+                args.append(json.dumps(val))
+                i += 1
+        if sets:
+            sets.append("updated_at = now()")
+            query = f"UPDATE pipeline_jobs SET {', '.join(sets)} WHERE book_id = ${i}"
+            args.append(book_id)
+            await self._ctx.db.execute(query, *args)
+
+    async def get_job(self, book_id: str) -> dict | None:
+        row = await self._ctx.db.fetch_one(
+            "SELECT book_id, status, stage, error, result FROM pipeline_jobs WHERE book_id = $1",
+            book_id,
+        )
+        if not row:
+            return None
+        result = dict(row)
+        if result.get('result'):
+            result.update(json.loads(result['result']))
+            del result['result']
+        return result
+
+    async def close(self):
+        if self._ctx:
+            await self._ctx.close()
 
 
 # ---------------------------------------------------------------------------
@@ -107,16 +174,13 @@ async def translate(request: web.Request) -> web.Response:
     formats = body.get("formats", ["epub", "pdf"])
 
     book_id = str(uuid4())
-    _jobs[book_id] = {
-        "book_id": book_id,
-        "status": "accepted",
-        "stage": None,
-        "error": None,
-    }
-
+    job_tracker = request.app.get("job_tracker")
+    if job_tracker and job_tracker._ctx:
+        await job_tracker.create_job(book_id)
+    
     # Fire-and-forget pipeline task
     asyncio.create_task(
-        _run_pipeline_job(book_id, blob_uri, title, author, language, formats)
+        _run_pipeline_job(job_tracker, book_id, blob_uri, title, author, language, formats)
     )
 
     return web.json_response({"book_id": book_id, "status": "accepted"})
@@ -126,10 +190,12 @@ async def get_status(request: web.Request) -> web.Response:
     """Return pipeline status for a book."""
     book_id = request.match_info["book_id"]
 
-    # Check in-memory tracker first
-    job = _jobs.get(book_id)
-    if job:
-        return web.json_response(job)
+    # Check persistent job tracker first
+    job_tracker = request.app.get("job_tracker")
+    if job_tracker and job_tracker._ctx:
+        job = await job_tracker.get_job(book_id)
+        if job:
+            return web.json_response(job)
 
     # Fall back to database lookup
     try:
@@ -165,6 +231,7 @@ async def get_status(request: web.Request) -> web.Response:
 
 
 async def _run_pipeline_job(
+    job_tracker: JobTracker | None,
     book_id: str,
     blob_uri: str,
     title: str,
@@ -177,7 +244,8 @@ async def _run_pipeline_job(
     from transpose.pipeline.runner import PipelineInput, run_pipeline
     from transpose.services import ServiceContext
 
-    _jobs[book_id]["status"] = "running"
+    if job_tracker and job_tracker._ctx:
+        await job_tracker.update_job(book_id, status="running")
 
     ctx = ServiceContext()
     try:
@@ -196,21 +264,23 @@ async def _run_pipeline_job(
 
         output = await run_pipeline(pipeline_input, ctx)
 
-        _jobs[book_id].update({
-            "status": "completed",
-            "stage": "export",
-            "book_id": str(output.book_id),
-            "stages_completed": output.stages_completed,
-            "glossary_terms": output.glossary_term_count,
-            "artifacts": output.artifacts,
-        })
+        if job_tracker and job_tracker._ctx:
+            await job_tracker.update_job(
+                book_id,
+                status="completed",
+                stage="export",
+                result={
+                    "book_id": str(output.book_id),
+                    "stages_completed": output.stages_completed,
+                    "glossary_terms": output.glossary_term_count,
+                    "artifacts": output.artifacts,
+                },
+            )
 
     except Exception as exc:
         logger.exception(f"Pipeline failed for {book_id}")
-        _jobs[book_id].update({
-            "status": "failed",
-            "error": str(exc),
-        })
+        if job_tracker and job_tracker._ctx:
+            await job_tracker.update_job(book_id, status="failed", error=str(exc))
     finally:
         with contextlib.suppress(Exception):
             await ctx.close()
@@ -232,12 +302,28 @@ def create_app() -> web.Application:
 
     app = web.Application(middlewares=[api_key_middleware])
     app["api_key"] = settings.api_key
+    app["job_tracker"] = JobTracker()
 
     if not settings.api_key:
         logger.warning(
             "TRANSPOSE_API_KEY is not set — API key authentication is DISABLED. "
             "Set TRANSPOSE_API_KEY for production deployments."
         )
+
+    async def on_startup(app: web.Application) -> None:
+        try:
+            await app["job_tracker"].connect()
+        except Exception:
+            logger.warning("JobTracker DB connection unavailable — falling back to DB-less mode")
+
+    async def on_cleanup(app: web.Application) -> None:
+        try:
+            await app["job_tracker"].close()
+        except Exception:
+            pass
+
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
 
     app.router.add_get("/health", health)
     app.router.add_post("/translate", translate)

@@ -117,6 +117,25 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
     PRIMARY KEY (book_id)
 );
 
+-- Pipeline locks table (row-based distributed locks with TTL)
+CREATE TABLE IF NOT EXISTS pipeline_locks (
+    book_id TEXT PRIMARY KEY,
+    locked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    holder_id TEXT NOT NULL
+);
+
+-- Pipeline jobs table (persistent job status tracking)
+CREATE TABLE IF NOT EXISTS pipeline_jobs (
+    book_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'accepted',
+    stage TEXT,
+    error TEXT,
+    result JSONB,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- ============================================================================
 -- Indexes for Query Performance
 -- ============================================================================
@@ -129,6 +148,8 @@ CREATE INDEX IF NOT EXISTS idx_books_status ON books(status);
 CREATE INDEX IF NOT EXISTS idx_chunks_sequence ON chunks(book_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_pages_page_number ON pages(book_id, page_number);
 CREATE INDEX IF NOT EXISTS idx_pipeline_state_status ON pipeline_state(status);
+CREATE INDEX IF NOT EXISTS idx_pipeline_locks_expires ON pipeline_locks(expires_at);
+CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status ON pipeline_jobs(status);
 
 -- ============================================================================
 -- Triggers for updated_at timestamp
@@ -165,6 +186,8 @@ COMMENT ON TABLE cultural_terms IS 'Preserved culturally significant terms with 
 COMMENT ON TABLE glossaries IS 'Aggregated glossary per book version';
 COMMENT ON TABLE manuscripts IS 'Assembled translated documents ready for export';
 COMMENT ON TABLE pipeline_state IS 'Pipeline execution state — replaces Redis for status tracking and locking';
+COMMENT ON TABLE pipeline_locks IS 'Row-based distributed locks with TTL enforcement for pipeline concurrency';
+COMMENT ON TABLE pipeline_jobs IS 'Persistent job status tracking for the HTTP API';
 
 -- ============================================================================
 -- Verification Query

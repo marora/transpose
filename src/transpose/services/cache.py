@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,7 +14,7 @@ class PipelineState:
 
     Handles:
     - Pipeline progress tracking (pipeline_state table)
-    - Distributed locks (pg_try_advisory_lock)
+    - Distributed locks with TTL (pipeline_locks table)
     - Stage status updates
     - Progress tracking within stages
     """
@@ -21,6 +22,18 @@ class PipelineState:
     def __init__(self, db: Database) -> None:
         """Initialize with a Database instance."""
         self._db = db
+        self._holder_id: str | None = None
+
+    async def ensure_lock_table(self) -> None:
+        """Create the pipeline_locks table if it does not exist."""
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_locks (
+                book_id TEXT PRIMARY KEY,
+                locked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                expires_at TIMESTAMPTZ NOT NULL,
+                holder_id TEXT NOT NULL
+            )
+        """)
 
     async def set_pipeline_status(self, book_id: str, stage: str) -> None:
         """Update the current pipeline stage for a book."""
@@ -53,16 +66,42 @@ class PipelineState:
         await self._db.execute(query, book_id, completed, total)
 
     async def acquire_lock(self, book_id: str, ttl: int = 3600) -> bool:
-        """Acquire a distributed lock for a book using PostgreSQL advisory locks.
+        """Acquire a distributed lock for a book with TTL enforcement.
 
-        Returns True if acquired, False if already held.
+        Uses row-based locking with expiration timestamps.
+        Stale locks (past TTL) are automatically reclaimed.
+        Returns True if acquired, False if already held by an active session.
         """
-        # Use hashtext to convert book_id string to integer for advisory lock
-        query = "SELECT pg_try_advisory_lock(hashtext($1))"
-        row = await self._db.fetch_one(query, book_id)
-        return bool(row["pg_try_advisory_lock"]) if row else False
+        query = """
+            INSERT INTO pipeline_locks (book_id, locked_at, expires_at, holder_id)
+            VALUES ($1, now(), now() + ($2 || ' seconds')::interval, $3)
+            ON CONFLICT (book_id) DO UPDATE
+            SET locked_at = now(),
+                expires_at = now() + ($2 || ' seconds')::interval,
+                holder_id = $3
+            WHERE pipeline_locks.expires_at < now()  -- only reclaim expired locks
+            RETURNING book_id
+        """
+        if self._holder_id is None:
+            self._holder_id = str(uuid.uuid4())
+        row = await self._db.fetch_one(query, book_id, str(ttl), self._holder_id)
+        return row is not None
 
     async def release_lock(self, book_id: str) -> None:
         """Release the distributed lock for a book."""
-        query = "SELECT pg_advisory_unlock(hashtext($1))"
+        query = "DELETE FROM pipeline_locks WHERE book_id = $1"
         await self._db.execute(query, book_id)
+
+    async def refresh_lock(self, book_id: str, ttl: int = 3600) -> bool:
+        """Refresh the TTL on an existing lock. Returns True if refreshed."""
+        if not self._holder_id:
+            return False
+        query = """
+            UPDATE pipeline_locks
+            SET expires_at = now() + ($2 || ' seconds')::interval,
+                locked_at = now()
+            WHERE book_id = $1 AND holder_id = $3
+            RETURNING book_id
+        """
+        row = await self._db.fetch_one(query, book_id, str(ttl), self._holder_id)
+        return row is not None

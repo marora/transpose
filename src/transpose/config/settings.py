@@ -54,10 +54,38 @@ class Settings(BaseSettings):
     # API authentication (empty = permissive mode for local dev)
     api_key: str = ""
 
+    def validate_for_pipeline(self) -> list[str]:
+        """Validate that required settings are configured for pipeline execution.
+
+        Returns list of validation errors (empty if all OK).
+        """
+        errors = []
+
+        if not self.openai_endpoint:
+            errors.append("TRANSPOSE_OPENAI_ENDPOINT is required")
+        if not self.doc_intelligence_endpoint:
+            errors.append("TRANSPOSE_DOC_INTELLIGENCE_ENDPOINT is required")
+        if not self.blob_storage_account_url:
+            errors.append("TRANSPOSE_BLOB_STORAGE_ACCOUNT_URL is required")
+
+        return errors
+
 
 def get_settings() -> Settings:
     """Load settings from environment."""
     return Settings()
+
+
+def validate_settings() -> None:
+    """Validate settings and log warnings for missing configuration."""
+    import logging
+
+    _logger = logging.getLogger(__name__)
+    settings = get_settings()
+    errors = settings.validate_for_pipeline()
+    if errors:
+        for err in errors:
+            _logger.warning("⚠️  Configuration: %s", err)
 
 
 def get_appinsights_connection_string() -> str:
