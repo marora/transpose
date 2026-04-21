@@ -62,25 +62,32 @@ async def run(input: ExportInput, ctx) -> ExportOutput:  # type: ignore[no-untyp
     if not cover_image_uri:
         # Try book metadata via raw DB query (set by OCR stage)
         try:
+            logger.debug("Cover not in manuscript metadata — checking book metadata")
             row = await ctx.db.fetch_one(
                 "SELECT metadata->>'cover_image_uri' AS uri FROM books WHERE id = $1",
                 input.book_id,
             )
             if row and row.get("uri"):
                 cover_image_uri = row["uri"]
-        except Exception:
-            pass
+                logger.info("Found cover_image_uri in book metadata: %s", cover_image_uri)
+            else:
+                logger.info("No cover_image_uri found in book metadata")
+        except Exception as e:
+            logger.warning("Failed to query book metadata for cover image: %s", e)
 
     if cover_image_uri:
         try:
             cover_blob_name = cover_image_uri.split("/")[-1]
+            logger.info("Downloading cover image: %s from container %s", 
+                       cover_blob_name, ctx.settings.blob_container_source)
             cover_image_data = await ctx.blob.download_blob(
                 container=ctx.settings.blob_container_source,
                 blob_name=cover_blob_name,
             )
             logger.info("Loaded cover image: %d bytes", len(cover_image_data))
-        except Exception:
-            logger.warning("Could not download cover image — using text title page", exc_info=True)
+        except Exception as e:
+            logger.warning("Could not download cover image (blob: %s) — using text title page. Error: %s", 
+                         cover_blob_name, e, exc_info=True)
 
     artifacts: list[ExportArtifact] = []
 

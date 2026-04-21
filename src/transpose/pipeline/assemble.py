@@ -87,6 +87,14 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
                 {"chunk": chunk, "translation": translation}
             )
 
+    # --- Issue #61: Content-based chapter splitting fallback ---
+    # If metadata-based grouping yields only one chapter (or all are "Introduction"),
+    # attempt to split by detecting chapter-level headings in the translated text
+    if len(chapters_data) == 1 or all(k == "Introduction" for k in chapters_data.keys()):
+        logger.info("Only one chapter detected from metadata — attempting content-based splitting")
+        chapters_data = _split_chapters_by_content(chapters_data, translations, logger)
+        logger.info("Content-based splitting found %d chapters", len(chapters_data))
+
     # Build chapters
     chapters: list[ManuscriptChapter] = []
     toc: list[dict] = []
@@ -479,6 +487,16 @@ _HEADING_PATTERNS: list[re.Pattern] = [
     re.compile(r"^\d{1,3}\.\s+[A-Z]"),
 ]
 
+# Patterns that identify chapter-level boundaries (Issue #61)
+# These are used for content-based chapter splitting when metadata doesn't provide chapter markers
+_CHAPTER_LEVEL_PATTERNS: list[re.Pattern] = [
+    # Tantra Sutra patterns with various spacing/dash styles
+    re.compile(r"^Tantra\s+Sutra\s*[—\u2014\u2013-]\s*Method\s*\d+", re.IGNORECASE),
+    re.compile(r"^Method\s+\d+", re.IGNORECASE),
+    # General chapter patterns (if not already caught by chunk metadata)
+    re.compile(r"^Chapter\s+\d+", re.IGNORECASE),
+]
+
 
 def _detect_heading(text: str) -> bool:
     """Return True if *text* looks like a discourse/section heading.
@@ -492,3 +510,73 @@ def _detect_heading(text: str) -> bool:
     if "\n" in text:
         return False
     return any(p.match(text) for p in _HEADING_PATTERNS)
+
+
+def _detect_chapter_boundary(text: str) -> bool:
+    """Return True if *text* looks like a chapter-level heading (Issue #61).
+
+    Used for content-based chapter splitting when chunk metadata doesn't
+    provide chapter markers (e.g., Tantra Sutra—Method N).
+    """
+    if len(text) > 150:
+        return False
+    if "\n" in text:
+        return False
+    return any(p.match(text) for p in _CHAPTER_LEVEL_PATTERNS)
+
+
+def _split_chapters_by_content(
+    chapters_data: dict[str, list],
+    translations: list,
+    logger,
+) -> dict[str, list]:
+    """Re-split chapters based on content when metadata-based grouping fails (Issue #61).
+
+    This is a fallback for books where chunk.section_type doesn't have CHAPTER markers.
+    We scan the translated text for chapter-level heading patterns and create new chapters.
+    """
+    from collections import defaultdict
+
+    # If we already have multiple chapters, don't re-split
+    if len(chapters_data) > 1:
+        return chapters_data
+
+    # Get the single chapter's chunks (likely "Introduction")
+    single_chapter_key = list(chapters_data.keys())[0]
+    all_chunks = chapters_data[single_chapter_key]
+
+    # Build a map of chunk_id -> translation for quick lookup
+    translation_map = {t.chunk_id: t for t in translations}
+
+    # Scan all chunks to find chapter boundaries
+    new_chapters_data: dict[str, list] = defaultdict(list)
+    current_chapter_title = "Introduction"  # default for pre-chapter content
+    chapter_chunk_count = 0
+
+    for item in all_chunks:
+        chunk = item["chunk"]
+        translation = item["translation"]
+        text = translation.translated_text if translation else ""
+
+        # Check first few lines for a chapter-level heading
+        found_chapter_boundary = False
+        for line in text.split("\n")[:5]:
+            stripped = line.strip()
+            if _detect_chapter_boundary(stripped):
+                # Start a new chapter with this heading as the title
+                current_chapter_title = stripped
+                found_chapter_boundary = True
+                chapter_chunk_count = 0
+                logger.debug("Found chapter boundary: %s", current_chapter_title)
+                break
+
+        # Add this chunk to the current chapter
+        new_chapters_data[current_chapter_title].append(item)
+        chapter_chunk_count += 1
+
+    # If content-based splitting didn't find any chapters, return original
+    if len(new_chapters_data) <= 1:
+        logger.info("Content-based splitting found no chapter boundaries — keeping single chapter")
+        return chapters_data
+
+    return new_chapters_data
