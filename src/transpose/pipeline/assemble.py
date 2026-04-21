@@ -72,8 +72,15 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
     pages = await ctx.db.get_pages_for_book(input.book_id)
     page_images: dict[int, list[dict]] = {}  # page_num → list of image refs
     for pg in pages:
-        if pg.ocr_metadata and pg.ocr_metadata.get("images"):
-            page_images[pg.page_number] = pg.ocr_metadata["images"]
+        meta = pg.ocr_metadata
+        if isinstance(meta, str):
+            import json
+            try:
+                meta = json.loads(meta)
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+        if meta and meta.get("images"):
+            page_images[pg.page_number] = meta["images"]
     if page_images:
         logger.info("Found images on %d pages", len(page_images))
 
@@ -174,7 +181,8 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
                     continue
 
                 # Check if this paragraph is a sub-heading
-                heading_match = _detect_heading(stripped)
+                # Skip chapter-level headings — they are already rendered as h1
+                heading_match = _detect_heading(stripped) and not _detect_chapter_boundary(stripped)
                 if heading_match:
                     sub_heading_idx += 1
                     sub_id = f"{chapter_id}-s{sub_heading_idx}"
@@ -348,6 +356,12 @@ def _extract_chapter_title(chapter_chunks: list[dict], fallback: str) -> str:
     Falls back to the provided fallback if extraction fails.
     """
     import re
+
+    # Direct mapping from Devanagari chapter_ref patterns
+    tantra_ref = re.match(r"^तं-सू—विधि—(\d+)", fallback)
+    if tantra_ref:
+        method_num = int(tantra_ref.group(1))
+        return f"Tantra Sutra — Method {method_num}"
 
     if not chapter_chunks:
         return fallback

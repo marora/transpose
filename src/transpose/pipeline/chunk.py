@@ -100,6 +100,14 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
         re.MULTILINE,
     )
 
+    # Pre-process: ensure chapter marker lines get paragraph breaks so they're
+    # detected at paragraph start. OCR text often has single \n before them.
+    full_text = re.sub(
+        r"(?<!\n)\n(तं[\s-]*सू\s*[—\u2014\u2013-])",
+        r"\n\n\1",
+        full_text,
+    )
+
     # Split on structural boundaries
     chunks: list[Chunk] = []
     sequence = 0
