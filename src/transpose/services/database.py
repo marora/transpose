@@ -26,8 +26,19 @@ class Database:
         self._pool: asyncpg.Pool | None = None
 
     async def connect(self, ssl: str | None = None) -> None:
-        """Initialize the connection pool."""
-        kwargs: dict = {"dsn": self._dsn, "min_size": 2, "max_size": 10}
+        """Initialize the connection pool with keepalive for long-running pipelines."""
+        kwargs: dict = {
+            "dsn": self._dsn,
+            "min_size": 2,
+            "max_size": 10,
+            "command_timeout": 60,
+            # TCP keepalive to prevent Azure PostgreSQL idle disconnects
+            "server_settings": {
+                "tcp_keepalives_idle": "60",
+                "tcp_keepalives_interval": "15",
+                "tcp_keepalives_count": "4",
+            },
+        }
         if ssl:
             kwargs["ssl"] = ssl
         self._pool = await asyncpg.create_pool(**kwargs)
@@ -45,14 +56,57 @@ class Database:
         return self._pool
 
     async def execute(self, query: str, *args) -> str:
-        """Execute a query and return the status string."""
+        """Execute a query with retry on transient connection errors."""
+        return await self._retry(self._execute_inner, query, *args)
+
+    async def _execute_inner(self, query: str, *args) -> str:
         async with self.pool.acquire() as conn:
             return await conn.execute(query, *args)
 
     async def fetch_one(self, query: str, *args) -> asyncpg.Record | None:
-        """Execute a query and return a single row."""
+        """Execute a query and return a single row, with retry."""
+        return await self._retry(self._fetch_one_inner, query, *args)
+
+    async def _fetch_one_inner(self, query: str, *args) -> asyncpg.Record | None:
         async with self.pool.acquire() as conn:
             return await conn.fetchrow(query, *args)
+
+    async def _retry(self, func, *args, max_attempts: int = 3):
+        """Retry a DB operation on transient connection errors."""
+        import asyncio
+
+        for attempt in range(max_attempts):
+            try:
+                return await func(*args)
+            except (
+                asyncpg.ConnectionDoesNotExistError,
+                asyncpg.InterfaceError,
+                ConnectionResetError,
+                OSError,
+            ):
+                if attempt == max_attempts - 1:
+                    raise
+                wait = 2 ** attempt
+                import logging
+                logging.getLogger(__name__).warning(
+                    "DB connection error (attempt %d/%d), retrying in %ds",
+                    attempt + 1, max_attempts, wait,
+                )
+                await asyncio.sleep(wait)
+
+    async def fetch_many(self, query: str, *args) -> list[asyncpg.Record]:
+        """Execute a query and return all rows, with retry."""
+        async def _inner():
+            async with self.pool.acquire() as conn:
+                return await conn.fetch(query, *args)
+        return await self._retry(_inner)
+
+    async def execute_many(self, query: str, args_list: list[tuple]) -> None:
+        """Execute a query for multiple arg sets, with retry."""
+        async def _inner():
+            async with self.pool.acquire() as conn:
+                await conn.executemany(query, args_list)
+        return await self._retry(_inner)
 
     # --- Book CRUD ---
 
@@ -267,41 +321,39 @@ class Database:
     # --- Translation CRUD ---
 
     async def create_translation(self, translation: Translation) -> None:
-        """Create a translation record."""
+        """Create a translation record (with connection retry)."""
         import json
 
-        async with self.pool.acquire() as conn:
-            # Convert cultural_terms to JSON
-            terms_json = json.dumps(
-                [
-                    {
-                        "term": term.term,
-                        "original_script": term.original_script,
-                        "definition": term.definition,
-                        "source": term.source.value,
-                    }
-                    for term in translation.cultural_terms
-                ]
-            )
+        terms_json = json.dumps(
+            [
+                {
+                    "term": term.term,
+                    "original_script": term.original_script,
+                    "definition": term.definition,
+                    "source": term.source.value,
+                }
+                for term in translation.cultural_terms
+            ]
+        )
 
-            await conn.execute(
-                """
-                INSERT INTO translations (
-                    id, chunk_id, book_id, translated_text, model_version,
-                    cultural_terms, prompt_tokens, completion_tokens, raw_response, created_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                """,
-                translation.id,
-                translation.chunk_id,
-                translation.book_id,
-                translation.translated_text,
-                translation.model_version,
-                terms_json,
-                translation.prompt_tokens,
-                translation.completion_tokens,
-                json.dumps(translation.raw_response) if isinstance(translation.raw_response, dict) else translation.raw_response,
-                translation.created_at,
-            )
+        await self.execute(
+            """
+            INSERT INTO translations (
+                id, chunk_id, book_id, translated_text, model_version,
+                cultural_terms, prompt_tokens, completion_tokens, raw_response, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            """,
+            translation.id,
+            translation.chunk_id,
+            translation.book_id,
+            translation.translated_text,
+            translation.model_version,
+            terms_json,
+            translation.prompt_tokens,
+            translation.completion_tokens,
+            json.dumps(translation.raw_response) if isinstance(translation.raw_response, dict) else translation.raw_response,
+            translation.created_at,
+        )
 
     async def get_translations_for_book(self, book_id: UUID) -> list[Translation]:
         """Get all translations for a book, ordered by chunk sequence."""
@@ -349,12 +401,11 @@ class Database:
 
     async def get_translated_chunk_ids(self, book_id: UUID) -> set[UUID]:
         """Get chunk IDs that already have translations."""
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT chunk_id FROM translations WHERE book_id = $1",
-                book_id,
-            )
-            return {row["chunk_id"] for row in rows}
+        rows = await self.fetch_many(
+            "SELECT chunk_id FROM translations WHERE book_id = $1",
+            book_id,
+        )
+        return {row["chunk_id"] for row in rows}
 
     async def get_failed_translation_chunk_ids(self, book_id: UUID) -> set[UUID]:
         """Get chunk IDs that have placeholder/failed translations."""
