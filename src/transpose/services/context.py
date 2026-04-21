@@ -62,6 +62,8 @@ class ServiceContext:
         """Initialize all service connections."""
         ssl_mode = "require" if self._requires_ssl else None
         await self.db.connect(ssl=ssl_mode)
+        # Ensure required tables exist
+        await self.state.ensure_lock_table()
 
     async def close(self) -> None:
         """Close all service connections."""
