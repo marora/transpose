@@ -260,6 +260,15 @@ class Database:
             )
             return {row["page_number"] for row in rows}
 
+    async def delete_pages_for_book(self, book_id: UUID) -> int:
+        """Delete all pages for a book. Returns count deleted."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM pages WHERE book_id = $1",
+                book_id,
+            )
+            return int(result.split()[-1])  # "DELETE N"
+
     # --- Chunk CRUD ---
 
     async def create_chunks(self, chunks: list[Chunk]) -> None:

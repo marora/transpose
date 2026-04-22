@@ -69,6 +69,7 @@ def _validate_page(
 @dataclass
 class OcrInput:
     book_id: UUID
+    force_reocr: bool = False
 
 
 @dataclass
@@ -104,6 +105,12 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
     # Get existing page numbers (idempotent)
     existing_pages = await ctx.db.get_existing_page_numbers(input.book_id)
     logger.info("Found %d existing pages", len(existing_pages))
+
+    # Force re-OCR: delete existing pages so they are re-extracted with images
+    if input.force_reocr and existing_pages:
+        logger.info("Force re-OCR: deleting %d existing pages", len(existing_pages))
+        await ctx.db.delete_pages_for_book(input.book_id)
+        existing_pages = set()
 
     # Try digital text extraction first with PyMuPDF
     logger.info("Attempting digital text extraction...")
@@ -343,7 +350,7 @@ async def _extract_page_images(
                 "height": img_info[3] if len(img_info) > 3 else 0,
             })
         except Exception:
-            logger.debug("Page %d img %d: extraction failed", page_num, img_idx, exc_info=True)
+            logger.warning("Page %d img %d: extraction failed", page_num, img_idx, exc_info=True)
 
     return results
 

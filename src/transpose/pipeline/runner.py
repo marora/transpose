@@ -334,7 +334,10 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 # This is a simplification - in production, you'd pass book_id explicitly
                 raise ValueError("book_id required for resume_from")
 
-            ocr_output = await ocr.run(ocr.OcrInput(book_id=book_id), ctx)
+            ocr_output = await ocr.run(
+                ocr.OcrInput(book_id=book_id, force_reocr=input.force_retranslate),
+                ctx,
+            )
 
             # Track OCR cost
             if cost_tracker:
