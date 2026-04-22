@@ -306,3 +306,16 @@ Implemented POST `/health` (deep liveness checks) and `/ready` (readiness gate) 
 - **Action items:** Add LICENSE (MIT), git rm validation-report.json, add *.pem/*.key to .gitignore, optionally clean resource names from deploy.yml.
 - **Full report:** `.squad/decisions/inbox/stilgar-public-readiness.md`
 - **Squad learnings compiled:** 5 key learnings from Transpose development (proof-based governance, parallel agent fan-out, LLM completeness prompts, quality-vs-presence gates, institutional memory in .squad/).
+
+### 2026-04-22 — Deep Learnings Mining (8 Additional)
+
+Reviewed all squad history (decisions.md, all 4 agent histories, orchestration logs) to extract reusable learnings beyond the original top 5. Added 8 new learnings to `~/.squad/skills/squad-project-learnings/SKILL.md`:
+
+- **L6: Configure But Never Call** — `acquire_lock()` was implemented but never invoked; `keyvault_url` was dead config. Grep for invocations, not definitions.
+- **L7: Manual CLI Causes IaC Drift** — Dual env var sets (Bicep vs manual) silently bypassed Managed Identity. All config must flow through IaC.
+- **L8: Content Filter Fallback** — Blind retry on content-filtered LLM requests wastes time. Graduated fallback: scholarly context → sentence filtering → alternate model.
+- **L9: PDF Text Extraction Artifacts** — PyMuPDF double-spacing caused false "missing phrase" findings. Always normalize whitespace before text comparison.
+- **L10: Docs Drift Silently** — 4 docs drifted over 15 commits. Enforce docs update in the same commit as code.
+- **L11: Test Stubs Drift From Real Signatures** — Test-first stubs had wrong signatures; all wasted. Lock signatures in architecture doc before parallel work.
+- **L12: Variable Fonts Break PDF Toolchains** — Static font builds for PDF generation; distinguish visual rendering from extraction artifacts.
+- **L13: Real E2E Reveals Operational Gaps** — First 95-page run exposed persistence, lock TTL, timeout, cost, and progress issues invisible to content gates.
