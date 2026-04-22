@@ -10,6 +10,14 @@
 *.env
 __pycache__/
 
+# Private keys and certificates
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+
 # Pipeline output artifacts
 *.pdf
 *.epub
@@ -17,3 +25,6 @@ test-visual-output.*
 
 # Exception: golden target PDF is a checked-in test fixture
 !tests/golden/golden-target-english.pdf
+
+# Generated validation artifacts
+validation-report.json
