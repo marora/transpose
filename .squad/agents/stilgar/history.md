@@ -290,3 +290,19 @@ Implemented POST `/health` (deep liveness checks) and `/ready` (readiness gate) 
 
 **Test Status:** 659/659 passing  
 **Key Learnings:** Readiness probes need differentiation from liveness; structured errors with request IDs enable distributed tracing across cloud deployments.
+
+### 2026-04-22 — Public Readiness Audit
+
+- **Verdict:** NOT YET — 2 blockers (no LICENSE, tracked validation-report.json), 3 should-fix items.
+- **Key findings:**
+  1. `.env` never committed — safe. `.gitignore` covers `.env`, `*.env`, `*.pdf`, `*.epub`.
+  2. No secrets in source code or git history. Managed Identity pattern held throughout.
+  3. No LICENSE file — blocker for public repo. Recommended MIT.
+  4. `validation-report.json` tracked in git — generated artifact, should be removed.
+  5. Real Azure resource names hardcoded in `deploy.yml` (`transpose-sc`, `transposedevacr`). Not secrets but reveals topology.
+  6. `.squad/` contains real resource FQDNs in history files — low risk, valuable as documentation.
+  7. Code quality excellent: zero TODO/FIXME/HACK, ruff-clean, consistent patterns, good README.
+  8. CI/CD uses OIDC (no stored secrets) — proper pattern.
+- **Action items:** Add LICENSE (MIT), git rm validation-report.json, add *.pem/*.key to .gitignore, optionally clean resource names from deploy.yml.
+- **Full report:** `.squad/decisions/inbox/stilgar-public-readiness.md`
+- **Squad learnings compiled:** 5 key learnings from Transpose development (proof-based governance, parallel agent fan-out, LLM completeness prompts, quality-vs-presence gates, institutional memory in .squad/).

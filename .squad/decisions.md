@@ -1635,3 +1635,114 @@ Expected: 55K → 44K (natural) → 35K (minus failures) = **35–38K** ✓ matc
 
 All 483 unit tests pass after the prompt changes. The changes are backward-compatible — they only add instructions, not modify parsing or data flow.
 
+
+---
+
+### Decision: Hindi OCR Fallback Text Cleanup
+
+**Author:** Chani  
+**Date:** 2026-04-18  
+**Issue:** #63  
+
+When translation fails, the pipeline preserves original Hindi text as fallback. This raw OCR text from Document Intelligence contains artifacts: isolated ASCII digits/letters embedded in Devanagari, zero-width characters, control characters.
+
+Added `clean_devanagari_ocr()` in `src/transpose/utils/unicode.py` that runs on fallback text before it's stored. The function:
+
+- Removes isolated ASCII (1-2 chars) between Devanagari characters (OCR noise)
+- Preserves full English words (3+ chars) as intentional loanwords/proper nouns
+- Strips zero-width chars (ZWSP, ZWNJ, BOM) but preserves ZWJ (valid in conjuncts)
+- Removes control characters, nested `[TRANSLATION FAILED]` markers
+- Applies NFC normalization, collapses whitespace
+
+Conservative heuristic: only removes characters very likely to be OCR noise. The 3-char threshold for English words balances artifact removal vs. preserving intentional content. ZWJ preservation is critical for correct Devanagari rendering.
+
+**Impact:** Only affects the fallback path in `translate.py`. No impact on successful translations. 17 new unit tests cover the function.
+
+---
+
+### Decision: No AI-Generated Content Posing as Author Text
+
+**Author:** Chani  
+**Date:** 2026-04-18  
+**Status:** Active  
+**Issue:** #64
+
+The pipeline must never use the LLM to generate content that could be mistaken for author-written material (forewords, prefaces, introductions, etc.). The former `_generate_foreword()` function was removed. Instead, a factual "Translator's Note" is stored in `manuscript.metadata["translator_note"]` — this is a short, honest disclosure about the AI translation process. Both ePub and PDF export stages render this note under the heading "Translator's Note".
+
+**Key principle:** AI-generated text must always be clearly distinguishable from original source content. Fabricating literary-style front matter is a content integrity violation.
+
+---
+
+### Audit: Public Readiness Assessment
+
+**Author:** Stilgar  
+**Date:** 2026-04-22  
+**Status:** Decision (Actions Required)  
+
+Comprehensive audit of Transpose codebase readiness for public release.
+
+#### Blockers (Fix Before Public)
+
+1. **No LICENSE file** — Code is "all rights reserved" by default. Recommended: MIT License (permissive, standard for developer tools).
+2. **validation-report.json tracked in git** — Generated artifact, non-sensitive but clutters repo. Action: `git rm validation-report.json` and add to `.gitignore`.
+
+#### Action Items (Should Fix)
+
+3. **Add `*.pem *.key *.pfx *.p12` to `.gitignore`** — Currently missing these key file patterns.
+4. **Replace hardcoded resource names in deploy.yml** — Contains real Azure identifiers (`transpose-sc`, `transpose-dev-app`, `transposedevacr.azurecr.io`). Consider using `${{ vars.* }}` GitHub environment variables or accept that resource names are not secrets (RBAC-protected).
+5. **Clean real storage URL from ingest.py:32** — Docstring contains `https://transposedevst.blob.core.windows.net/source-pdfs/test.pdf` (example URL in comments).
+
+#### Clear (Ready for Public)
+
+- **Code Quality:** No TODO/FIXME/HACK comments. Clean, well-structured codebase. Ruff-compliant.
+- **README:** Solid, explains pipeline, stack, setup, usage.
+- **Git History:** No secrets in commits. `.env` never committed.
+- **CI/CD:** Uses OIDC workload identity. No stored secrets.
+- **Dependencies:** Fully declared in `pyproject.toml`. Font attribution recommended (NotoSansDevanagari is Apache 2.0).
+- **.squad/ directory:** Actually a feature — documents AI-assisted development. Real resource names are low-risk (not secrets).
+
+#### Verdict
+
+⚠️ **NOT YET** — Fix 2 blockers first. Items 3-5 are polish; project is architecturally sound.
+
+---
+
+## Squad Learnings
+
+### Learning 1: Proof-Based Governance Prevents "It Looks Good" Drift
+
+**What happened:** Early in Transpose, issues were being closed with subjective "this works now" comments. Stilgar imposed proof-based Definition of Done: every issue closure requires gate name, specific metrics, and commit hash. When the team later discovered that all 5 quality gates checked structural presence but NOT content fidelity (garbled Devanagari passed every gate), having machine-readable gate reports made the gap immediately auditable and actionable.
+
+**Takeaway:** Define gates with machine-readable output from day one. Make closure evidence mandatory and specific. "The gate passed" is meaningless without "OCR_Sanity: 14/14 pages, 0 failing, confidence ≥ 0.95." This discipline catches systemic gaps (like quality-vs-presence testing) that subjective review misses.
+
+---
+
+### Learning 2: Three-Agent Parallel Fan-Out Works, But Coupling Is the Tax
+
+**What happened:** The initial MVP build spawned Chani (pipeline), Idaho (infra), and Thufir (tests) as parallel background agents. All three delivered independently — 2,921 lines of pipeline code, full Azure infrastructure, 147 tests — in a single session. But every subsequent session required cross-agent coordination: Idaho's env var prefix had to match Chani's Settings class; Thufir's test mocks had to match Chani's actual API surface; infrastructure changes required code changes required test changes.
+
+**Takeaway:** Parallel agent spawning is the highest-leverage pattern for initial builds — it compresses what would be weeks of sequential work into one session. But define interface contracts (API contracts doc, env var naming, model schemas) BEFORE spawning agents. The architecture doc was the contract that made parallel execution possible. Without it, three agents would have built three incompatible systems.
+
+---
+
+### Learning 3: LLM Prompts Need Explicit Completeness Instructions
+
+**What happened:** The translation prompt said "literary tone, not word-for-word." GPT-4o interpreted this as permission to abridge, resulting in a 30% word count gap (55K Hindi → 38K English). Investigation showed 53% was from failed chunks, 35% from natural Hindi→English compression, but 12% (~2K words) was pure LLM condensation. Adding "Rule #5: translate all content completely — do not omit, summarize, or condense any text" to both system and user prompts eliminated the condensation gap.
+
+**Takeaway:** When using LLMs for content transformation (translation, summarization, extraction), always pair style instructions with explicit completeness constraints. "Be literary" + "translate everything" is not redundant — without the completeness instruction, the LLM optimizes for style by sacrificing content. This applies to any Squad project using LLM-based pipeline stages.
+
+---
+
+### Learning 4: Gates Must Test Quality, Not Just Presence
+
+**What happened:** After building 7 quality gates, the team ran the first real E2E pipeline on a 95-page Osho book. The PDF passed all gates — but visual inspection revealed: truncated chapter titles, garbled Devanagari in the glossary (17/49 entries corrupted), a placeholder filename as the cover title, and a nearly-empty Table of Contents. Every gate checked "does this thing exist?" but none checked "is this thing correct?" The character `9` was systematically replacing `व` (va) in the glossary, and gates said PASS.
+
+**Takeaway:** Structural presence checks ("has_title: true") are necessary but not sufficient. Content fidelity checks ("title matches source within Levenshtein distance 5") catch the bugs that matter. Build at least one quality-comparison gate (golden target comparison, visual regression, content hash) from the start. If your gates only check shape, they'll pass garbage with a smile.
+
+---
+
+### Learning 5: The .squad/ Directory Is Institutional Memory — Protect It
+
+**What happened:** Over 5 days of development, the `.squad/` directory accumulated: 4 agent histories with deep technical learnings, 15+ session logs documenting every architectural decision and its rationale, a gap analysis that found 15 production issues, orchestration logs showing how parallel work was coordinated, and a decisions file that served as the team's "constitution." When a new session started, agents could read their own history and avoid repeating mistakes. When Chani's export code garbled Devanagari, Stilgar's previous visual inspection notes in history.md told the next session exactly what to look for.
+
+**Takeaway:** Treat `.squad/` as the project's institutional memory, not just operational overhead. History files should capture *why* decisions were made, not just what was done. The most valuable entries are lessons from failures ("always normalize whitespace before PDF text matching") and cross-agent discoveries ("Chani's lock implementation made Thufir's tests pass without modification — good API design"). New squad projects should seed history files with project context on day one.
