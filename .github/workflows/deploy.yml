@@ -21,11 +21,11 @@ permissions:
   contents: read
 
 env:
-  AZURE_RESOURCE_GROUP: transpose-sc
-  CONTAINER_APP_NAME: transpose-dev-app
-  ACR_NAME: transposedevacr
-  ACR_LOGIN_SERVER: transposedevacr.azurecr.io
-  IMAGE_NAME: transpose
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  CONTAINER_APP_NAME: ${{ vars.CONTAINER_APP_NAME }}
+  ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+  ACR_LOGIN_SERVER: ${{ vars.AZURE_ACR_LOGIN_SERVER }}
+  IMAGE_NAME: ${{ vars.IMAGE_NAME || 'transpose' }}
 
 jobs:
   # ---------------------------------------------------------------
