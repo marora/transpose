@@ -6,6 +6,20 @@
       "timestamp": "2026-04-17T15:41:00Z",
       "agents": ["Stilgar", "Chani", "Idaho", "Thufir"],
       "reason": "Initial team cast for Transpose project"
+    },
+    {
+      "assignment_id": "transpose-publisher-2026-04-25",
+      "universe": "Dune",
+      "timestamp": "2026-04-25T00:00:00Z",
+      "agents": ["Irulan"],
+      "reason": "Publisher/Editor agent added for publication readiness QA loop"
+    },
+    {
+      "assignment_id": "transpose-recast-matrix-2026-04-25",
+      "universe": "Matrix",
+      "timestamp": "2026-04-25T15:54:00Z",
+      "agents": ["Morpheus", "Trinity", "Tank", "Dozer", "Oracle"],
+      "reason": "Recast from Dune to Matrix universe per user preference"
     }
   ]
 }

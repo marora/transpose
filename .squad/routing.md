@@ -6,12 +6,13 @@ How to decide who handles what.
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| Architecture & design | Stilgar | System design, module boundaries, API contracts, tech decisions |
-| Pipeline & translation | Chani | OCR integration, GPT-4o translation, glossary extraction, ePub/PDF output |
-| Azure infrastructure | Idaho | Container Apps, Managed Identity, Key Vault, App Insights, Bicep/IaC, Redis, PostgreSQL |
-| Testing & quality | Thufir | Unit tests, integration tests, edge cases, test fixtures, quality gates |
-| Code review | Stilgar | Review PRs, check quality, architectural consistency |
-| Scope & priorities | Stilgar | What to build next, trade-offs, decisions |
+| Architecture & design | Morpheus | System design, module boundaries, API contracts, tech decisions |
+| Pipeline & translation | Trinity | OCR integration, GPT-4o translation, glossary extraction, ePub/PDF output |
+| Azure infrastructure | Tank | Container Apps, Managed Identity, Key Vault, App Insights, Bicep/IaC, Redis, PostgreSQL |
+| Testing & quality | Dozer | Unit tests, integration tests, edge cases, test fixtures, quality gates |
+| Publication review | Oracle | Editorial QA, publication readiness, typography, frontmatter/backmatter, final approval |
+| Code review | Morpheus | Review PRs, check quality, architectural consistency |
+| Scope & priorities | Morpheus | What to build next, trade-offs, decisions |
 | Session logging | Scribe | Automatic — never needs routing |
 
 ## Issue Routing

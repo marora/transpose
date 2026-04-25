@@ -6,7 +6,7 @@
       "universe": "Dune",
       "created_at": "2026-04-17T15:41:00Z",
       "legacy_named": false,
-      "status": "active"
+      "status": "retired"
     },
     {
       "persistent_name": "Chani",
@@ -14,7 +14,7 @@
       "universe": "Dune",
       "created_at": "2026-04-17T15:41:00Z",
       "legacy_named": false,
-      "status": "active"
+      "status": "retired"
     },
     {
       "persistent_name": "Idaho",
@@ -22,13 +22,61 @@
       "universe": "Dune",
       "created_at": "2026-04-17T15:41:00Z",
       "legacy_named": false,
-      "status": "active"
+      "status": "retired"
     },
     {
       "persistent_name": "Thufir",
       "role": "Tester",
       "universe": "Dune",
       "created_at": "2026-04-17T15:41:00Z",
+      "legacy_named": false,
+      "status": "retired"
+    },
+    {
+      "persistent_name": "Irulan",
+      "role": "Publisher/Editor",
+      "universe": "Dune",
+      "created_at": "2026-04-25T00:00:00Z",
+      "legacy_named": false,
+      "status": "retired"
+    },
+    {
+      "persistent_name": "Morpheus",
+      "role": "Lead",
+      "universe": "Matrix",
+      "created_at": "2026-04-25T15:54:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Trinity",
+      "role": "Pipeline Dev",
+      "universe": "Matrix",
+      "created_at": "2026-04-25T15:54:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Tank",
+      "role": "Cloud/Infra Dev",
+      "universe": "Matrix",
+      "created_at": "2026-04-25T15:54:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Dozer",
+      "role": "Tester",
+      "universe": "Matrix",
+      "created_at": "2026-04-25T15:54:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Oracle",
+      "role": "Publisher/Editor",
+      "universe": "Matrix",
+      "created_at": "2026-04-25T15:54:00Z",
       "legacy_named": false,
       "status": "active"
     }

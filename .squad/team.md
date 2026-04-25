@@ -12,10 +12,11 @@
 
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
-| Stilgar | Lead | `.squad/agents/stilgar/charter.md` | 🏗️ Active |
-| Chani | Pipeline Dev | `.squad/agents/chani/charter.md` | 🔧 Active |
-| Idaho | Cloud/Infra Dev | `.squad/agents/idaho/charter.md` | ⚙️ Active |
-| Thufir | Tester | `.squad/agents/thufir/charter.md` | 🧪 Active |
+| Morpheus | Lead | `.squad/agents/morpheus/charter.md` | 🏗️ Active |
+| Trinity | Pipeline Dev | `.squad/agents/trinity/charter.md` | 🔧 Active |
+| Tank | Cloud/Infra Dev | `.squad/agents/tank/charter.md` | ⚙️ Active |
+| Dozer | Tester | `.squad/agents/dozer/charter.md` | 🧪 Active |
+| Oracle | Publisher/Editor | `.squad/agents/oracle/charter.md` | 📖 Active |
 | Scribe | Scribe | `.squad/agents/scribe/charter.md` | 📋 Active |
 | Ralph | Work Monitor | `.squad/agents/ralph/charter.md` | 🔄 Active |
 

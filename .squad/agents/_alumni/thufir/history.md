@@ -395,3 +395,21 @@ Instrumented OpenTelemetry spans and Prometheus metrics on all quality gates via
 **Metrics:** gate latency (histogram), gate errors (counter), throughput (gauge)  
 **Test Status:** 657/657 passing  
 **Key Learnings:** Centralized instrumentation in orchestration layer (DRY) > individual gate functions; resume-from tests validate idempotency guarantees.
+
+## Learnings
+
+### 2025-07-25 — Osho VBT Visual QA R1
+
+Performed publication-readiness QA on `Osho_VBT_translated.pdf` (107 pages) vs source Hindi (95 pages) using PyMuPDF structural analysis.
+
+**Key Findings:**
+- 3 P0 blockers: Methods 18–23 missing (6/22 chapters), 3 untranslated passages with placeholder markers, all 23 source images absent from output
+- 2 P1s: blank PDF metadata, stale Vachan TOC entries
+- 2 P2s: glyph mapping error (samadhi), 3 over-dense pages
+- Passes: word ratio 0.944, cultural terms preserved, zero markup artifacts, clean font stack
+
+**Learnings:**
+- PyMuPDF `get_toc()` is reliable for bookmark comparison across source/target PDFs
+- Devanagari Unicode range check (\u0900-\u097F) combined with string-length heuristic effectively separates cultural terms from untranslated passages
+- WeasyPrint does not auto-carry images from source; image injection must be an explicit pipeline stage
+- OCR damage (garbled characters like `0क`, `तुZ`) propagates to translation failures — need pre-translation OCR validation gate

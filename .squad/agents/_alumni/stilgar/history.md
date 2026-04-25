@@ -319,3 +319,22 @@ Reviewed all squad history (decisions.md, all 4 agent histories, orchestration l
 - **L11: Test Stubs Drift From Real Signatures** — Test-first stubs had wrong signatures; all wasted. Lock signatures in architecture doc before parallel work.
 - **L12: Variable Fonts Break PDF Toolchains** — Static font builds for PDF generation; distinguish visual rendering from extraction artifacts.
 - **L13: Real E2E Reveals Operational Gaps** — First 95-page run exposed persistence, lock TTL, timeout, cost, and progress issues invisible to content gates.
+
+### 2026-04-25 — Editorial Gap Analysis R1: Osho VBT Publication Readiness
+
+**Completed programmatic editorial gap analysis** comparing source Hindi PDF (95pp, 55K words) against translated English PDF (107pp, 52K words). Used PyMuPDF for text extraction, Devanagari detection, image counting, font analysis, and metadata inspection.
+
+**15 findings identified: 6 P0-blockers, 4 P1-high, 3 P2-medium, 2 P3-low.**
+
+**Key P0 blockers:**
+- ~2,900 Devanagari tokens of untranslated Hindi on 6 pages (40–41, 82–83, 91–92) — raw OCR text leaked to output
+- 2 explicit `[Original text — translation unavailable]` failure markers visible in final PDF
+- All 23 source images stripped — zero images in translated output
+- PDF metadata empty (no title, author)
+- Method 4 entirely missing from ToC and body
+- Word count ratio 0.94× (expected 1.2–1.5×) — systemic content loss of 17K–34K words
+
+**Lesson:** Quality gates check structural presence but not content fidelity. A publication-readiness gate must validate: (1) no failure markers in output, (2) Devanagari density per page below threshold (cultural terms only), (3) sequential method numbering, (4) word count ratio within expected range, (5) PDF metadata populated, (6) image parity with source. None of these are currently enforced.
+
+**Report:** `.squad/quality/osho-editorial-gap-analysis-r1.md`
+**Decision proposal:** `.squad/decisions/inbox/stilgar-osho-editorial-r1.md`
