@@ -1174,6 +1174,35 @@ def export_rendering_gate(pdf_path: str) -> GateResult:
         details["garbled_pages"] = garbled_pages
         details["low_text_pages"] = low_text_pages
 
+        # Check for duplicate images across pages
+        image_xrefs_by_page: dict[int, list[int]] = {}
+        all_image_xrefs: list[tuple[int, int]] = []  # (xref, page_num)
+        for i in range(page_count):
+            page = doc[i]
+            imgs = page.get_images(full=True)
+            xrefs = [img[0] for img in imgs]
+            image_xrefs_by_page[i + 1] = xrefs
+            for xref in xrefs:
+                all_image_xrefs.append((xref, i + 1))
+
+        # Count how many pages each image xref appears on
+        from collections import Counter
+        xref_counts = Counter(xref for xref, _ in all_image_xrefs)
+        duplicate_images = {xref: count for xref, count in xref_counts.items() if count > 1}
+        if duplicate_images:
+            details["duplicate_image_xrefs"] = len(duplicate_images)
+            details["duplicate_image_details"] = {
+                str(xref): count for xref, count in list(duplicate_images.items())[:10]
+            }
+            # Allow decorative/header images (same small image on every page)
+            # but flag large images that repeat, as they indicate an assembly bug
+            significant_dupes = sum(1 for count in duplicate_images.values() if count >= 3)
+            if significant_dupes:
+                failures.append(
+                    f"{significant_dupes} image(s) repeated 3+ times across pages — "
+                    "likely assembly dedup bug"
+                )
+
         # Blank pages shouldn't exceed 10% of total
         if len(blank_pages) > max(2, page_count * 0.10):
             failures.append(

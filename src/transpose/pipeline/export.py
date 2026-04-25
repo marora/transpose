@@ -156,7 +156,7 @@ async def _generate_epub(manuscript, glossary, book, cover_image_data: bytes | N
     # Create book
     ebook = epub.EpubBook()
     ebook.set_identifier(str(manuscript.id))
-    ebook.set_title(manuscript.title)
+    ebook.set_title(book.title if book else manuscript.title)
     if manuscript.author:
         ebook.set_language("en")
         ebook.add_author(manuscript.author)
@@ -237,6 +237,34 @@ async def _generate_epub(manuscript, glossary, book, cover_image_data: bytes | N
         ebook.add_item(cover_page)
         epub_chapters.append(cover_page)
 
+    # Copyright / attribution page
+    author_name = manuscript.author or "Unknown"
+    copyright_html = (
+        "<div style='text-align: center; padding-top: 6em;'>\n"
+        f"<p><strong>{_escape_html(book.title if book else manuscript.title)}</strong></p>\n"
+        f"<p>by {_escape_html(author_name)}</p>\n"
+        "<br/>\n"
+        f"<p>&copy; {_escape_html(author_name)} Foundation International</p>\n"
+        "<p>English translation produced by Transpose AI Translation Pipeline</p>\n"
+        "<br/>\n"
+        "<p><em>All rights reserved. No part of this publication may be reproduced, "
+        "stored in a retrieval system, or transmitted in any form or by any means "
+        "without the prior written permission of the copyright holder.</em></p>\n"
+        "<br/>\n"
+        "<p>Cultural terms from the original language have been preserved "
+        "to maintain authenticity. A glossary is provided at the end of this volume.</p>\n"
+        "</div>\n"
+    )
+    copyright_page = epub.EpubHtml(
+        title="Copyright",
+        file_name="copyright.xhtml",
+        lang="en",
+    )
+    copyright_page.content = copyright_html
+    copyright_page.add_item(nav_css)
+    ebook.add_item(copyright_page)
+    epub_chapters.append(copyright_page)
+
     # Add Translator's Foreword if present
     foreword_text = manuscript.metadata.get("foreword") if manuscript.metadata else None
     if foreword_text:
@@ -256,14 +284,19 @@ async def _generate_epub(manuscript, glossary, book, cover_image_data: bytes | N
         ebook.add_item(foreword_chapter)
         epub_chapters.append(foreword_chapter)
 
-    # Add chapters
+    # Add chapters — apply same post-processing as PDF export
+    import re as _re
     for chapter in manuscript.chapters:
+        # Apply Vachan→Pravachan rename and untranslated marker cleanup
+        html = _postprocess_chapter_html(chapter.content_html)
+        # Rename title too
+        title = _re.sub(r'(?i)(?<![A-Za-z])Vachan([\s-]*\d+)', r'Pravachan\1', chapter.title)
         epub_chapter = epub.EpubHtml(
-            title=chapter.title,
+            title=title,
             file_name=f"chapter_{chapter.number}.xhtml",
             lang="en",
         )
-        epub_chapter.content = chapter.content_html
+        epub_chapter.content = html
         epub_chapter.add_item(nav_css)
         ebook.add_item(epub_chapter)
         epub_chapters.append(epub_chapter)
@@ -324,13 +357,16 @@ async def _generate_pdf(manuscript, glossary, book, cover_image_data: bytes | No
 
     logger = logging.getLogger(__name__)
 
-    # --- Font paths (static font preferred for reliable GSUB/GPOS shaping) ---
+    # --- Font paths (variable font has better glyph coverage for conjuncts) ---
     fonts_dir = Path(__file__).resolve().parents[3] / "fonts"
-    devanagari_font = fonts_dir / "NotoSansDevanagari-Regular.ttf"
+    devanagari_font = fonts_dir / "NotoSansDevanagari.ttf"
     gurmukhi_font = fonts_dir / "NotoSansGurmukhi.ttf"
 
     # Build reusable HTML fragments
     body_html = _build_pdf_body_html(manuscript, glossary)
+
+    # Attach book title for subtitle derivation in title page
+    manuscript._book_title = book.title if book else manuscript.title
 
     # --- Pass 1: render with placeholder ToC to discover page positions ---
     font_config_1 = FontConfiguration()
@@ -361,6 +397,10 @@ async def _generate_pdf(manuscript, glossary, book, cover_image_data: bytes | No
     pdf_bytes = HTML(string=full_html_2).write_pdf(
         stylesheets=[css_pass2], font_config=font_config_2
     )
+
+    # --- Post-process: set PDF metadata via PyMuPDF ---
+    pdf_bytes = _set_pdf_metadata(pdf_bytes, manuscript, book)
+
     return pdf_bytes
 
 
@@ -425,13 +465,22 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
             font-size: 10pt;
             color: #666;
         }}
+        @top-center {{
+            content: string(book-title);
+            font-size: 9pt;
+            color: #999;
+            font-style: italic;
+        }}
     }}
     @page :first {{
         @bottom-center {{
             content: none;
         }}
+        @top-center {{
+            content: none;
+        }}
     }}
-    .title-page, .toc-page, .foreword-page {{
+    .title-page, .toc-page, .foreword-page, .copyright-page {{
         page: frontmatter;
     }}
     @page frontmatter {{
@@ -439,6 +488,9 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
             content: counter(page, lower-roman);
             font-size: 10pt;
             color: #666;
+        }}
+        @top-center {{
+            content: none;
         }}
     }}
     body {{
@@ -458,6 +510,11 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
         font-size: 15pt;
         margin-top: 1.2em;
     }}
+    .discourse-ref {{
+        font-size: 15pt;
+        font-weight: bold;
+        margin-top: 1.2em;
+    }}
     p {{
         margin: 0.7em 0;
         text-align: justify;
@@ -472,6 +529,7 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
         font-weight: bold;
         letter-spacing: 2px;
         margin-bottom: 1em;
+        string-set: book-title content();
     }}
     .subtitle {{
         font-size: 20pt;
@@ -534,6 +592,13 @@ def _build_pdf_css(devanagari_font, gurmukhi_font, font_config, *, use_target_co
     .foreword-page {{
         page-break-after: always;
     }}
+    .copyright-page {{
+        page-break-after: always;
+        text-align: center;
+        padding-top: 6cm;
+        font-size: 10pt;
+        color: #444;
+    }}
     .foreword-content p {{
         text-indent: 1.5em;
         margin: 0.5em 0;
@@ -588,13 +653,35 @@ def _build_toc_html(table_of_contents, *, page_map):
     if not table_of_contents:
         return ""
 
-    parts = ["<div class='toc-page'>\n", "<h1>Table of Contents</h1>\n", "<ul class='toc'>\n"]
+    # Deduplicate TOC entries — L1 entries key on (chapter, title, level),
+    # L2 sub-entries key on (title, level) only to prevent same discourse
+    # reference appearing under multiple chapters
+    import re as _re
+    seen_keys: set[tuple] = set()
+    deduped_toc: list[dict] = []
     for toc_entry in table_of_contents:
+        level = toc_entry.get("level", 1)
+        # Normalize title for dedup (also treat Vachan/Pravachan as same)
+        title_norm = toc_entry.get("title", "").lower().strip()
+        title_norm = _re.sub(r'vachan([\s-]*\d+)', r'pravachan\1', title_norm)
+        if level == 1:
+            key = (toc_entry.get("chapter"), title_norm, level)
+        else:
+            key = (title_norm, level)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped_toc.append(toc_entry)
+
+    parts = ["<div class='toc-page'>\n", "<h1>Table of Contents</h1>\n", "<ul class='toc'>\n"]
+    for toc_entry in deduped_toc:
         chapter_num = toc_entry.get("chapter", "")
         level = toc_entry.get("level", 1)
         # Use explicit anchor if provided (sub-headings), else chapter-N
         anchor = toc_entry.get("anchor", f"chapter-{chapter_num}")
         title = _escape_html(toc_entry["title"])
+        # Apply Vachan→Pravachan rename to cached TOC entries (Issue #78)
+        import re as _re
+        title = _re.sub(r'(?i)(?<![A-Za-z])Vachan([\s-]*\d+)', r'Pravachan\1', title)
 
         # Indent sub-entries
         li_class = "toc-entry" if level == 1 else "toc-entry toc-sub"
@@ -619,6 +706,56 @@ def _build_toc_html(table_of_contents, *, page_map):
     return "".join(parts)
 
 
+def _postprocess_chapter_html(html: str) -> str:
+    """Apply export-time fixes to cached manuscript chapter HTML.
+
+    The export script reads pre-built manuscripts from the DB, so fixes
+    in the assemble stage don't take effect for already-cached books.
+    This function applies text-level corrections at render time.
+    """
+    import re
+
+    # 1. Vachan → Pravachan in headings and text (Issue #78)
+    #    The LLM produced "Vachan-N" but the correct Hindi scholarly term
+    #    is Pravachan (प्रवचन = discourse).
+    html = re.sub(
+        r'(?<![A-Za-z])Vachan([\s\-—–]*\d+)',
+        r'Pravachan\1',
+        html,
+        flags=re.IGNORECASE,
+    )
+
+    # 2. Clean untranslated passage markers (Issue #77)
+    #    Replace "[Original text — translation unavailable]" + raw Hindi
+    #    with a clean editorial note. The raw Hindi after the marker may
+    #    span multiple lines until the next English paragraph.
+    html = re.sub(
+        r'\[Original text\s*[—–-]\s*translation unavailable\]'
+        r'(?:\s*<[^>]*>)*'   # optional HTML tags
+        r'[^<]*?'            # raw Hindi text (non-greedy, within same element)
+        r'(?=</)',           # stop before closing tag
+        '[A passage from the original text could not be translated and has been omitted.]',
+        html,
+    )
+    # Also handle plain-text version (not wrapped in HTML tags)
+    html = re.sub(
+        r'\[Original text\s*[—–-]\s*translation unavailable\]'
+        r'[\s\S]*?'         # raw source text
+        r'(?=</p>|</div>|</em>|\n\n)',
+        '[A passage from the original text could not be translated and has been omitted.]',
+        html,
+    )
+
+    # 3. Strip stray non-Devanagari Indic script (Malayalam, Tamil, etc.)
+    #    that leaked through OCR — Issue #79
+    html = re.sub(r'[\u0D00-\u0D7F]', '', html)   # Malayalam
+    html = re.sub(r'[\u0B80-\u0BFF]', '', html)   # Tamil
+    html = re.sub(r'[\u0C00-\u0C7F]', '', html)   # Telugu
+    html = re.sub(r'[\u0C80-\u0CFF]', '', html)   # Kannada
+
+    return html
+
+
 def _build_pdf_body_html(manuscript, glossary):
     """Build the body HTML (foreword + chapters + glossary)."""
     parts = []
@@ -637,9 +774,47 @@ def _build_pdf_body_html(manuscript, glossary):
     # Reset page counter to arabic 1 at start of body content — Issue #11
     parts.append("<div style='counter-reset: page 1;'></div>\n")
 
-    # Chapters
+    # Chapters — apply export-time post-processing on cached manuscript HTML
+    # Track method numbers to detect gaps and insert editorial notes
+    # Track seen h2 headings to deduplicate bookmark generation
+    import re as _re
+    prev_method = 0
+    seen_h2_headings: set[str] = set()
     for chapter in manuscript.chapters:
-        parts.append(chapter.content_html)
+        html = _postprocess_chapter_html(chapter.content_html)
+        # Deduplicate h2 headings across chapters — WeasyPrint generates
+        # bookmarks from every h2, so duplicate discourse refs (Pravachan-N)
+        # create duplicate bookmarks. Downgrade dupes to <p> elements.
+        def _dedup_h2(match):
+            heading_text = match.group(2)
+            key = heading_text.strip().lower()
+            if key in seen_h2_headings:
+                # Downgrade to styled paragraph (no bookmark generated)
+                return f"<p class='discourse-ref' id='{match.group(1)}'>{heading_text}</p>"
+            seen_h2_headings.add(key)
+            return match.group(0)
+        html = _re.sub(
+            r"<h2 id='([^']*)'>(.*?)</h2>",
+            _dedup_h2,
+            html,
+        )
+        # Detect method number from chapter title
+        method_match = _re.search(r'Method\s+(\d+)', chapter.title)
+        if method_match:
+            method_num = int(method_match.group(1))
+            # Insert editorial note for any skipped methods
+            for gap in range(prev_method + 1, method_num):
+                parts.append(
+                    f"<div class='editorial-note' style='page-break-before: always; "
+                    f"padding: 2em; text-align: center; color: #666;'>\n"
+                    f"<h1 id='chapter-method-{gap}'>Tantra Sutra — Method {gap}</h1>\n"
+                    f"<p><em>[Translator's Note: Method {gap} does not appear in the "
+                    f"source edition used for this translation. The original Hindi volume "
+                    f"proceeds directly from Method {gap - 1} to Method {gap + 1}.]</em></p>\n"
+                    f"</div>\n"
+                )
+            prev_method = method_num
+        parts.append(html)
 
     # Glossary — seed glossary overrides LLM-detected original_script at
     # render time so that curated Devanagari/Gurmukhi forms are always used,
@@ -682,6 +857,12 @@ def _assemble_full_html(manuscript, toc_html, body_html, cover_image_data: bytes
     else:
         # Text-only title page (cover) — Issue #10
         subtitle = (manuscript.metadata or {}).get("subtitle", "")
+        # Derive subtitle from book title if "Volume" is present
+        if not subtitle and hasattr(manuscript, '_book_title'):
+            import re
+            vol_match = re.search(r'(Volume\s+\d+|Part\s+\d+|भाग[\s-]*\d+)', manuscript._book_title, re.IGNORECASE)
+            if vol_match:
+                subtitle = vol_match.group(1)
         parts.append("<div class='title-page'>\n")
         parts.append(f"<div class='title'>{_escape_html(manuscript.title)}</div>\n")
         if subtitle:
@@ -690,6 +871,23 @@ def _assemble_full_html(manuscript, toc_html, body_html, cover_image_data: bytes
         if manuscript.author:
             parts.append(f"<div class='author'>{_escape_html(manuscript.author)}</div>\n")
         parts.append("</div>\n")
+
+    # Copyright / attribution page
+    parts.append("<div class='copyright-page'>\n")
+    author_name = manuscript.author or "Unknown"
+    parts.append(f"<p><strong>{_escape_html(manuscript.title)}</strong></p>\n")
+    parts.append(f"<p>by {_escape_html(author_name)}</p>\n")
+    parts.append("<br/>\n")
+    parts.append(f"<p>&copy; {_escape_html(author_name)} Foundation International</p>\n")
+    parts.append("<p>English translation produced by Transpose AI Translation Pipeline</p>\n")
+    parts.append("<br/>\n")
+    parts.append("<p><em>All rights reserved. No part of this publication may be reproduced, "
+                 "stored in a retrieval system, or transmitted in any form or by any means "
+                 "without the prior written permission of the copyright holder.</em></p>\n")
+    parts.append("<br/>\n")
+    parts.append("<p>Cultural terms from the original language have been preserved "
+                 "to maintain authenticity. A glossary is provided at the end of this volume.</p>\n")
+    parts.append("</div>\n")
 
     # ToC
     parts.append(toc_html)
@@ -802,4 +1000,31 @@ def _sanitize_filename(filename: str) -> str:
     if len(sanitized) > 100:
         sanitized = sanitized[:100]
     return sanitized
+
+
+def _set_pdf_metadata(pdf_bytes: bytes, manuscript, book) -> bytes:
+    """Set PDF metadata (title, author, subject, keywords) via PyMuPDF."""
+    try:
+        import fitz
+    except ImportError:
+        return pdf_bytes
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        metadata = doc.metadata or {}
+        metadata["title"] = book.title or manuscript.title
+        metadata["author"] = manuscript.author or book.author or ""
+        metadata["subject"] = "Spiritual / Meditation — English translation"
+        metadata["keywords"] = "tantra, meditation, osho, vigyan bhairav tantra, translation"
+        metadata["creator"] = "Transpose AI Translation Pipeline"
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("D:%Y%m%d%H%M%S+00'00'")
+        metadata["creationDate"] = now
+        metadata["modDate"] = now
+        doc.set_metadata(metadata)
+        out_bytes = doc.tobytes()
+        doc.close()
+        return out_bytes
+    except Exception:
+        return pdf_bytes
 

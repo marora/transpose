@@ -53,7 +53,6 @@ SEED_TERMS: list[tuple[str, str, str]] = [
     ("naam", "ਨਾਮ", "The divine Name; meditation on God's name"),
     ("simran", "ਸਿਮਰਨ", "Remembrance of the divine through meditation"),
     ("ardas", "ਅਰਦਾਸ", "Sikh prayer"),
-    ("amrit", "ਅੰਮ੍ਰਿਤ", "Nectar of immortality; Sikh baptismal water"),
     ("khalsa", "ਖ਼ਾਲਸਾ", "The community of initiated Sikhs"),
     ("kirtan", "ਕੀਰਤਨ", "Devotional singing of hymns"),
     ("bani", "ਬਾਣੀ", "Sacred utterance, divine word"),
@@ -76,6 +75,16 @@ SEED_TERMS: list[tuple[str, str, str]] = [
     ("tamas", "तमस्", "Quality of darkness, inertia, ignorance"),
     ("kundalini", "कुण्डलिनी", "Coiled spiritual energy at the base of the spine"),
     ("chakra", "चक्र", "Energy center in the subtle body"),
+    ("shiva", "शिव", "The auspicious one; aspect of the divine as destroyer-transformer"),
+    ("samskara", "संस्कार", "Latent impressions from past actions; mental conditioning"),
+    ("siddhasana", "सिद्धासन", "The accomplished pose; seated meditation posture"),
+    ("upanishads", "उपनिषद", "Esoteric philosophical texts of the Vedic tradition"),
+    ("vigyan", "विज्ञान", "Science; direct experiential knowledge"),
+    ("merudand", "मेरुदंड", "Spinal column; the central axis of the subtle body"),
+    ("bhairav", "भैरव", "The fierce aspect of Shiva; destroyer of fear"),
+    ("vachan", "वचन", "Word, speech; discourse reference"),
+    ("pravachan", "प्रवचन", "Discourse, lecture; recorded spiritual talk"),
+    ("amrit", "अमृत", "Nectar of immortality; divine essence"),
 ]
 
 

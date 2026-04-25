@@ -115,6 +115,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
     chapters: list[ManuscriptChapter] = []
     toc: list[dict] = []
     untranslated_passages = 0  # track for foreword note
+    emitted_image_keys: set[str] = set()  # global dedupe — prevents same image in multiple chapters
 
     for chapter_num, (chapter_ref, chapter_chunks) in enumerate(
         sorted(chapters_data.items()), start=1
@@ -130,7 +131,7 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
 
         # Sub-heading counter for within-chapter headings (Discourse N, Part N, etc.)
         sub_heading_idx = 0
-        emitted_image_keys: set[str] = set()  # dedupe images across overlapping chunks
+        seen_sub_headings: set[str] = set()  # dedupe TOC sub-entries within chapter
 
         for item_idx, item in enumerate(chapter_chunks):
             chunk = item["chunk"]
@@ -153,17 +154,25 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
 
             # --- Issue #59: sanitize failure markers ---
             if TRANSLATION_FAILED_PLACEHOLDER in text:
-                # Replace raw failure marker with original text fallback
+                # Replace raw failure marker with a clean translator's note
+                # Do NOT include the raw source text — it looks like a pipeline error
                 text = text.replace(
                     TRANSLATION_FAILED_PLACEHOLDER,
-                    f"{ORIGINAL_TEXT_FALLBACK_PREFIX}\n\n{chunk.source_text}",
+                    ORIGINAL_TEXT_FALLBACK_PREFIX,
                 )
                 untranslated_passages += 1
 
-            # Count passages that used the original-text fallback path
+            # Handle passages that used the original-text fallback path
             if ORIGINAL_TEXT_FALLBACK_PREFIX in text:
-                # Already counted above if we just replaced; also count if
-                # translate stage stored it this way directly
+                # Strip any raw source text that follows the prefix
+                # (translate stage may have appended original Hindi)
+                import re as _re
+                # Remove the prefix and any following non-ASCII text block
+                text = _re.sub(
+                    r'\[Original text — translation unavailable\]\s*[\s\S]*?(?=\n\n[A-Za-z]|\Z)',
+                    '[A passage from the original text could not be translated and has been omitted.]',
+                    text,
+                )
                 if TRANSLATION_FAILED_PLACEHOLDER not in translation.translated_text:
                     untranslated_passages += 1
 
@@ -189,13 +198,16 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
                     content_html += (
                         f"<h2 id='{sub_id}'>{_escape_html(stripped)}</h2>\n"
                     )
-                    # Add sub-heading to TOC
-                    toc.append({
-                        "chapter": chapter_num,
-                        "title": stripped,
-                        "level": 2,
-                        "anchor": sub_id,
-                    })
+                    # Add sub-heading to TOC (deduplicate within chapter)
+                    heading_key = stripped.lower().strip()
+                    if heading_key not in seen_sub_headings:
+                        seen_sub_headings.add(heading_key)
+                        toc.append({
+                            "chapter": chapter_num,
+                            "title": stripped,
+                            "level": 2,
+                            "anchor": sub_id,
+                        })
                 elif ORIGINAL_TEXT_FALLBACK_PREFIX in stripped:
                     # Render original text in a styled note block
                     content_html += (
@@ -542,7 +554,8 @@ _HEADING_PATTERNS: list[re.Pattern] = [
     re.compile(r"^Talk\s+\d+", re.IGNORECASE),
     re.compile(r"^Sermon\s+\d+", re.IGNORECASE),
     re.compile(r"^Session\s+\d+", re.IGNORECASE),
-    # Discourse reference markers (वचन-N → Vachan-N)
+    # Discourse reference markers (प्रवचन-N → Pravachan-N, वचन-N legacy)
+    re.compile(r"^Pravachan[\s-]*\d+", re.IGNORECASE),
     re.compile(r"^Vachan[\s-]*\d+", re.IGNORECASE),
     # Numbered heading like "1. The Nature of Reality" or "15. Beyond the Mind"
     re.compile(r"^\d{1,3}\.\s+[A-Z]"),
