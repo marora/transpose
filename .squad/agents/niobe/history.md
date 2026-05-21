@@ -172,5 +172,13 @@ Why: Shape A is "private share with friends," not "public archive by accident." 
 
 **Owner:** Trinity (pipeline fix)
 
+### 2026-05-21T17:45:28Z: Shiv Sutra landing — both download buttons now visible
+
+**Status:** Fixed
+
+Tank diagnosed: Pipeline `source_url` threading is correct; manual republish in prior session omitted it from rendered HTML. Tank re-rendered landing.html with source_url properly threaded and copied source PDF to web root. Both buttons (translation + original scan) now showing on https://transposebooks.z14.web.core.windows.net/shiv-sutra/.
+
+**Product impact:** Shape A private URL sharing now shows complete book packaging (both PDFs) as designed. Readers can access source + translation.
+
 ---
 

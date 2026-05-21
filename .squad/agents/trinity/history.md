@@ -70,5 +70,13 @@ Tank diagnosed that the Container App missing `TRANSPOSE_BLOB_STATIC_WEBSITE_URL
 
 **Impact:** Future book runs will automatically publish to public Static Website path without needing manual URL injection or post-hoc republishing.
 
+### 2026-05-21T17:45:28Z: Shiv Sutra landing — original scan link added
+
+**Status:** Complete
+
+Tank verified: Workspace stage (`Stage 8`) `source_url` threading is correct. Previous manual republish omitted the original link. No pipeline bug. Tank re-rendered landing.html with source_url and copied original PDF to `$web/shiv-sutra/source.pdf`. Both download buttons now functional.
+
+**Learning:** Manual republishes are the ops gap, not the pipeline. Ops issue #92 filed for republish checklist.
+
 ---
 
