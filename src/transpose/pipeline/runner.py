@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from transpose.models.enums import BookStatus, SourceLanguage
@@ -48,6 +48,10 @@ class PipelineInput:
     output_dir: str | None = None
     concurrency: int | None = None
     force_retranslate: bool = False
+    # Provenance fields — used to populate metadata.json at the workspace stage.
+    source_url: str | None = None       # Download URL of the source scan
+    source_edition: str | None = None   # Publisher / edition / year string
+    translator_note: str | None = None  # Optional per-book OG description
 
 
 @dataclass
@@ -63,9 +67,10 @@ class PipelineOutput:
     errors: list[dict]
     gate_results: list[dict] = field(default_factory=list)
     cost_summary: dict | None = None
+    landing_page_url: str | None = None  # Set after workspace stage completes
 
 
-STAGE_ORDER = ["ingest", "ocr", "chunk", "translate", "glossary", "assemble", "export"]
+STAGE_ORDER = ["ingest", "ocr", "chunk", "translate", "glossary", "assemble", "export", "workspace"]
 
 
 def _run_gate(gate_fn, gate_input, gate_results: list[GateResult]) -> GateResult:
@@ -163,8 +168,18 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
     from transpose.observability.metrics import pipeline_errors, stage_duration
     from transpose.services import ServiceContext
 
-    # Import all stage modules
-    from . import assemble, chunk, export, glossary, ingest, ocr, translate
+    from . import (
+        assemble,
+        chunk,
+        export,
+        glossary,
+        ingest,
+        ocr,
+        translate,
+    )
+    from . import (
+        workspace as workspace_mod,
+    )
 
     logger = logging.getLogger(__name__)
 
@@ -187,6 +202,10 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
     artifacts: list[dict] = []
     glossary_term_count = 0
     total_tokens = 0
+    landing_page_url: str | None = None
+    # Track outputs needed by the workspace stage
+    _ingest_output = None
+    _export_output = None
 
     # Determine which stages to run
     start_index = 0
@@ -201,7 +220,6 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
     source_or_blob = input.source_path or input.blob_uri
     if start_index > STAGE_ORDER.index("ingest") and source_or_blob:
         import hashlib
-        from pathlib import Path
 
         existing = None
         pdf_path = Path(input.source_path) if input.source_path else None
@@ -278,6 +296,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             )
 
             book_id = str(ingest_output.book_id)
+            _ingest_output = ingest_output
             cost_tracker = CostTracker(book_id)
 
             # Track blob upload from ingest (source PDF)
@@ -509,6 +528,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 export.ExportInput(book_id=book_id, formats=input.output_formats),
                 ctx,
             )
+            _export_output = export_output
 
             await ctx.state.set_pipeline_status(str(book_id), "export")
 
@@ -580,12 +600,64 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 )
 
                 # Quality Gate: Source-Output Structural Comparison
-                source_pdf = input.source_path if input.source_path and Path(input.source_path).exists() else None
+                source_pdf = (
+                    input.source_path
+                    if input.source_path and Path(input.source_path).exists()
+                    else None
+                )
                 _run_gate(
                     lambda _inp: source_output_comparison_gate(source_pdf, pdf_artifact_path),
                     None,
                     gate_results,
                 )
+
+        # Stage 8: Workspace — upload artifacts, write metadata.json, publish landing page
+        # Runs after export. Non-fatal if static website URL is not configured
+        # (will warn and skip rather than blocking the pipeline).
+        if start_index <= STAGE_ORDER.index("workspace"):
+            logger.info("=== Stage 8: Workspace ===")
+            start_time = datetime.now()
+
+            static_website_url = ctx.settings.blob_static_website_url
+            if not static_website_url:
+                logger.warning(
+                    "⚠️  TRANSPOSE_BLOB_STATIC_WEBSITE_URL is not set — "
+                    "workspace artifacts will still be written, but no public static-site URL "
+                    "will be generated. Run Tank's T-1 storage setup and backfill later to publish."
+                )
+            try:
+                landing_page_url = await _run_workspace_stage(
+                    book_id=book_id,
+                    input=input,
+                    ctx=ctx,
+                    workspace_mod=workspace_mod,
+                    ingest_output=_ingest_output,
+                    export_output=_export_output,
+                    static_website_url=static_website_url,
+                    logger=logger,
+                )
+                logger.info("🔗 Landing page: %s", landing_page_url)
+                print(f"\n🔗  Share URL: {landing_page_url}\n")
+            except Exception as exc:
+                logger.error(
+                    "Workspace stage failed (non-fatal — pipeline artifacts are intact): %s",
+                    exc,
+                    exc_info=True,
+                )
+                errors.append({
+                    "stage": "workspace",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                })
+
+            duration = (datetime.now() - start_time).total_seconds()
+            stage_duration.record(duration, {"stage": "workspace", "book_id": str(book_id)})
+            stages_completed.append("workspace")
+            elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+            logger.info(
+                "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                len(stages_completed), 8, "workspace", duration, elapsed_total, str(book_id),
+            )
 
         # Write validation report
         report = _build_validation_report(book_id, gate_results, artifacts)
@@ -730,5 +802,210 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             for g in gate_results
         ],
         cost_summary=cost_summary_dict,
+        landing_page_url=landing_page_url,
     )
+
+
+# ──────────────────────────────────────────────
+# Workspace stage helper (TR-4)
+# ──────────────────────────────────────────────
+
+
+async def _run_workspace_stage(
+    *,
+    book_id: str | None,
+    input: PipelineInput,
+    ctx,
+    workspace_mod,
+    ingest_output,
+    export_output,
+    static_website_url: str,
+    logger,
+) -> str:
+    """Execute the workspace publish step after export.
+
+    Steps:
+      1.  Resolve book metadata from DB.
+      2.  Create BookWorkspace instance.
+      3.  Upload source PDF to workspace (copy from existing blob).
+      4.  Upload translated PDF to workspace (copy from export artifact blob).
+      5.  Build and write metadata.json (license.status = 'rights-unknown' always).
+      6.  Generate per-file SAS URLs for source + translated PDFs (30-day, read-only).
+      7.  Generate landing page HTML.
+      8.  Publish landing page to $web and workspace private copy.
+      9.  Update metadata.json with share.* fields and landing_page_url.
+
+    Hard guards enforced here (Layer 3 + "do not auto-claim PD"):
+      - metadata.json is created with license.status = 'rights-unknown' only.
+      - update_metadata() raises if any caller passes a 'license' key.
+      - No pipeline code path upgrades license.status — ever.
+
+    Returns the public landing page URL.
+    """
+    from transpose.pipeline.workspace import (
+        BookWorkspace,
+        build_metadata,
+        generate_landing_html,
+        make_slug,
+        validate_metadata,
+    )
+    from transpose.services.blob_client import BlobClient
+
+    if not book_id:
+        raise ValueError("workspace stage requires book_id")
+
+    # Fetch book from DB for title, author, source_language, page_count
+    book = await ctx.db.get_book(book_id)
+    if not book:
+        raise ValueError(f"Book not found in DB: {book_id}")
+
+    slug = make_slug(book.title)
+
+    workspace_blob = BlobClient(
+        ctx.settings.blob_storage_account_url,
+        allow_local_fallback=False,
+        on_rbac_retry=logger.warning,
+    )
+    ws = BookWorkspace(
+        book_id=book_id,
+        slug=slug,
+        blob_client=workspace_blob,
+        static_website_url=static_website_url,
+    )
+
+    logger.info(
+        "Workspace prefix: %s  landing URL: %s", ws.blob_prefix, ws.landing_page_url
+    )
+
+    async def _read_artifact_bytes(uri: str) -> bytes:
+        import urllib.parse
+
+        if uri.startswith("file://"):
+            parsed = urllib.parse.urlparse(uri)
+            return Path(urllib.parse.unquote(parsed.path)).read_bytes()
+
+        from transpose.pipeline.ingest import _parse_blob_uri
+
+        container_name, blob_name = _parse_blob_uri(uri)
+        return await ctx.blob.download_blob(container=container_name, blob_name=blob_name)
+
+    try:
+        # ── Upload source PDF ──────────────────────────────────────────────────
+        source_blob_uri = (
+            ingest_output.source_blob_uri
+            if ingest_output
+            else getattr(book, "source_blob_uri", None)
+        )
+        if source_blob_uri:
+            logger.info("Copying source PDF to workspace: %s", ws.source_blob_name)
+            try:
+                source_pdf_data = await _read_artifact_bytes(source_blob_uri)
+                await ws.upload_source(source_pdf_data)
+            except Exception as exc:
+                logger.warning(
+                    "Could not copy source PDF to workspace (non-fatal): %s", exc
+                )
+        else:
+            logger.warning("No source_blob_uri available — source PDF not copied to workspace")
+
+        # ── Upload translated PDF ──────────────────────────────────────────────
+        translated_pdf_blob_uri: str | None = None
+        if export_output:
+            for artifact in export_output.artifacts:
+                if getattr(artifact, "format", "") == "pdf":
+                    translated_pdf_blob_uri = getattr(artifact, "blob_uri", None)
+                    break
+
+        if translated_pdf_blob_uri:
+            logger.info("Copying translated PDF to workspace: %s", ws.translated_blob_name)
+            try:
+                translated_pdf_data = await _read_artifact_bytes(translated_pdf_blob_uri)
+                await ws.upload_translated(translated_pdf_data)
+            except Exception as exc:
+                logger.warning(
+                    "Could not copy translated PDF to workspace (non-fatal): %s", exc
+                )
+        else:
+            logger.warning(
+                "No translated PDF artifact available — translated PDF not copied to workspace"
+            )
+
+        # ── Build and write initial metadata.json ─────────────────────────────
+        # Translator note: from PipelineInput, then env, then synthesized default.
+        source_language_str = str(book.source_language).title()  # e.g. "Hindi"
+
+        meta = build_metadata(
+            book_id=book_id,
+            slug=slug,
+            title=book.title,
+            author=book.author or "",
+            source_language=source_language_str,
+            target_language="English",
+            page_count=book.page_count or 0,
+            source_url=input.source_url,
+            source_edition=input.source_edition,
+            translator_note=input.translator_note
+            or ctx.settings.workspace_translator_note
+            or None,
+        )
+
+        validation_errors = validate_metadata(meta)
+        if validation_errors:
+            logger.warning("metadata.json validation warnings: %s", validation_errors)
+
+        # HARD GUARD — Layer 3: this will raise RightsUnknownViolation if violated.
+        # Do not catch this exception — let it propagate to signal a code bug.
+        await ws.write_metadata(meta)
+        logger.info("metadata.json written (license.status=rights-unknown)")
+
+        # ── Generate SAS URLs (30-day read-only per-file) ───────────────────────
+        now_utc = datetime.now(UTC)
+        sas_expiry = (now_utc + timedelta(days=30)).isoformat()
+
+        try:
+            source_sas = await ws.generate_sas_url(ws.source_blob_name, expiry_days=30)
+        except Exception as exc:
+            logger.warning("SAS URL generation failed for source PDF: %s", exc)
+            source_sas = ""
+
+        try:
+            translated_sas = await ws.generate_sas_url(
+                ws.translated_blob_name, expiry_days=30
+            )
+        except Exception as exc:
+            logger.warning("SAS URL generation failed for translated PDF: %s", exc)
+            translated_sas = ""
+
+        # ── Generate landing page HTML ─────────────────────────────────────────
+        # Populate share.* before rendering so OG links resolve correctly.
+        meta["landing_page_url"] = ws.landing_page_url
+        meta["share"]["source_pdf_sas_url"] = source_sas
+        meta["share"]["translated_pdf_sas_url"] = translated_sas
+        meta["share"]["sas_expiry"] = sas_expiry
+        meta["share"]["generated_at"] = now_utc.isoformat()
+
+        html_str = generate_landing_html(meta)
+
+        # ── Publish landing page ───────────────────────────────────────────────
+        public_url = await ws.publish_landing_page(html_str)
+        logger.info("Landing page published: %s", public_url)
+
+        # ── Update metadata.json with share.* and landing_page_url ────────────
+        # GUARD: update_metadata() will raise PipelineLicenseUpgradeGuard if
+        # 'license' is in the updates dict — enforcing "do not auto-claim PD".
+        share_updates = {
+            "landing_page_url": ws.landing_page_url,
+            "share": {
+                "source_pdf_sas_url": source_sas,
+                "translated_pdf_sas_url": translated_sas,
+                "sas_expiry": sas_expiry,
+                "generated_at": now_utc.isoformat(),
+            },
+        }
+        await ws.update_metadata(share_updates)
+        logger.info("metadata.json updated with share URLs")
+
+        return public_url
+    finally:
+        await workspace_blob.close()
 

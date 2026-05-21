@@ -6,7 +6,9 @@ Tests full pipeline execution, stage orchestration, and error handling.
 from __future__ import annotations
 
 import contextlib
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -438,6 +440,109 @@ class TestLockAcquisitionInRunner:
             assert str(expected_book_id) in str(lock_key), (
                 f"Lock key should contain book_id {expected_book_id}"
             )
+
+
+class TestPipelineValidationReport:
+    @pytest.mark.asyncio
+    async def test_stage_failure_preserves_original_exception_and_writes_report(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from transpose.models.enums import SourceLanguage
+        from transpose.pipeline import runner
+        from transpose.pipeline.gates import OperationalReadinessResult, PreflightCheckResult
+        from transpose.pipeline.runner import PipelineInput, run_pipeline
+
+        book_id = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        report_dir = Path("output/test-runner-validation")
+        if report_dir.exists():
+            for child in sorted(report_dir.rglob("*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            report_dir.rmdir()
+
+        class _StageInput:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        ingest_mod = type("M", (), {
+            "run": AsyncMock(return_value=type("IngestOut", (), {
+                "book_id": book_id,
+                "page_count": 1,
+                "already_existed": False,
+                "source_blob_uri": "file:///dev/null",
+            })()),
+            "IngestInput": _StageInput,
+        })
+        failing_ocr = AsyncMock(side_effect=RuntimeError("AuthorizationFailure"))
+        ocr_mod = type("M", (), {"run": failing_ocr, "OcrInput": _StageInput})
+
+        monkeypatch.setattr(runner, "operational_readiness_gate", AsyncMock(return_value=OperationalReadinessResult(
+            passed=True,
+            checks=[PreflightCheckResult("database_reachable", True, "OK")],
+            failures=[],
+        )))
+
+        import sys
+        import types
+
+        stage_modules = {
+            "ingest": ingest_mod,
+            "ocr": ocr_mod,
+            "chunk": type("M", (), {"run": AsyncMock(), "ChunkInput": _StageInput}),
+            "translate": type("M", (), {"run": AsyncMock(), "TranslateInput": _StageInput}),
+            "glossary": type("M", (), {"run": AsyncMock(), "GlossaryInput": _StageInput}),
+            "assemble": type("M", (), {"run": AsyncMock(), "AssembleInput": _StageInput}),
+            "export": type("M", (), {"run": AsyncMock(), "ExportInput": _StageInput}),
+            "workspace": types.ModuleType("transpose.pipeline.workspace"),
+        }
+        for name, mod in stage_modules.items():
+            monkeypatch.setitem(sys.modules, f"transpose.pipeline.{name}", mod)
+
+        mock_duration = type("M", (), {"record": lambda self, *a, **kw: None})()
+        mock_errors = type("M", (), {"add": lambda self, *a, **kw: None})()
+        monkeypatch.setattr("transpose.observability.metrics.stage_duration", mock_duration)
+        monkeypatch.setattr("transpose.observability.metrics.pipeline_errors", mock_errors)
+
+        ctx = type("Ctx", (), {})()
+        ctx.state = AsyncMock()
+        ctx.state.acquire_lock = AsyncMock(return_value=True)
+        ctx.state.set_pipeline_status = AsyncMock()
+        ctx.state.release_lock = AsyncMock()
+        ctx.db = AsyncMock()
+        ctx.db.update_book_status = AsyncMock()
+        ctx.settings = type("Settings", (), {
+            "low_confidence_threshold": 0.7,
+            "openai_endpoint": "https://oai.azure.com",
+            "blob_static_website_url": "",
+        })()
+
+        try:
+            with pytest.raises(RuntimeError, match="AuthorizationFailure"):
+                await run_pipeline(
+                    PipelineInput(
+                        source_path="tests/fixtures/sample.pdf",
+                        title="Test Book",
+                        source_language=SourceLanguage.HINDI,
+                        output_dir=str(report_dir),
+                    ),
+                    ctx,
+                )
+
+            report_path = report_dir / "validation-report.json"
+            assert report_path.exists() is True
+            report = json.loads(report_path.read_text())
+            assert report["book_id"] == str(book_id)
+        finally:
+            if report_dir.exists():
+                for child in sorted(report_dir.rglob("*"), reverse=True):
+                    if child.is_file():
+                        child.unlink()
+                    elif child.is_dir():
+                        child.rmdir()
+                report_dir.rmdir()
 
 
 class TestPipelineOutputAggregation:

@@ -163,3 +163,8 @@ Tank's workspace table design + migration script (schema additions to `books` ta
 - Fixed oversized paragraph handling in the chunk stage so full runs now split pathological OCR blocks and keep emitted chunk sizes near the configured token target instead of leaking 10k+ token blobs downstream.
 - Verified with `pytest -q tests/unit/services/test_blob_client.py tests/unit/services/test_llm_client.py tests/unit/pipeline/test_gates.py tests/unit/pipeline/test_chunk.py tests/unit/pipeline/test_runner.py` and `TRANSPOSE_SMOKE_SOURCE=shiv pytest -q tests/integration/test_pipeline_smoke.py`.
 
+### Progress — 2026-05-21T11:00:50.468-04:00
+
+- Fixed the validation-report error path so the runner preserves the original stage exception when `output_dir` is set instead of masking it with a local `Path` scoping crash.
+- Verified with `pytest -q tests/unit/services/test_blob_client.py tests/unit/services/test_llm_client.py tests/unit/pipeline/test_gates.py tests/unit/pipeline/test_chunk.py tests/unit/pipeline/test_runner.py` and `TRANSPOSE_SMOKE_SOURCE=shiv pytest -q tests/integration/test_pipeline_smoke.py`.
+
