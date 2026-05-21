@@ -280,3 +280,36 @@ Adopt with **lazy migration plus one backfill script**:
 **Architecture Review:** See `.squad/agents/morpheus/history.md` for learnings on current artifact fragmentation.
 
 ---
+
+## 2026-05-20: Product Framing — Workspace Abstraction + Archive + Audiobook Capability
+
+**Author:** Niobe (Product Manager)  
+**For:** Manish (Owner)  
+**Date:** 2026-05-20  
+**Status:** OPEN — awaiting Manish decision
+
+### Summary
+Niobe frames the product question underlying the workspace abstraction (Morpheus decision above). The architecture is sound, but three possible shapes exist:
+
+- **Shape A:** Personal workbench (private, lineage-tracked)
+- **Shape B:** Curated public heritage archive (free downloads, no audiobooks in MVP)
+- **Shape C:** Publishing platform (with human review workflow and audio distribution)
+
+All three shapes share the same storage layer. Morpheus can build shape-agnostic workspace infrastructure while Manish decides which shape Transpose becomes.
+
+### 6 Open Questions for Manish
+1. Who is the end reader (personal / public archive / publishing)?
+2. What does "archive" mean (backup lineage / showcase / production distribution)?
+3. Audiobook endpoint (personal listening / public distribution / embedded reader)?
+4. Who reviews (just Manish / expert reviewers / community)?
+5. Copyright/licensing posture across books?
+6. Timeline: specific next book or forcing function?
+
+### Recommended Path
+**Build workspace storage layer now** (Morpheus's design) even though shape is undecided. The workspace is shape-agnostic. Defer: archive site design, audio pipeline, review workflow design, public metadata strategy.
+
+**Gate:** Manish answers 6 questions or picks a shape (A/B/C) by 2026-05-22. Then Morpheus builds storage; Niobe scopes surface layer.
+
+**Full Brief:** `.squad/decisions/inbox/niobe-workspace-product-framing.md`
+
+---
