@@ -709,3 +709,60 @@ On the DB side, a `book_events` table (or existing `pipeline_state` if repurpose
 
 4. **Multi-scan editions:** What if the same text exists in two editions — one `verified-public-domain` scan and one `claimed-public-domain` scan? Are these separate workspaces, or is provenance an array? Current design assumes one workspace = one source artifact. Confirm this assumption holds.
 
+
+---
+
+## 2026-05-20: Storage location — repo vs blob clarification (addendum)
+
+**Author:** Morpheus  
+**Requested by:** Manish  
+**Date:** 2026-05-20T22:57:22-04:00  
+**Type:** Architecture / Storage Policy  
+**Status:** DECIDED
+
+### Decision
+**(b) Hybrid Storage — Blob from day one for PDFs/audio, Git-only for small text artifacts**
+
+- **YES for non-PDF/non-audio artifacts:** `metadata.json`, `glossary.json`, pipeline reports stay in repo
+- **NO for PDFs and audio:** All heavy binaries route to Azure Blob from day one
+
+### Rationale
+
+**Public repo + rights-unknown = unacceptable.** A public GitHub repo is world-readable, Google-indexed, and Wayback Machine-archived within hours. Committing a `rights-unknown` PDF there is effectively publication without license — once pushed, control is lost. If rights holder surfaces, "I put it in a private repo first" is not a legal defence.
+
+**Private repo is false solution for large PDFs.** GitHub's 100 MB hard file limit + LFS quotas will exhaust within weeks. High-res source scans (300+ MB) are impossible. LFS on free tier: 1 GB total, 1 GB/month bandwidth — one high-res book exhausts it. Binary cleanup (git filter-repo/BFG) rewrites every SHA, invalidates clones, and cannot guarantee GitHub's cache purge.
+
+**Repo-as-transient-store is false economy.** "We'll migrate later" never works. Git history is permanent. Rights-unknown PDFs in history cannot be scrubbed without force-push and cannot guarantee removal from GitHub servers or local copies.
+
+**Blob from day one is one-hour setup.** Azure Blob with private container + SAS-token-per-book URLs: setup in one hour. Shareable URLs work same day. Shape A (close friends) satisfied without repo involvement.
+
+**Hybrid is clean and honest.** Small text files (metadata, glossary, reports) belong in repo — reviewable, versionable, zero copyright risk. Heavy binaries (source PDFs, audio, OCR raw) belong in Blob. Matches existing architecture; makes `license.status` gate meaningful.
+
+### Schema Impact
+
+- `WorkspaceArtifact.storage_backend` = typed enum: `git | blob` (constraint, not convention)
+- Small metadata files → `git`; heavy binaries always → `blob`
+- `metadata.json` gains `share_url` field: SAS token URL (Shape A, private) or public Blob URL (Shape B, after `license.status = verified-public-domain`)
+- Public promotion gate: pure predicate — `IF license.status == 'verified-public-domain' THEN move artifact + update share_url`
+- Shape A: SAS URL generated on demand, stored in `metadata.json`, rotatable without Git history
+
+### Minimum-Viable Share-URL Path (Shape A)
+
+1. **Azure Storage account:** `az storage account create --name transposebooks --resource-group transpose-rg --sku Standard_LRS --allow-blob-public-access false` (one account, one container per environment)
+2. **Container ACL = private.** No anonymous access; all via SAS tokens (correct default for `rights-unknown`)
+3. **Upload source PDF:** `az storage blob upload` → `book-workspaces/{slug}--{book_id}/input/source.pdf`
+4. **Generate SAS token URL** scoped to workspace prefix, 30-day expiry: `az storage blob generate-sas ... --full-uri` → produces shareable URL
+5. **Store SAS URL in `metadata.json`** under `share.source_url`. Rotation = CLI command + JSON field update (no Git history)
+6. **Optional:** Point workspace URL to translated PDF (`output/translated.pdf`) instead — friends get output, lower redistribution risk
+
+**Total setup:** under 1 hour with active Azure subscription. Only dependency: `az login`.
+
+### Open Questions Back to Manish
+
+1. **Active Azure subscription?** If yes, step 1 is 5 minutes. If no, that's first blocker.
+2. **Share URL scope — source PDF, translated PDF, or both?** Affects blob path + whether translated artifact must pre-exist.
+3. **PDF ownership: your own scans or third-party collected?** Changes whether `rights-unknown` is soft risk (pending clearance) or hard risk (no chain of custody). Architecture recommendation (Blob private + SAS) unchanged either way, but urgency of resolving `license.status` changes.
+
+**Related Decisions:** 2026-05-20 Workspace abstraction (blob architecture), 2026-05-19 License status gate  
+**Handoff:** Trinity (export/publish gate), Tank (blob ACL + workspace layout), Dozer (license gate tests)
+
