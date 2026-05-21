@@ -180,5 +180,19 @@ Tank diagnosed: Pipeline `source_url` threading is correct; manual republish in 
 
 **Product impact:** Shape A private URL sharing now shows complete book packaging (both PDFs) as designed. Readers can access source + translation.
 
+### 2026-05-21T14:41:45Z: Performance Optimization Backlog — Trinity's Telemetry Summary
+
+**For roadmap planning:** Trinity analyzed Shiv Sutra e2e wall time (10h 32m) and cost ($12.13 total) and filed two LOW-PRIORITY backlog issues:
+
+- **#94 (Wall-time):** 250-page book currently 10h 32m; target <2h (parallelization, prompt caching, chunk tuning avenues)
+- **#95 (Cost):** 250-page book currently $12.13; target <$5 (model downgrade, prompt overhead reduction, caching strategies)
+
+**Product relevance:** 
+- If Manish's roadmap includes volume scale-up (3–5 books/month), wall time and cost become operational constraints. Current metrics establish baseline for future optimization priority.
+- Both issues LOW-PRIORITY by design — Shiv Sutra e2e is stable; focus should remain on pipeline hardening, not optimization, while single-book runs are the shape.
+- No product decisions required at this time.
+
+**Implication for Shape B (public archive):** If future roadmap includes public archive + large corpus, cost per book will influence monetization model (free vs. donation vs. subscription). Baseline cost is now documented; future optimization work will improve unit economics.
+
 ---
 
