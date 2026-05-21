@@ -187,6 +187,7 @@ module containerApp './modules/container-app.bicep' = {
     openAIEndpoint: cognitiveServices.outputs.openAIEndpoint
     openAIDeploymentName: cognitiveServices.outputs.gpt4oDeploymentName
     storageAccountBlobEndpoint: storage.outputs.blobEndpoint
+    storageAccountStaticWebsiteEndpoint: storage.outputs.staticWebsiteEndpoint
     postgresFqdn: database.outputs.postgresFqdn
     postgresDatabaseName: database.outputs.postgresDatabaseName
     keyVaultUri: keyVault.outputs.keyVaultUri
@@ -210,8 +211,10 @@ output appInsightsConnectionString string = monitoring.outputs.appInsightsConnec
 
 // Storage
 output storageAccountName string = storage.outputs.storageAccountName
+output staticWebsiteEndpoint string = storage.outputs.staticWebsiteEndpoint
 output sourcePdfsContainerName string = storage.outputs.sourcePdfsContainerName
 output outputContainerName string = storage.outputs.outputContainerName
+output bookWorkspacesContainerName string = storage.outputs.bookWorkspacesContainerName
 
 // Cognitive Services
 output documentIntelligenceName string = cognitiveServices.outputs.documentIntelligenceName

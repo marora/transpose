@@ -34,6 +34,9 @@ param openAIDeploymentName string
 @description('Storage Account Blob Endpoint')
 param storageAccountBlobEndpoint string
 
+@description('Storage Account Static Website Endpoint')
+param storageAccountStaticWebsiteEndpoint string
+
 @description('PostgreSQL Server FQDN')
 param postgresFqdn string
 
@@ -156,6 +159,10 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'TRANSPOSE_BLOB_STORAGE_ACCOUNT_URL'
               value: storageAccountBlobEndpoint
+            }
+            {
+              name: 'TRANSPOSE_BLOB_STATIC_WEBSITE_URL'
+              value: storageAccountStaticWebsiteEndpoint
             }
             {
               name: 'TRANSPOSE_KEYVAULT_URL'

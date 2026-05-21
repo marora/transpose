@@ -1,4 +1,4 @@
-// storage.bicep - Azure Blob Storage for source PDFs and outputs
+// storage.bicep - Azure Blob Storage for source PDFs, outputs, workspaces, and Static Website
 
 @description('Name prefix for storage account')
 param namePrefix string
@@ -41,7 +41,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
 }
 
 // Blob service with versioning
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2024-01-01' = {
   parent: storageAccount
   name: 'default'
   properties: {
@@ -71,8 +71,19 @@ resource outputContainer 'Microsoft.Storage/storageAccounts/blobServices/contain
   }
 }
 
+// Container for private workspace assets and metadata
+resource bookWorkspacesContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'book-workspaces'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 output storageAccountId string = storageAccount.id
 output storageAccountName string = storageAccount.name
 output blobEndpoint string = storageAccount.properties.primaryEndpoints.blob
+output staticWebsiteEndpoint string = storageAccount.properties.primaryEndpoints.web
 output sourcePdfsContainerName string = sourcePdfsContainer.name
 output outputContainerName string = outputContainer.name
+output bookWorkspacesContainerName string = bookWorkspacesContainer.name

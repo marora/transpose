@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "10912019274781286200"
+      "templateHash": "9281870029593086367"
     }
   },
   "parameters": {
@@ -233,7 +233,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "8117171581590484481"
+              "templateHash": "2665639515534336091"
             }
           },
           "parameters": {
@@ -292,7 +292,7 @@
             },
             {
               "type": "Microsoft.Storage/storageAccounts/blobServices",
-              "apiVersion": "2023-01-01",
+              "apiVersion": "2024-01-01",
               "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
               "properties": {
                 "isVersioningEnabled": true,
@@ -326,6 +326,17 @@
               "dependsOn": [
                 "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
               ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'book-workspaces')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+              ]
             }
           ],
           "outputs": {
@@ -341,6 +352,10 @@
               "type": "string",
               "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').primaryEndpoints.blob]"
             },
+            "staticWebsiteEndpoint": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').primaryEndpoints.web]"
+            },
             "sourcePdfsContainerName": {
               "type": "string",
               "value": "source-pdfs"
@@ -348,6 +363,10 @@
             "outputContainerName": {
               "type": "string",
               "value": "output"
+            },
+            "bookWorkspacesContainerName": {
+              "type": "string",
+              "value": "book-workspaces"
             }
           }
         }
@@ -1515,6 +1534,9 @@
           "storageAccountBlobEndpoint": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.blobEndpoint.value]"
           },
+          "storageAccountStaticWebsiteEndpoint": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.staticWebsiteEndpoint.value]"
+          },
           "postgresFqdn": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'database-deployment'), '2025-04-01').outputs.postgresFqdn.value]"
           },
@@ -1538,7 +1560,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "13925739594564690019"
+              "templateHash": "13115919138540383204"
             }
           },
           "parameters": {
@@ -1609,6 +1631,12 @@
                 "description": "Storage Account Blob Endpoint"
               }
             },
+            "storageAccountStaticWebsiteEndpoint": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage Account Static Website Endpoint"
+              }
+            },
             "postgresFqdn": {
               "type": "string",
               "metadata": {
@@ -1632,6 +1660,27 @@
               "defaultValue": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
               "metadata": {
                 "description": "Container image (defaults to placeholder)"
+              }
+            },
+            "minReplicas": {
+              "type": "int",
+              "defaultValue": 1,
+              "metadata": {
+                "description": "Minimum number of replicas (0 = scale to zero)"
+              }
+            },
+            "maxReplicas": {
+              "type": "int",
+              "defaultValue": 5,
+              "metadata": {
+                "description": "Maximum number of replicas"
+              }
+            },
+            "httpScaleConcurrency": {
+              "type": "int",
+              "defaultValue": 10,
+              "metadata": {
+                "description": "HTTP concurrent requests threshold for scaling"
               }
             },
             "containerRegistryServer": {
@@ -1733,6 +1782,10 @@
                           "value": "[parameters('storageAccountBlobEndpoint')]"
                         },
                         {
+                          "name": "TRANSPOSE_BLOB_STATIC_WEBSITE_URL",
+                          "value": "[parameters('storageAccountStaticWebsiteEndpoint')]"
+                        },
+                        {
                           "name": "TRANSPOSE_KEYVAULT_URL",
                           "value": "[parameters('keyVaultUri')]"
                         },
@@ -1770,9 +1823,18 @@
                     }
                   ],
                   "scale": {
-                    "minReplicas": 0,
-                    "maxReplicas": 3,
-                    "rules": []
+                    "minReplicas": "[parameters('minReplicas')]",
+                    "maxReplicas": "[parameters('maxReplicas')]",
+                    "rules": [
+                      {
+                        "name": "http-concurrency",
+                        "http": {
+                          "metadata": {
+                            "concurrentRequests": "[format('{0}', parameters('httpScaleConcurrency'))]"
+                          }
+                        }
+                      }
+                    ]
                   }
                 }
               },
@@ -1844,6 +1906,10 @@
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.storageAccountName.value]"
     },
+    "staticWebsiteEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.staticWebsiteEndpoint.value]"
+    },
     "sourcePdfsContainerName": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.sourcePdfsContainerName.value]"
@@ -1851,6 +1917,10 @@
     "outputContainerName": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.outputContainerName.value]"
+    },
+    "bookWorkspacesContainerName": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storage-deployment'), '2025-04-01').outputs.bookWorkspacesContainerName.value]"
     },
     "documentIntelligenceName": {
       "type": "string",
