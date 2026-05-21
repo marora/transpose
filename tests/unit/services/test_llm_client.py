@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import openai
@@ -549,6 +549,43 @@ class TestChatMethod:
         with pytest.raises(TranslationError) as exc_info:
             await client.chat("prompt")
         assert exc_info.value.error_type == "rate_limit"
+
+
+# ---------------------------------------------------------------------------
+# client configuration + readiness
+# ---------------------------------------------------------------------------
+
+
+class TestLlmClientConfiguration:
+    @pytest.mark.asyncio
+    async def test_get_client_uses_configured_timeout(self) -> None:
+        client = LlmClient(
+            "https://oai.azure.com",
+            "gpt-4o",
+            "2024-10-21",
+            timeout_seconds=180.0,
+        )
+
+        with (
+            patch("azure.identity.aio.DefaultAzureCredential"),
+            patch("azure.identity.aio.get_bearer_token_provider", return_value="token-provider"),
+            patch("openai.AsyncAzureOpenAI") as mock_openai,
+        ):
+            mock_openai.return_value = AsyncMock()
+            await client._get_client()
+
+        timeout = mock_openai.call_args.kwargs["timeout"]
+        assert timeout.read == 180.0
+        assert timeout.connect == 10.0
+
+    @pytest.mark.asyncio
+    async def test_health_check_initializes_client(self) -> None:
+        client = LlmClient("https://oai.azure.com", "gpt-4o", "2024-10-21")
+        client._get_client = AsyncMock(return_value=AsyncMock())
+
+        await client.health_check()
+
+        client._get_client.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

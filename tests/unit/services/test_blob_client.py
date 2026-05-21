@@ -10,6 +10,7 @@ All Azure SDK calls are mocked. Tests verify:
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -193,6 +194,81 @@ class TestUploadOutput:
 
         url = await blob_client.upload_output("output", "book.epub", b"data")
         assert url == inner.url
+
+
+# ---------------------------------------------------------------------------
+# local fallback + readiness helpers
+# ---------------------------------------------------------------------------
+
+
+class TestBlobClientFallback:
+    @pytest.mark.asyncio
+    async def test_upload_falls_back_to_repo_local_storage_on_auth_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        local_root = Path("output/test-blob-fallback").resolve()
+        if local_root.exists():
+            for child in sorted(local_root.rglob("*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            local_root.rmdir()
+        monkeypatch.setenv("TRANSPOSE_LOCAL_BLOB_ROOT", str(local_root))
+
+        client = BlobClient(
+            account_url="https://teststorage.blob.core.windows.net",
+            allow_local_fallback=True,
+        )
+        failing_blob = AsyncMock()
+        failing_blob.upload_blob = AsyncMock(side_effect=RuntimeError("AuthorizationFailure"))
+        service = AsyncMock()
+        service.get_blob_client = MagicMock(return_value=failing_blob)
+        client._client = service
+
+        try:
+            uri = await client.upload_pdf("source-pdfs", "test.pdf", b"pdf-data")
+            assert client.uses_local_storage is True
+            assert uri == (local_root / "source-pdfs" / "test.pdf").as_uri()
+            assert (local_root / "source-pdfs" / "test.pdf").read_bytes() == b"pdf-data"
+        finally:
+            if local_root.exists():
+                for child in sorted(local_root.rglob("*"), reverse=True):
+                    if child.is_file():
+                        child.unlink()
+                    elif child.is_dir():
+                        child.rmdir()
+                local_root.rmdir()
+
+    @pytest.mark.asyncio
+    async def test_list_containers_reads_repo_local_directories(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        local_root = Path("output/test-blob-list").resolve()
+        if local_root.exists():
+            for child in sorted(local_root.rglob("*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            local_root.rmdir()
+        (local_root / "source-pdfs").mkdir(parents=True)
+        (local_root / "output").mkdir(parents=True)
+        monkeypatch.setenv("TRANSPOSE_LOCAL_BLOB_ROOT", str(local_root))
+
+        client = BlobClient(account_url="", allow_local_fallback=True)
+
+        try:
+            assert await client.list_containers() == ["output", "source-pdfs"]
+        finally:
+            for child in sorted(local_root.rglob("*"), reverse=True):
+                if child.is_file():
+                    child.unlink()
+                elif child.is_dir():
+                    child.rmdir()
+            local_root.rmdir()
 
 
 # ---------------------------------------------------------------------------

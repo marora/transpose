@@ -7,7 +7,11 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import asdict, dataclass, field
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
+
+import pytest
 
 from transpose.pipeline.gates import (
     GateResult,
@@ -16,6 +20,7 @@ from transpose.pipeline.gates import (
     document_structure_gate,
     glossary_integrity_gate,
     ocr_sanity_gate,
+    operational_readiness_gate,
     translation_completeness_gate,
 )
 
@@ -614,3 +619,43 @@ class TestArtifactAvailabilityGate:
         result = artifact_availability_gate(output)
         assert result.passed is False
         assert any("invalid" in f or "non-existent" in f for f in result.failures)
+
+
+class TestOperationalReadinessGate:
+    @pytest.mark.asyncio
+    async def test_uses_real_service_layer_probes(self) -> None:
+        ctx = SimpleNamespace(
+            db=SimpleNamespace(
+                fetch_one=AsyncMock(return_value={"ok": 1}),
+                fetch_all=AsyncMock(side_effect=[
+                    [{"table_name": "books"}, {"table_name": "pages"}, {"table_name": "chunks"},
+                     {"table_name": "translations"}, {"table_name": "manuscripts"},
+                     {"table_name": "pipeline_state"}, {"table_name": "pipeline_locks"}],
+                    [],
+                ]),
+                execute=AsyncMock(),
+            ),
+            blob=SimpleNamespace(list_containers=AsyncMock(return_value=["source-pdfs", "output"])),
+            llm=SimpleNamespace(health_check=AsyncMock(return_value=None)),
+            settings=SimpleNamespace(
+                openai_endpoint="https://oai.azure.com",
+                applicationinsights_connection_string="",
+            ),
+        )
+
+        result = await operational_readiness_gate(
+            ctx,
+            skip_checks={"env_vars_present", "fonts_available", "telemetry_configured"},
+        )
+
+        assert result.passed is True
+        assert {check.name for check in result.checks if check.passed} >= {
+            "database_reachable",
+            "blob_storage_accessible",
+            "openai_endpoint",
+            "no_stale_locks",
+        }
+        ctx.db.fetch_one.assert_awaited_once()
+        assert ctx.db.fetch_all.await_count == 2
+        ctx.blob.list_containers.assert_awaited_once()
+        ctx.llm.health_check.assert_awaited_once()

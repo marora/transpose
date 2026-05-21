@@ -44,6 +44,7 @@ class ServiceContext:
             endpoint=self.settings.openai_endpoint,
             deployment=self.settings.openai_deployment,
             api_version=self.settings.openai_api_version,
+            timeout_seconds=self.settings.openai_timeout_seconds,
             max_retries=self.settings.max_retries,
             retry_base_delay=self.settings.retry_base_delay,
         )

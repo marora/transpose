@@ -105,12 +105,14 @@ class LlmClient:
         endpoint: str,
         deployment: str,
         api_version: str,
+        timeout_seconds: float = 120.0,
         max_retries: int = _DEFAULT_MAX_RETRIES,
         retry_base_delay: float = _DEFAULT_RETRY_BASE_DELAY,
     ) -> None:
         self._endpoint = endpoint
         self._deployment = deployment
         self._api_version = api_version
+        self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
         self._retry_base_delay = retry_base_delay
         self._client = None
@@ -130,7 +132,7 @@ class LlmClient:
                 azure_deployment=self._deployment,
                 api_version=self._api_version,
                 azure_ad_token_provider=token_provider,
-                timeout=httpx.Timeout(30.0, connect=10.0),
+                timeout=httpx.Timeout(self._timeout_seconds, connect=10.0),
             )
         return self._client
 
@@ -538,6 +540,10 @@ IMPORTANT: Translate ALL content completely — do not skip or summarize any sen
         if not content:
             raise ValueError("Empty response from LLM")
         return content.strip()
+
+    async def health_check(self) -> None:
+        """Lightweight readiness probe for preflight checks."""
+        await self._get_client()
 
     async def close(self) -> None:
         """Release SDK resources."""

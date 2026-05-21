@@ -28,11 +28,23 @@ class Settings(BaseSettings):
     openai_endpoint: str = ""
     openai_deployment: str = "gpt-4o"
     openai_api_version: str = "2024-10-21"
+    openai_timeout_seconds: float = 120.0
 
     # Azure Blob Storage
     blob_storage_account_url: str = ""
     blob_container_source: str = "source-pdfs"
     blob_container_output: str = "output"
+    blob_workspace_container: str = "book-workspaces"
+
+    # Azure Static Website — base URL for per-book landing pages.
+    # Example: https://transposebooks.z6.web.core.windows.net
+    # Set TRANSPOSE_BLOB_STATIC_WEBSITE_URL after running Tank's T-1 setup.
+    blob_static_website_url: str = ""
+
+    # Workspace settings
+    # Translator note prepended to all landing pages when not specified per-book.
+    # Set TRANSPOSE_WORKSPACE_TRANSLATOR_NOTE in environment or .env.
+    workspace_translator_note: str = ""
 
     # Application Insights
     applicationinsights_connection_string: str = ""
