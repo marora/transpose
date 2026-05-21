@@ -9,6 +9,14 @@
 ## Learnings
 (Recast from Idaho — Matrix universe. All prior knowledge preserved in alumni archive.)
 
+### 2026-05-21T01:39:16.276-04:00: Azure RBAC propagation lag on Storage data-plane
+
+**Pattern:** `az role assignment create` can succeed several seconds before `az storage blob ... --auth-mode login` or `az storage container ... --auth-mode login` starts honoring the new role. Typical Azure Entra ID RBAC propagation to the Blob data plane is 30s–2min, occasionally up to ~5min.
+
+**Operational fix:** After granting `Storage Blob Data Contributor`, wrap the first data-plane calls in a retry helper that retries only on authorization/permission failures with backoff (15s, 30s, 60s, 60s, 60s). Fail fast on non-auth errors so missing files / bad arguments / network issues do not get masked.
+
+**Reuse note:** This is broad enough to justify a reusable squad skill because the same lag can hit first-run setup scripts, one-shot backfills, and pipeline publish stages.
+
 ### 2026-05-20T23:19:30-04:00: Phase 1 Deliverables — T-1/T-2/T-3
 
 **Migration approach:** Used separate dedicated columns (`license_status TEXT`, `provenance_source JSONB`, `license_history JSONB`) rather than folding everything into `metadata JSONB` (Morpheus Option B). This enables indexed promotion-gate queries (`WHERE license_status IN (...)`) without JSON operator overhead. `metadata JSONB` is still added as the workspace contract carrier.

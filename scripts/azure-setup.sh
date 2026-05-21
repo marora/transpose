@@ -60,6 +60,71 @@ run() {
     fi
 }
 
+is_rbac_propagation_error() {
+    local output_lower="${1,,}"
+
+    [[ "$output_lower" == *"do not have the required permissions"* ]] ||
+        [[ "$output_lower" == *"storage blob data contributor"* ]] ||
+        [[ "$output_lower" == *"authorizationpermissionmismatch"* ]] ||
+        [[ "$output_lower" == *"this request is not authorized"* ]] ||
+        [[ "$output_lower" == *"insufficientaccountpermissions"* ]] ||
+        [[ "$output_lower" == *"status code: 403"* ]]
+}
+
+retry_on_rbac_lag() {
+    local success_message="$1"
+    shift
+
+    local max_attempts=6
+    local delays=(15 30 60 60 60)
+    local attempt=1
+    local start_seconds=$SECONDS
+    local output=""
+    local status=0
+    local elapsed=0
+    local sleep_seconds=0
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "  [DRY-RUN] $*"
+        return 0
+    fi
+
+    while (( attempt <= max_attempts )); do
+        set +e
+        output="$("$@" 2>&1)"
+        status=$?
+        set -e
+
+        if (( status == 0 )); then
+            [[ -n "$output" ]] && echo "$output"
+            if (( attempt > 1 )); then
+                elapsed=$((SECONDS - start_seconds))
+                echo "✅ ${success_message} (${elapsed} seconds total)"
+            fi
+            return 0
+        fi
+
+        if ! is_rbac_propagation_error "$output"; then
+            echo "$output" >&2
+            return "$status"
+        fi
+
+        echo "$output" >&2
+
+        if (( attempt == max_attempts )); then
+            elapsed=$((SECONDS - start_seconds))
+            echo "❌ Storage RBAC did not finish propagating after ${elapsed} seconds (${max_attempts} attempts)." >&2
+            echo "   Re-run this script in a couple of minutes, or use --auth-mode key as an escape hatch if you must bypass data-plane login temporarily." >&2
+            return "$status"
+        fi
+
+        sleep_seconds="${delays[$((attempt - 1))]}"
+        echo "⏳ Waiting for RBAC role propagation… (attempt $((attempt + 1))/${max_attempts}, sleeping ${sleep_seconds}s)" >&2
+        sleep "$sleep_seconds"
+        attempt=$((attempt + 1))
+    done
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 0: Confirm active Azure subscription
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,7 +278,8 @@ echo "════════════════════════�
 # robots.txt (they are link-preview fetchers, not indexers) — intended.
 echo ""
 if [[ -f "${ROBOTS_TXT}" ]]; then
-    run az storage blob upload \
+    retry_on_rbac_lag "robots.txt uploaded after RBAC propagation" \
+        az storage blob upload \
         --account-name "${STORAGE_ACCOUNT}" \
         --container-name "\$web" \
         --name "robots.txt" \
@@ -285,11 +351,12 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo "  curl -s \"\${STATIC_URL}robots.txt\""
 else
     echo "  (a) Containers on ${STORAGE_ACCOUNT}:"
-    az storage container list \
+    retry_on_rbac_lag "container verification succeeded after RBAC propagation" \
+        az storage container list \
         --account-name "${STORAGE_ACCOUNT}" \
         --auth-mode login \
         --query "[].{name:name, publicAccess:properties.publicAccess}" \
-        -o table || echo "  (check may need a moment — role propagation can take 30–60 s)"
+        -o table
 
     echo ""
     echo "  (b) Static website endpoint response (expect 404 — means live):"
