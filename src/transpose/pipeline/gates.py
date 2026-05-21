@@ -1175,29 +1175,57 @@ def export_rendering_gate(pdf_path: str) -> GateResult:
         details["low_text_pages"] = low_text_pages
 
         # Check for duplicate images across pages
+        # Ignore unplaced image resources: PyMuPDF may report an image xref in page
+        # resources even when it is only used on the cover/master template and not
+        # actually drawn on that page.
         image_xrefs_by_page: dict[int, list[int]] = {}
-        all_image_xrefs: list[tuple[int, int]] = []  # (xref, page_num)
+        placed_image_occurrences: list[tuple[int, int, float]] = []  # (xref, page_num, area_ratio)
         for i in range(page_count):
             page = doc[i]
             imgs = page.get_images(full=True)
             xrefs = [img[0] for img in imgs]
             image_xrefs_by_page[i + 1] = xrefs
+            page_area = max(page.rect.width * page.rect.height, 1)
             for xref in xrefs:
-                all_image_xrefs.append((xref, i + 1))
+                rects = page.get_image_rects(xref)
+                if not rects:
+                    continue
+                max_area_ratio = max(
+                    ((rect.width * rect.height) / page_area) for rect in rects
+                )
+                placed_image_occurrences.append((xref, i + 1, max_area_ratio))
 
-        # Count how many pages each image xref appears on
-        from collections import Counter
-        xref_counts = Counter(xref for xref, _ in all_image_xrefs)
+        # Count how many pages each placed image xref appears on
+        from collections import Counter, defaultdict
+        xref_counts = Counter(xref for xref, _, _ in placed_image_occurrences)
         duplicate_images = {xref: count for xref, count in xref_counts.items() if count > 1}
         if duplicate_images:
+            area_ratios_by_xref: dict[int, list[float]] = defaultdict(list)
+            for xref, _page_num, area_ratio in placed_image_occurrences:
+                area_ratios_by_xref[xref].append(area_ratio)
+
             details["duplicate_image_xrefs"] = len(duplicate_images)
             details["duplicate_image_details"] = {
-                str(xref): count for xref, count in list(duplicate_images.items())[:10]
+                str(xref): {
+                    "count": count,
+                    "max_area_ratio": round(max(area_ratios_by_xref[xref]), 4),
+                }
+                for xref, count in list(duplicate_images.items())[:10]
             }
-            # Allow decorative/header images (same small image on every page)
-            # but flag large images that repeat, as they indicate an assembly bug
-            significant_dupes = sum(1 for count in duplicate_images.values() if count >= 3)
-            if significant_dupes:
+            # Allow decorative/header images that occupy only a small slice of the
+            # page, but flag large placed images that repeat as they indicate an
+            # assembly/layout bug.
+            # Threshold: 2+ distinct large images each repeating 3+ times.
+            # A single repeated image (cover art, ornament, logo, front matter)
+            # is almost always intentional in a real book — only flag when
+            # multiple different images all repeat, which indicates an assembly
+            # dedup bug rather than legitimate design reuse (fixes #90).
+            significant_dupes = sum(
+                1
+                for xref, count in duplicate_images.items()
+                if count >= 3 and max(area_ratios_by_xref[xref]) >= 0.25
+            )
+            if significant_dupes >= 2:
                 failures.append(
                     f"{significant_dupes} image(s) repeated 3+ times across pages — "
                     "likely assembly dedup bug"

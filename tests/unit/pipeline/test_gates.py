@@ -5,6 +5,7 @@ Validates all 5 quality gate functions with passing and failing scenarios.
 
 from __future__ import annotations
 
+import sys
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from transpose.pipeline.gates import (
     QualityGateError,
     artifact_availability_gate,
     document_structure_gate,
+    export_rendering_gate,
     glossary_integrity_gate,
     ocr_sanity_gate,
     operational_readiness_gate,
@@ -496,6 +498,180 @@ class TestDocumentStructureGate:
 # ===================================================================
 # Artifact Availability Gate
 # ===================================================================
+
+
+class TestExportRenderingGate:
+    def test_ignores_unplaced_duplicate_image_resources(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class StubRect:
+            def __init__(self, width: float, height: float) -> None:
+                self.width = width
+                self.height = height
+
+        class StubPage:
+            def __init__(self, text: str, image_rects: dict[int, list[StubRect]]) -> None:
+                self._text = text
+                self._image_rects = image_rects
+                self.rect = StubRect(600, 800)
+
+            def get_text(self, _mode: str) -> str:
+                return self._text
+
+            def get_images(self, *, full: bool = True) -> list[tuple[int]]:
+                return [(123,)]
+
+            def get_image_rects(self, xref: int) -> list[StubRect]:
+                return self._image_rects.get(xref, [])
+
+        class StubDoc:
+            def __init__(self) -> None:
+                self.pages = [
+                    StubPage("", {123: [StubRect(400, 600)]}),
+                    StubPage("title" * 40, {}),
+                    StubPage("body" * 40, {}),
+                    StubPage("body" * 40, {}),
+                ]
+
+            def __len__(self) -> int:
+                return len(self.pages)
+
+            def __getitem__(self, idx: int) -> StubPage:
+                return self.pages[idx]
+
+            def close(self) -> None:
+                return None
+
+        monkeypatch.setitem(
+            sys.modules,
+            "fitz",
+            SimpleNamespace(open=lambda _path: StubDoc()),
+        )
+        result = export_rendering_gate("dummy.pdf")
+        assert result.passed is True
+
+    def test_fails_on_large_repeated_placed_images(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Assembly dedup bug: 2+ distinct large images each repeated 3+ times → FAIL.
+
+        When multiple different large images all repeat across body pages it
+        indicates an assembly pipeline bug (e.g. the same image pool was deduped
+        and every page got the same set).  The gate must catch this pattern.
+        """
+
+        class StubRect:
+            def __init__(self, width: float, height: float) -> None:
+                self.width = width
+                self.height = height
+
+        class StubPage:
+            def __init__(self, text: str, xrefs: list[int]) -> None:
+                self._text = text
+                self._xrefs = xrefs
+                self.rect = StubRect(600, 800)
+
+            def get_text(self, _mode: str) -> str:
+                return self._text
+
+            def get_images(self, *, full: bool = True) -> list[tuple[int]]:
+                return [(x,) for x in self._xrefs]
+
+            def get_image_rects(self, xref: int) -> list[StubRect]:
+                # Both images are large (>25% of page area)
+                return [StubRect(500, 700)] if xref in (777, 888) else []
+
+        class StubDoc:
+            def __init__(self) -> None:
+                # Two DISTINCT large images both repeating on every body page
+                self.pages = [
+                    StubPage("cover" * 20, [777, 888]),
+                    StubPage("title" * 20, [777, 888]),
+                    StubPage("body" * 40, [777, 888]),
+                    StubPage("body" * 40, [777, 888]),
+                    StubPage("body" * 40, [777, 888]),
+                ]
+
+            def __len__(self) -> int:
+                return len(self.pages)
+
+            def __getitem__(self, idx: int) -> StubPage:
+                return self.pages[idx]
+
+            def close(self) -> None:
+                return None
+
+        monkeypatch.setitem(
+            sys.modules,
+            "fitz",
+            SimpleNamespace(open=lambda _path: StubDoc()),
+        )
+        result = export_rendering_gate("dummy.pdf")
+        assert result.passed is False
+        assert any("repeated 3+ times" in failure for failure in result.failures)
+
+    def test_passes_single_large_repeated_image_real_book(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Real-book shape: ONE large image repeating many times → PASS (not a bug).
+
+        Cover art, ornaments, logos, and front-matter images legitimately appear
+        on multiple pages.  A single repeated image must never trip the gate
+        (fixes #90: false positive on shiv sutra e2e run).
+        """
+
+        class StubRect:
+            def __init__(self, width: float, height: float) -> None:
+                self.width = width
+                self.height = height
+
+        class StubPage:
+            def __init__(self, text: str) -> None:
+                self._text = text
+                self.rect = StubRect(600, 800)
+
+            def get_text(self, _mode: str) -> str:
+                return self._text
+
+            def get_images(self, *, full: bool = True) -> list[tuple[int]]:
+                return [(777,)]
+
+            def get_image_rects(self, xref: int) -> list[StubRect]:
+                # Large ornament/cover image occupying > 25 % of each page
+                return [StubRect(500, 700)] if xref == 777 else []
+
+        class StubDoc:
+            def __init__(self) -> None:
+                self.pages = [
+                    StubPage("cover" * 20),
+                    StubPage("title" * 20),
+                    StubPage("body" * 40),
+                    StubPage("body" * 40),
+                    StubPage("body" * 40),
+                ]
+
+            def __len__(self) -> int:
+                return len(self.pages)
+
+            def __getitem__(self, idx: int) -> StubPage:
+                return self.pages[idx]
+
+            def close(self) -> None:
+                return None
+
+        monkeypatch.setitem(
+            sys.modules,
+            "fitz",
+            SimpleNamespace(open=lambda _path: StubDoc()),
+        )
+        result = export_rendering_gate("dummy.pdf")
+        # ONE large repeated image (ornament/cover) — must not be flagged
+        assert result.passed is True, (
+            f"Single large repeated image should not fail the gate; failures={result.failures}"
+        )
 
 
 class TestArtifactAvailabilityGate:
