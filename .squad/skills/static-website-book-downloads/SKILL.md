@@ -19,6 +19,7 @@ Use this when a translated book must be downloadable by URL without opening up t
    - `index.html` (or `landing.html`)
    - translated PDF
    - translated EPUB
+   - `source.pdf` for the public original scan when the source is publishable
    - optional `metadata.json`, cover image, OG assets
 4. Share only the Static Website URL, e.g. `https://<account>.z<N>.web.core.windows.net/<slug>/`.
 
@@ -35,3 +36,4 @@ Use this when a translated book must be downloadable by URL without opening up t
 - Use `--auth-mode login` / Managed Identity for all `az storage ...` uploads and copies.
 - `scripts/azure-setup.sh` must pre-create `source-pdfs`, `output`, and `book-workspaces`, and must print the Static Website endpoint for downstream app config.
 - If a landing page exists but its download buttons are dead, verify the HTML `href` values before blaming Storage ACLs.
+- For public-domain originals that already live in `book-workspaces/{slug}--{id}/input/source.pdf`, republish them to `$web/{slug}/source.pdf` and point the landing page's **Original Scan** button there.

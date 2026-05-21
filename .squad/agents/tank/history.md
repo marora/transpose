@@ -15,6 +15,12 @@
 
 **Operational rule:** If someone shares a raw `blob.core.windows.net/output/...` URL and the storage account has `allowBlobPublicAccess=false`, that is a usage bug, not a storage misconfiguration. Fix the publish path or copy the release artifacts into `$web/<slug>/`; do not relax account-level public access.
 
+### 2026-05-21T13:45:28.928-04:00: Public-domain original scans should live at `$web/{slug}/source.pdf`
+
+**Pattern:** When a book is safe to publish publicly, the reader-facing Original Scan link should target the static website path, not a private container. For Shiv Sutra, the source file already existed privately at `book-workspaces/shiv-sutra--ee92a4/input/source.pdf`; copying it to `$web/shiv-sutra/source.pdf` restored the TR-3 landing contract immediately.
+
+**Operational rule:** Keep the filename stable as `source.pdf` on the public slug path. It mirrors the workspace convention (`input/source.pdf`), keeps manual repairs deterministic, and avoids exposing private-container URLs in the live landing page.
+
 ### 2026-05-21T01:39:16.276-04:00: Azure RBAC propagation lag on Storage data-plane
 
 **Pattern:** `az role assignment create` can succeed several seconds before `az storage blob ... --auth-mode login` or `az storage container ... --auth-mode login` starts honoring the new role. Typical Azure Entra ID RBAC propagation to the Blob data plane is 30s–2min, occasionally up to ~5min.
