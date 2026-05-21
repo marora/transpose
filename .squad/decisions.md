@@ -313,3 +313,399 @@ All three shapes share the same storage layer. Morpheus can build shape-agnostic
 **Full Brief:** `.squad/decisions/inbox/niobe-workspace-product-framing.md`
 
 ---
+
+## 2026-05-20: Workspace + Archive Product Framing (FINAL)
+
+**By:** Niobe (PM)  
+**Requested by:** Manish  
+**Status:** DECISION LOCKED — ready for Morpheus architecture handoff
+
+---
+
+### Decision
+
+Build **Shape A (Personal + Private Share)** immediately. Architecture must keep **Shape B (Curated Public Heritage Archive)** reachable per-book via `license.status` gate.
+
+---
+
+### Scope Locked
+
+**Audience now:** Manish + close colleagues/friends via shared URL
+
+**Audience long-term:** Global public archive of rare untranslated heritage PDFs (multilingual, multi-traditions)
+
+**Build now:** Shape-agnostic workspace storage layer (per Morpheus's BookWorkspace design from 2026-05-20)
+
+**Required schema additions:**
+- `license.status` (per book): enum `claimed-public-domain` | `verified-public-domain` | `rights-cleared` | `rights-unknown`
+- `provenance.source` (per book): URL/edition/publisher of source PDF scanned
+
+**Public promotion rule:** Only books with `license.status ∈ {verified-public-domain, rights-cleared}` are eligible for Shape B archive listing
+
+---
+
+### MVP (Shape A)
+
+**What it is:** Personal translation workbench + private URL share mechanism. Manish translates heritage texts, artifacts live in workspace storage, metadata + outputs are downloadable via private share link.
+
+**What's in:**
+- Workspace abstraction per Morpheus (book-workspaces/ hierarchy, metadata.json, input/ocr/translation/output/reports folders)
+- License/provenance fields in metadata
+- Private artifact download links (URL-authenticated blob storage, no auth database needed yet)
+- Private status dashboard (Manish only) showing pipeline progress + license status per book
+- Shared URL mechanism (signed blob URLs or simple static HTML listing, TBD by UX)
+
+**What's explicitly out:**
+- Public archive site or search interface
+- Audiobook generation
+- Multi-user account system or formal review workflow
+- Public metadata index
+- Multi-channel distribution
+
+**Success metric:** "Manish can translate a book, share the translated PDF/ePub + glossary via a friend-shareable private URL, and retain full artifact lineage for future re-export"
+
+---
+
+### Shape B (Future Gate)
+
+**When it unlocks:** When Manish has 3–5 books with `license.status = verified-public-domain` or `rights-cleared` and decides public archive is strategically valuable.
+
+**What it becomes:** Static or low-code archive site (GitHub Pages or app) indexing published books by title, author, language, tradition, glossary preview. Download links point to blob storage. No accounts, no DRM, no ads. Always free.
+
+**Gating mechanism:** Product promotion (Shape A → B per-book) is a manual step: Manish audits the source PDF, updates `license.status`, and marks the book eligible for archive listing.
+
+---
+
+### Explicitly Deferred (Not MVP, Not Shape A Scope)
+
+- Archive site UX / static catalog design
+- Audiobook generation pipeline (chapter-level TTS or human narration)
+- Formal multi-reviewer/subject-matter expert workflow
+- Multi-channel distribution (Spotify, Audible, archive.org mirror, Hugging Face dataset registration)
+- Per-book rights research / clearance workflow (manual for now; automated clearance research tool is future nice-to-have)
+- Reader analytics or user account system
+- Monetization (donations, paid downloads)
+
+---
+
+### Risks Accepted
+
+**Copyright uncertainty:** Manish has not formally cleared rights for any source PDF. He asserts antiquated spiritual texts are likely public domain in spirit and intent, and his translation work is defensible. Workspace tracks his per-book judgment via `license.status`; legal verification is deferred to the per-book promotion decision later. He owns the risk and the decision.
+
+**Modern editions:** Modern republished editions (with commentary, typesetting, illustrations) carry fresh copyright on those layers. The `provenance.source` field forces him to be explicit about which edition he scanned, and `license.status` forces a per-book decision. This is documented and auditable.
+
+**Jurisdiction drift:** Public-domain status varies by country (India, US, UK, EU). Manish is aware; workspace metadata allows per-book future clarification.
+
+---
+
+### Workspace Metadata Schema Additions
+
+Morpheus's 2026-05-20 design includes:
+```json
+{
+  "workspace_id": "...",
+  "book_id": "...",
+  "title": "...",
+  "author": "...",
+  "source_language": "...",
+  "target_language": "...",
+  "created_at": "...",
+  "updated_at": "...",
+  "status": "...",
+  
+  // NEW: License & Provenance
+  "license": {
+    "status": "claimed-public-domain | verified-public-domain | rights-cleared | rights-unknown",
+    "notes": "Optional free-text field for Manish's reasoning"
+  },
+  "provenance": {
+    "source": "URL or full citation of source PDF edition",
+    "scanned_date": "...",
+    "notes": "Optional: publisher, edition, commentary author, etc."
+  },
+  
+  // Existing:
+  "source_url": "...",
+  "source_hash_sha256": "...",
+  "pipeline_version": "...",
+  "artifact_manifest": [...]
+}
+```
+
+---
+
+### Next Handoff
+
+1. **Morpheus:** Update 2026-05-20 workspace architecture decision to include `license` and `provenance` schema above. Confirm Phase 1 plan includes initializing these fields at ingest time.
+2. **Trinity:** Begin implementation of Phase 1 (thin overlay) — workspace creation at ingest, metadata.json persistence, artifact URIs in blob-scoped prefixes, schema fields baked in from day one.
+3. **Tank:** Plan blob storage prefixes / lifecycle policies; confirm signed URL authentication for private share scenario works at scale.
+4. **Niobe:** Pause product framing until 3–5 books are in Shape A, then re-open Shape B decision (archive site design, distribution strategy).
+
+---
+
+**Approved by:** Manish (2026-05-20)  
+**Scope gates:** Yes — public promotion per-book via license.status  
+**Architecture dependency:** None — workspace design is shape-agnostic; license fields are additive metadata  
+**Risk owner:** Manish (copyright posture on source PDFs)
+
+---
+
+## 2026-05-20T22:52:32-04:00: BookWorkspace schema extension — license + provenance
+
+**Author:** Morpheus (Architecture)  
+**Date:** 2026-05-20T22:52:32-04:00  
+**Status:** DECIDED  
+**Extends:** `2026-05-20: Book Workspace Abstraction + Storage Strategy` (decisions.md)  
+**Context:** Niobe's product framing closed. Scope is Shape A (private workbench for Manish + trusted contacts) now, with per-book promotion path to Shape B (curated public archive) later. Copyright posture is Manish's own judgment call — structured, not gatekept.
+
+---
+
+### Two New Mandatory Fields in `metadata.json`
+
+#### 1. `license` object
+
+```jsonc
+"license": {
+  "status": "<enum — see below>",
+  "notes": "<optional free text>"
+}
+```
+
+##### `license.status` — enum
+
+| Value | Meaning |
+|---|---|
+| `rights-unknown` | Manish hasn't decided or researched. **Default at workspace creation.** |
+| `claimed-public-domain` | Manish's judgment: text is old/spiritual/meant-to-spread. Not legally verified. |
+| `verified-public-domain` | Manish researched it: source text predates 1900, original-language scan, no modern editorial layer adding copyright. |
+| `rights-cleared` | Explicit license or permission from the rights holder. |
+
+**Default at workspace creation:** `rights-unknown` — forces a deliberate, conscious upgrade. Workspace creation must never silently assume public domain.
+
+**Mutability:** Mutable. Manish can upgrade (`rights-unknown` → `claimed-public-domain` → `verified-public-domain`) or correct. Every mutation must append an entry to the workspace's lifecycle history (see Lifecycle Tracking section below).
+
+---
+
+#### 2. `provenance` object
+
+```jsonc
+"provenance": {
+  "source": {
+    "url": "<string | null — download URL of the scanned PDF>",
+    "edition": "<string — publisher/edition/year, e.g. 'Geeta Press, Gorakhpur, 1987 edition'>",
+    "acquired_at": "<ISO 8601 datetime>",
+    "notes": "<string | null — optional free text>"
+  }
+}
+```
+
+**All four keys are present at workspace creation.** `url` and `notes` may be `null` if unknown at ingest time. `edition` and `acquired_at` must be set (at minimum `acquired_at` defaults to the ingest timestamp if not explicitly supplied).
+
+**Mutability:** Mutable. Corrections and enrichments are allowed; mutations are logged.
+
+---
+
+### Promotion-Eligibility Rule
+
+A book is eligible for public archive promotion if and only if:
+
+```
+license.status ∈ { "verified-public-domain", "rights-cleared" }
+```
+
+Books with `rights-unknown` or `claimed-public-domain` are **workspace-private only**. They must not appear in any public catalog index, public blob URL, or shareable archive page. The promotion gate is enforced:
+1. **At the storage layer** — workspace blob container/prefix ACL stays private unless `license.status` passes the rule.
+2. **At the catalog layer** — the static archive index must filter on this predicate before emitting any entry.
+3. **In the pipeline** — the export/publish stage must check this and refuse to promote otherwise.
+
+This is a computed read — no separate `is_public` flag. Single source of truth: `license.status`. No denormalization.
+
+---
+
+### `metadata.json` — Concrete Examples
+
+#### Shape A only (private, judgment-only)
+
+```json
+{
+  "workspace_id": "ws-a1b2c3d4",
+  "book_id": "beacab8b-ea5c-49e5-a60f-1ebc753c7061",
+  "slug": "osho-vigyan-bhairav-tantra-vol1",
+  "title": "Vigyan Bhairav Tantra Vol. 1",
+  "author": "Osho",
+  "source_language": "hi",
+  "target_language": "en",
+  "status": "review",
+  "pipeline_version": "1.3.0",
+  "created_at": "2026-05-20T22:52:32-04:00",
+  "updated_at": "2026-05-20T22:52:32-04:00",
+  "published_at": null,
+  "license": {
+    "status": "claimed-public-domain",
+    "notes": "Osho's discourses are widely redistributed. Not formally verified. Personal judgment only."
+  },
+  "provenance": {
+    "source": {
+      "url": "https://archive.org/details/osho-vbt-vol1-hindi",
+      "edition": "Diamond Pocket Books, New Delhi, 2005 edition",
+      "acquired_at": "2026-04-01T10:00:00Z",
+      "notes": null
+    }
+  },
+  "artifact_manifest": []
+}
+```
+
+**Promotion-eligible:** ❌ `claimed-public-domain` does not qualify. Workspace is private only.
+
+---
+
+#### Shape B eligible (verified, promotable)
+
+```json
+{
+  "workspace_id": "ws-f9e8d7c6",
+  "book_id": "c3d4e5f6-0000-1111-2222-333344445555",
+  "slug": "guru-granth-sahib-punjabi-1604",
+  "title": "Guru Granth Sahib",
+  "author": "Multiple authors (Sikh Gurus, 16th–17th c.)",
+  "source_language": "pa",
+  "target_language": "en",
+  "status": "published",
+  "pipeline_version": "1.3.0",
+  "created_at": "2026-05-18T09:00:00-04:00",
+  "updated_at": "2026-05-20T22:52:32-04:00",
+  "published_at": "2026-05-20T22:52:32-04:00",
+  "license": {
+    "status": "verified-public-domain",
+    "notes": "Original text compiled 1604 CE. This scan is from a 1912 printed edition (pre-1925 US PD threshold). No modern editorial additions to the scanned pages. Verified by Manish 2026-05-18."
+  },
+  "provenance": {
+    "source": {
+      "url": "https://archive.org/details/guru-granth-sahib-1912-scan",
+      "edition": "Wazir Hind Press, Amritsar, 1912 edition",
+      "acquired_at": "2026-05-18T09:00:00Z",
+      "notes": "Scanned by Internet Archive. 847 pages. No watermark, no modern foreword."
+    }
+  },
+  "artifact_manifest": [
+    {
+      "path": "output/translated.epub",
+      "checksum_sha256": "abc123...",
+      "size_bytes": 512000,
+      "media_type": "application/epub+zip"
+    }
+  ]
+}
+```
+
+**Promotion-eligible:** ✅ `verified-public-domain` qualifies for Shape B public archive.
+
+---
+
+### DB Migration Implications
+
+#### The `books.metadata` Bug (from history)
+
+Prior architecture note (2026-05-20 history): `books` currently has no clean per-book metadata or source-provenance model — only `title`, `author`, `source_language`, `source_hash`, `source_blob_uri`, `status`, `page_count`. **There is no `metadata` JSONB column on `books` today.** The history note says "books.metadata JSONB is the DB-side mirror" — that column does not yet exist and must be created as part of this migration.
+
+#### Migration Must Do Two Things
+
+1. **Add `books.metadata` JSONB column** (the column itself is missing; this was called out as a gap but never landed a migration).
+
+2. **Seed `license` and `provenance.source` keys** into that JSONB for all existing rows at migration time:
+   - `license.status` → `"rights-unknown"` for all existing books (safe default; Manish must review each).
+   - `provenance.source.url` → backfill from `books.source_blob_uri` where it looks like a download URL; `null` otherwise.
+   - `provenance.source.edition` → `null` (must be filled manually per book).
+   - `provenance.source.acquired_at` → `books.created_at` as a proxy.
+   - `provenance.source.notes` → `null`.
+
+#### Recommended DB Schema Shape
+
+Option A — JSONB only (minimal migration surface):
+```sql
+ALTER TABLE books ADD COLUMN metadata JSONB NOT NULL DEFAULT '{}';
+-- then backfill license + provenance keys via UPDATE
+```
+
+Option B — dedicated columns (more queryable, more migration surface):
+```sql
+ALTER TABLE books ADD COLUMN license_status TEXT NOT NULL DEFAULT 'rights-unknown'
+  CHECK (license_status IN ('rights-unknown','claimed-public-domain','verified-public-domain','rights-cleared'));
+ALTER TABLE books ADD COLUMN provenance_source JSONB;
+ALTER TABLE books ADD COLUMN metadata JSONB NOT NULL DEFAULT '{}';
+```
+
+**Recommendation: Option B.** `license_status` as a real column enables indexed queries and simple WHERE clauses for the promotion gate. `provenance_source` as JSONB keeps the structured-but-flexible source object without over-normalizing. `metadata` JSONB holds everything else from the workspace contract.
+
+#### Promotion Query (DB-side)
+
+```sql
+SELECT * FROM books
+WHERE license_status IN ('verified-public-domain', 'rights-cleared')
+  AND status = 'published';
+```
+
+#### Check Constraint (DB enforcement)
+
+```sql
+ALTER TABLE books ADD CONSTRAINT chk_license_status
+  CHECK (license_status IN ('rights-unknown','claimed-public-domain','verified-public-domain','rights-cleared'));
+```
+
+---
+
+### Lifecycle History — Mutation Logging
+
+Every change to `license.status` or `provenance.source` must be appended to the workspace lifecycle log. Add a `license_history` array to `metadata.json`:
+
+```jsonc
+"license_history": [
+  {
+    "timestamp": "2026-05-20T22:52:32-04:00",
+    "field": "license.status",
+    "from": "rights-unknown",
+    "to": "claimed-public-domain",
+    "actor": "manish",
+    "note": "Personal judgment — Osho discourses are freely redistributed."
+  }
+]
+```
+
+On the DB side, a `book_events` table (or existing `pipeline_state` if repurposed) should record the same transitions. Tank to decide the exact table shape.
+
+---
+
+### Implementation Handoff
+
+#### Trinity (Pipeline)
+- Workspace creation path: set `license.status = "rights-unknown"` and populate `provenance.source` from ingest params (URL, edition if CLI-supplied, `acquired_at = now()`).
+- Export/publish stage: check `license.status` before emitting any public-facing artifact. Fail hard (not warn) if status is not in `{verified-public-domain, rights-cleared}`.
+- Add `license_history` append helper to the workspace write utilities.
+
+#### Tank (Storage / Migration)
+- Write and run the DB migration: add `metadata JSONB`, `license_status TEXT` (with check constraint), `provenance_source JSONB` to `books`.
+- Write the backfill script for existing rows (`rights-unknown` default, proxy timestamps).
+- Ensure blob ACL policy enforces workspace-private for non-eligible books.
+- Align `book_workspaces` table design (from the prior decision) with the new fields.
+
+#### Dozer (Tests)
+- Unit test: workspace creation always produces `license.status = "rights-unknown"`.
+- Unit test: `provenance.source.acquired_at` is always set (never null) after creation.
+- Unit test: promotion gate returns false for `rights-unknown` and `claimed-public-domain`; true for `verified-public-domain` and `rights-cleared`.
+- Integration test: export/publish stage raises error (not warning) when license_status is ineligible.
+- Regression test: mutation to `license.status` appends entry to `license_history` and does not silently overwrite it.
+- DB constraint test: inserting a row with an invalid `license_status` value is rejected.
+
+---
+
+### Open Architecture Questions (Flagging to Niobe / Manish)
+
+1. **`claimed-public-domain` visibility:** Should books with this status be shareable via private URL (invite-only, not public index) — i.e., is the Shape A "close friends" share intended to include `claimed-public-domain` books? Or only `verified-public-domain`? The current rule makes them fully private; that may be too strict for the "share with Manish's close friends" use case. Niobe to clarify.
+
+2. **`verified-public-domain` criteria:** The enum value implies Manish has done research. Should there be a structured sub-field for the evidence (e.g., publication year, jurisdiction, rationale) rather than relying on `license.notes` free text? Useful if more books accumulate and the criteria need to be auditable. Low cost to add now, annoying to retrofit later.
+
+3. **`rights-cleared` workflow:** If a rights holder grants permission, what artifact captures that? A signed agreement in `input/`? A URL? This is deferred per scope decision, but worth calling out the storage slot before Tank designs the workspace layout.
+
+4. **Multi-scan editions:** What if the same text exists in two editions — one `verified-public-domain` scan and one `claimed-public-domain` scan? Are these separate workspaces, or is provenance an array? Current design assumes one workspace = one source artifact. Confirm this assumption holds.
+
