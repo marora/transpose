@@ -80,3 +80,20 @@ Tank verified: Workspace stage (`Stage 8`) `source_url` threading is correct. Pr
 
 ---
 
+### 2026-05-21T14:19:30.760-04:00: Cost Telemetry Investigation — Platform Learning (Tank)
+
+**From:** Tank (cost forensics on Shiv Sutra)  
+**Status:** Reference; no action needed  
+**Related:** Issue #93 filed
+
+Tank traced true Shiv Sutra cost through PostgreSQL operational tables (not `book_costs` table). Finding: `CostTracker.persist()` only writes `book_costs` rows on happy-path workspace completion. Failed/interrupted/resumed runs lose durable cost summary.
+
+**For future:** When users ask about book cost post-run, always check:
+1. `translations` table for OpenAI tokens (all runs retained)
+2. `books.page_count` / `pages` for OCR (all runs retained)
+3. Logs/App Insights for blob I/O only (reconstructed if needed)
+
+**Implication for workspace stage:** Cost telemetry resilience is tracked in issue #93. Pipeline is correct; observability layer needs hardening.
+
+---
+

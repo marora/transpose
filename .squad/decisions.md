@@ -137,3 +137,79 @@ Issue #91 filed: pipeline must prevent publishing landing page with dead downloa
 
 ---
 
+## 2026-05-21T13:45:28-04:00: Original Scan Publishing — Public Slug Strategy
+
+**Author:** Tank
+
+**Status:** Implemented
+
+**Related issue:** Tank cost investigation (#93 follow-up)
+
+### Problem
+
+The live `shiv-sutra/` landing page had no working Original Scan link, even though the source PDF already existed privately at `book-workspaces/shiv-sutra--ee92a4/input/source.pdf`. Readers had no way to download the original scan alongside the translation.
+
+### Decision
+
+**For public-domain books, publish original scan to `$web/{slug}/source.pdf`**
+
+- Original scan file: `$web/{slug}/source.pdf` (public URL)
+- Translation artifacts: `$web/{slug}/Shiv_Sutra.pdf`, `$web/{slug}/Shiv_Sutra.epub` (public URLs)
+- Landing page: `$web/{slug}/index.html` with **both** Download Translation + Original Scan buttons
+
+Use the same Static Website security model as translation assets. Do **not** reference private container URLs in reader-facing links.
+
+### Why
+
+Storage account has `allowBlobPublicAccess=false` — correct posture. Readers cannot access `blob.core.windows.net/book-workspaces/...` URLs directly. Static Website path (`$web/`) is the single public surface; all reader-facing links must route through there.
+
+### Operational convention
+
+- Filename: `source.pdf` (mirrors workspace convention `input/source.pdf`)
+- Public URL: `https://transposebooks.z{n}.web.core.windows.net/{slug}/source.pdf`
+- This keeps URLs predictable; manual landing-page repairs are straightforward when backfilling additional public-domain books
+
+---
+
+## 2026-05-21T14:19:30-04:00: Book Cost Source of Truth — DB-first, not `book_costs` table
+
+**Author:** Tank
+
+**Status:** DECISION
+
+**Related issue:** #93 (cost_tracker persistence gap)
+
+### Problem
+
+Manish asked for true cost of Shiv Sutra e2e run (wall time 10h 32m, local 01:32→12:04). The `book_costs` table showed only 2 blob write operations — missing 99% of OpenAI/OCR spend.
+
+PostgreSQL investigation revealed:
+- `translations`: 1,161,417 input tokens + 255,580 output tokens (real OpenAI cost)
+- `books.page_count`: 249 OCR pages (real Azure AI Document Intelligence cost)
+- `book_costs` row: only the final resume's blob summary (2 write operations)
+
+**Root cause:** `CostTracker.persist()` only writes to `book_costs` on the happy path after workspace completes. Failed/interrupted/resumed runs produce no durable `book_costs` row — only partial operational telemetry scattered across DB tables and logs.
+
+### Decision
+
+**For true per-book cost inquiry, query DB operational data first; use logs/App Insights only to fill blob-ops and stage-timing gaps.**
+
+1. **OpenAI cost:** sum `prompt_tokens + completion_tokens` from `translations` where `book_id = X`; price with `cost_rates.py`
+2. **OCR cost:** read `books.page_count` or count `pages` rows; price with `cost_rates.py`
+3. **Blob cost:** reconstruct from logs / Azure telemetry (`book_costs` is not durable)
+4. **Use `book_costs` only as a convenience summary**, not source of truth for total historical cost
+
+### Evidence
+
+Shiv Sutra true spend:
+- OpenAI: 1,161,417 input + 255,580 output tokens (real data in DB)
+- OCR: 249 pages (real data in DB)
+- Blob: reconstructed from run logs + App Insights  
+- **Total: $12.13** (GPT-4o $9.64 + Doc Intelligence $2.49 + blob storage $0.00006)
+
+### Follow-up
+
+GitHub issue #93 filed: persist `book_costs` summary rows even on failed/resumed runs, so cost forensics is reliable without fallback to logs.
+
+---
+

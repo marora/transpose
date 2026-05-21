@@ -51,6 +51,14 @@
 
 **Static Website 404 flag drift:** `az storage blob service-properties update` currently accepts `--404-document`, not `--error-document-404-path`. When recovering a failed rerun, prefer checking `az ... -h` for the installed CLI version instead of relying on older command snippets.
 
+### 2026-05-21T14:19:30.760-04:00: Book-cost source of truth is DB-first, not `book_costs`
+
+**Pattern:** For completed-or-resumed books, the durable source for true OpenAI/OCR cost is PostgreSQL operational data (`translations.prompt_tokens`, `translations.completion_tokens`, `books.page_count` / `pages`), not the summarized `book_costs` table.
+
+**Why:** `CostTracker.persist()` runs only on the happy path after workspace completes. If a run crashes or fails a gate, `book_costs` can be empty or partial. Shiv Sutra proved this: `book_costs` kept only the final resume's 2 blob writes, while the real spend had to be reconstructed from DB rows plus logs/App Insights.
+
+**Operational rule:** For ad-hoc cost forensics, query DB first, then use local logs/App Insights only to fill blob-ops and stage-timing gaps. If blob counts are reconstructed rather than durably stored, say so explicitly and point to issue #93.
+
 ---
 
 ## 2026-05-20T22:55:00-04:00: Workspace Implementation Scoped — You're Next
@@ -181,4 +189,40 @@ Flag in `azure-setup.sh`: Add explicit pre-creation of `output` and `source-pdfs
 ### Related Files
 - `.squad/orchestration-log/2026-05-21T16-08-trinity.md` — full Trinity context
 - Shiv Sutra artifacts in Azure `output` container
+
+---
+
+## 2026-05-21T14:19:30.760-04:00: Shiv Sutra Cost Forensics — $12.13 Total Spend
+
+**From:** Tank (cost investigation)  
+**Context:** Manish asked "what did the Shiv Sutra e2e run cost?" Investigation traced spend through PostgreSQL + logs.
+
+### True Cost Breakdown
+
+| Component | Details | Cost |
+|-----------|---------|------|
+| OpenAI (GPT-4o) | 1,161,417 input + 255,580 output tokens | $9.64 |
+| OCR (Doc Intelligence) | 249 pages | $2.49 |
+| Blob storage | ~100 operations (reconstructed) | $0.00006 |
+| **Total** | **Wall time: 10h 32m** | **$12.13** |
+
+### Key Learning: `book_costs` Unreliable on Resume/Failure
+
+`CostTracker.persist()` only fires on happy-path workspace completion. Shiv Sutra resumed from glossary after crash:
+- `book_costs` table retained **only** the final resume's blob summary (2 writes)
+- Real OpenAI + OCR spend lived in `translations`, `books.page_count`, `pages` tables (durable across all runs)
+
+**Operational rule:** For cost forensics, query DB operational tables first; logs/App Insights second for blob ops; state confidence explicitly if reconstructed.
+
+### Decisions Written + Filed
+
+1. **Tank: Cost Telemetry Source of Truth** — merged into `.squad/decisions.md`
+2. **Tank: Original Scan Publishing** — merged into `.squad/decisions.md`
+3. **GitHub #93:** `cost_tracker` persistence gap — persist `book_costs` even on failed/resumed runs
+
+### Related Files
+
+- `.squad/log/2026-05-21T14-19-30Z-shiv-sutra-true-cost.md` — session log
+- `.squad/orchestration-log/2026-05-21T14-19-30Z-tank-cost-telemetry.md` — investigation notes
+- `.squad/decisions.md` — 2 new decisions appended
 
