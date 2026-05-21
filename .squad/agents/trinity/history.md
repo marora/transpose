@@ -57,3 +57,18 @@
 
 ---
 
+
+### 2026-05-21T12:17:57-04:00: Workspace publish Static Website URL wiring (Tank follow-up)
+
+**Status:** Wired
+
+Tank diagnosed that the Container App missing `TRANSPOSE_BLOB_STATIC_WEBSITE_URL` env var, preventing workspace publish from targeting `$web/<slug>/`. Now wired through:
+- `infra/modules/container-app.bicep` accepts and passes through the variable
+- `infra/main.bicep` derives from storage account Static Website endpoint
+- `scripts/azure-setup.sh` outputs the URL for local override
+- `.env.example` documents the derivation
+
+**Impact:** Future book runs will automatically publish to public Static Website path without needing manual URL injection or post-hoc republishing.
+
+---
+

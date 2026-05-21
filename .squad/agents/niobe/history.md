@@ -157,3 +157,20 @@ The real question: "What's the right friction level for Shape A private sharing,
 Why: Shape A is "private share with friends," not "public archive by accident." Starting with `license.status = rights-unknown` in a public GitHub repo collapses his Shape A → Shape B decision tree. Blob signed URLs give him control: translate → verify rights per-book → promote to Shape B archive when ready. This aligns with Morpheus's architecture (blob canonical, repo for code/metadata) and protects his own legal optionality.
 
 **Summary:** Don't put untranslated books (license.status = rights-unknown) in public GitHub. Use blob signed URLs for Shape A private sharing; preserves his per-book public/private decision and prevents accidental public archive.
+
+### 2026-05-21T12:17:57-04:00: Issue #91 — Dead download links on existing landing pages (Product-facing)
+
+**Scope:** Product experience blocker
+
+**Problem:** Existing landing pages (e.g., `$web/shiv-sutra--ee92a4/`) have blank download buttons because SAS generation failed during workspace publish. When Niobe runs Stage 8, if SAS generation fails silently, the published landing page becomes unusable.
+
+**Decision:** Pipeline must validate SAS generation before publishing landing page with download buttons. If SAS generation fails, either:
+1. Fail Stage 8 with clear error, or
+2. Publish landing page with disabled/disabled download buttons + error message
+
+**Ticket:** https://github.com/marora/transpose/issues/91
+
+**Owner:** Trinity (pipeline fix)
+
+---
+

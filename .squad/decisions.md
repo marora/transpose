@@ -95,3 +95,45 @@ All 353 unit tests pass.
 
 ---
 
+
+## 2026-05-21T12:17:57-04:00: Shiv Sutra Public Access Fix (Issue #91 filed)
+
+**Author:** Tank
+
+**Status:** Implemented
+
+**Related issue:** #91 (dead download links on existing landing page)
+
+### Problem
+
+Manish received `PublicAccessNotPermitted` when accessing raw Azure Blob URL for `output/Shiv_Sutra.pdf`. Storage account security posture is correct (`allowBlobPublicAccess=false`, `output` is internal), but user needed a public download path.
+
+### Diagnosis
+
+- `transposebooks` storage account healthy with Static Website endpoint: `https://transposebooks.z13.web.core.windows.net/`
+- Trinity's export artifacts in private `output` container
+- Existing slug+id landing page at `$web/shiv-sutra--ee92a4/` had dead links due to SAS generation failure
+- Deployed Container App missing `TRANSPOSE_BLOB_STATIC_WEBSITE_URL` environment variable
+
+### Decision
+
+**Path B: Republish artifacts to public website path**
+
+Published to `$web/shiv-sutra/`:
+- `index.html`, `landing.html`, `Shiv_Sutra.pdf`, `Shiv_Sutra.epub`, `metadata.json`
+
+Verified HTTP 200 at `https://transposebooks.z13.web.core.windows.net/shiv-sutra/`
+
+### Prevention Changes
+
+- `scripts/azure-setup.sh`: pre-creates `source-pdfs`, `output`, `book-workspaces`; outputs `TRANSPOSE_BLOB_STATIC_WEBSITE_URL`
+- `.env.example`: documents Static Website URL derivation
+- IaC wiring: `infra/modules/container-app.bicep`, `infra/main.bicep`, `infra/scripts/remediate-env-vars.sh`
+- Storage IaC: creates `book-workspaces` container and outputs Static Website endpoint
+
+### Follow-up
+
+Issue #91 filed: pipeline must prevent publishing landing page with dead download buttons when SAS generation fails.
+
+---
+
