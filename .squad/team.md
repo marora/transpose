@@ -13,6 +13,7 @@
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
 | Morpheus | Lead | `.squad/agents/morpheus/charter.md` | 🏗️ Active |
+| Niobe | Product Manager | `.squad/agents/niobe/charter.md` | 🎯 Active |
 | Trinity | Pipeline Dev | `.squad/agents/trinity/charter.md` | 🔧 Active |
 | Tank | Cloud/Infra Dev | `.squad/agents/tank/charter.md` | ⚙️ Active |
 | Dozer | Tester | `.squad/agents/dozer/charter.md` | 🧪 Active |

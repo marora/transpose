@@ -7,6 +7,8 @@
 - **Previous incarnation:** Thufir (Dune cast) — see .squad/agents/_alumni/thufir/history.md for accumulated knowledge
 
 ## Learnings
+
+- **2026-05-21T11:00:50.468-04:00 — Pipeline smoke-test pattern:** Use a repo-local synthetic 2-page Hindi PDF plus a repo-local blob shim so the real runner, chunker, assemble/export, and workspace publish stages execute end-to-end without Azure dependencies; only translation and heavy post-export gates should be mocked. Keep a dual threshold (fast synthetic default, slower real-book override), assert either successful PDF+landing-page publish or a clean failure with validation-report output, and pin open issues as dedicated `xfail(strict=False)` regressions in the same file.
 (Recast from Thufir — Matrix universe. All prior knowledge preserved in alumni archive.)
 
 ---
@@ -100,4 +102,46 @@ Must write and maintain all five tests — they are binding:
 ### Unblocks
 
 - Release readiness: All three agents can validate Phase 1 complete once Dozer tests pass
+
+---
+
+## 2026-05-20T23:30:00-04:00: D-1/D-2/D-3 Tests Delivered — Key Learnings
+
+**Outcome:** All three deliverables implemented. Final suite: **763 passed, 9 skipped, 6 xfailed, 1 xpassed — 0 failures**.
+
+### Files Created
+- `src/transpose/workspace/__init__.py` — workspace package init
+- `src/transpose/workspace/metadata_schema.py` — schema validator, `validate_metadata()`, `is_eligible_for_promotion()`, SAS URL regexes
+- `tests/unit/workspace/__init__.py`
+- `tests/unit/workspace/test_license_constraints.py` — D-1 (promotion eligibility, enum, ingest contract, workspace contract, export sentinel)
+- `tests/unit/workspace/test_metadata_schema.py` — D-3 (11-case parametrized missing-field, enum, ISO 8601, SAS URL)
+- `tests/unit/pipeline/test_landing_page.py` — D-2 (golden fixture integrity + Trinity TR-3 contracts)
+- `tests/integration/test_license_db_constraints.py` — D-1 DB (skipped until `DATABASE_URL` + Tank T-2)
+- `tests/golden/landing_page_fixture.html` — golden HTML snapshot
+
+### Critical Learnings
+
+#### 1. `fitz` local-import patch path
+`fitz` (PyMuPDF) is imported *inside* `ingest.run()`, not at module level.
+- ✗ `patch("transpose.pipeline.ingest.fitz")` — no-op (module has no `fitz` attribute at patch time)
+- ✓ `patch("fitz.open")` — patches the global module cache entry directly
+
+#### 2. `from . import X` bypasses `sys.modules` monkeypatching once package attribute is set
+**Root cause of runner test contamination:**  
+Importing `from transpose.pipeline.ingest import run` at module collection time causes Python to set `sys.modules["transpose.pipeline"].ingest` (the package attribute) to the real module. After that, `from . import ingest` in `runner.py` resolves via the package attribute — NOT `sys.modules["transpose.pipeline.ingest"]`. So `monkeypatch.setitem(sys.modules, ...)` in `_patch_stages` was silently bypassed.
+
+**Fix:** Use `importlib.util.find_spec("transpose.pipeline.ingest")` for module existence checks at collection time. This checks for the module without importing it and without setting the package attribute. Import the actual module lazily inside the test body only.
+
+#### 3. AsyncMock dangling coroutines and event loop contamination
+Calling an async function that makes deeply-nested `AsyncMock` calls without properly awaiting all of them leaves "coroutine never awaited" `RuntimeWarning`s. The unawaited coroutines are GC'd after the test and corrupt event loop state for subsequent async tests. `@pytest.mark.filterwarnings("ignore::RuntimeWarning")` only suppresses the warning text, NOT the actual coroutine leak.
+
+**Fix:** Avoid invoking the full `export.run()` pipeline before Trinity's license gate is implemented. Use lightweight sync tests instead (e.g., check for a sentinel attribute on the function).
+
+#### 4. Contract test patterns
+- For modules that **don't exist yet**: `importlib.util.find_spec()` + `@pytest.mark.skipif(not HAS_X, ...)`
+- For modules that **exist but lack the feature**: `@pytest.mark.xfail(strict=False)` (NOT `strict=True` — the test may unexpectedly pass as implementation progresses)
+- Never use async contract tests that invoke incomplete pipelines — always prefer sync sentinel checks
+
+#### 5. Twitter Card spec gap (flagged to Morpheus)
+Morpheus's landing page HTML template in `decisions.md §C` does NOT include `<meta name="twitter:card">` tags, but Dozer's D-2 spec requires testing for them. The golden fixture (`tests/golden/landing_page_fixture.html`) includes Twitter Card tags as an assertion target. Trinity must add them when implementing TR-3. See `.squad/decisions/inbox/dozer-twitter-card-gap.md`.
 

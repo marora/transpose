@@ -6,13 +6,15 @@ How to decide who handles what.
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
+| Product framing & strategy | Niobe | "Should we build X?", new capability ideas, audience definition, scope cuts, MVP boundaries, public archive/publishing strategy, prioritization |
 | Architecture & design | Morpheus | System design, module boundaries, API contracts, tech decisions |
 | Pipeline & translation | Trinity | OCR integration, GPT-4o translation, glossary extraction, ePub/PDF output |
 | Azure infrastructure | Tank | Container Apps, Managed Identity, Key Vault, App Insights, Bicep/IaC, Redis, PostgreSQL |
 | Testing & quality | Dozer | Unit tests, integration tests, edge cases, test fixtures, quality gates |
 | Publication review | Oracle | Editorial QA, publication readiness, typography, frontmatter/backmatter, final approval |
 | Code review | Morpheus | Review PRs, check quality, architectural consistency |
-| Scope & priorities | Morpheus | What to build next, trade-offs, decisions |
+| Scope & priorities | Niobe | What to build next, trade-offs at product level, capability sequencing, kill decisions |
+| Architecture trade-offs | Morpheus | Technical trade-offs once scope is decided |
 | Session logging | Scribe | Automatic — never needs routing |
 
 ## Issue Routing

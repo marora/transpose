@@ -168,3 +168,36 @@ Tank's workspace table design + migration script (schema additions to `books` ta
 - Fixed the validation-report error path so the runner preserves the original stage exception when `output_dir` is set instead of masking it with a local `Path` scoping crash.
 - Verified with `pytest -q tests/unit/services/test_blob_client.py tests/unit/services/test_llm_client.py tests/unit/pipeline/test_gates.py tests/unit/pipeline/test_chunk.py tests/unit/pipeline/test_runner.py` and `TRANSPOSE_SMOKE_SOURCE=shiv pytest -q tests/integration/test_pipeline_smoke.py`.
 
+---
+
+## Learnings
+
+### 2026-05-21T11:40:56-04:00: Glossary U+FFFD scrub (Issue #89)
+
+**Root cause:** `_clean_original_script` stripped FFFD at three points during aggregation and the Issue #56 loop, but any future code path (e.g. variant merging in `_deduplicate_spelling_variants`) could pull in a raw `original_script` without being guaranteed to re-clean it. The bug manifested for `'shri'` — a LLM-extracted term not in the seed glossary.
+
+**Fix:** Promoted `_clean_original_script` to module level and added a **final defensive scrub** at entry-write time (before `GlossaryEntry` is built and before `CulturalTerm` is written to DB). Belt-and-suspenders: earlier scrubs still run, final scrub is the safety net regardless of which path data took.
+
+**Reusable pattern:** For any pipeline stage that normalizes/cleans field values during aggregation, add a **final write-time scrub** as a safety net. The aggregation path may be complex; the write site is always a single chokepoint.
+
+### 2026-05-21T11:40:56-04:00: Gate heuristics need real-book corpus calibration (Issue #90)
+
+**Root cause:** The `export_rendering` gate flagged "1 image(s) repeated 3+ times" as an assembly dedup bug. On a real book (Shiv Sutra), a chapter ornament or cover art legitimately repeats across many pages — this is design, not a bug.
+
+**Fix:** Changed the threshold from `significant_dupes >= 1` to `significant_dupes >= 2` distinct large images each repeating 3+ times. One repeated image (no matter how large or how often) is never flagged.
+
+**Reusable pattern:** Gate thresholds must be validated against real-book corpora, not just synthetic test PDFs. When a gate is based on a heuristic (`N items repeat`), ask: "can this pattern appear in a well-formed real book?" If yes, the threshold is too aggressive. A threshold that blocks real exports is worse than one that's slightly loose.
+
+### 2026-05-21T11:40:56-04:00: Azure blob `output` container must be provisioned before first export
+
+- The Azure storage account had `$web` and `book-workspaces` containers but NOT `output` (used by the export stage) or `source-pdfs`.
+- The blob client's `_should_fallback` only catches auth errors — `ContainerNotFound` (ResourceNotFoundError) is a hard failure, not a recoverable auth issue.
+- **Action:** The `scripts/azure-setup.sh` or infra/Bicep should create the `output` and `source-pdfs` containers as part of the storage account provisioning. Created manually for this run.
+
+### 2026-05-21T11:40:56-04:00: Shiv Sutra e2e pipeline — successful run
+
+- Resumed from `glossary` after crash mid-run with 7 chunks, 0 translation failures.
+- With both fixes applied: `glossary_integrity` PASSED (186 terms), `document_structure` PASSED (3 chapters), `artifact_availability` PASSED.
+- Artifacts: `Shiv_Sutra.epub` (275 KB) and `Shiv_Sutra.pdf` (1.38 MB) published to Azure Blob `output` container.
+- `export_rendering` gate skipped on this run because PDF was uploaded to Azure (not a local path). Unit tests verify the fix is correct.
+- `overall: PASS` — pipeline completed to `exported` status.

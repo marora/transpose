@@ -3,7 +3,7 @@ name: "azure-rbac-propagation"
 description: "Handle Azure Entra RBAC propagation lag between control-plane role grants and Storage Blob data-plane authorization"
 domain: "azure-storage, rbac, reliability"
 confidence: "high"
-source: "earned — Transpose Azure setup recovery, 2026-05-21T01:39:16.276-04:00"
+source: "earned — Transpose Azure setup recovery; reconfirmed by Trinity in Python backfill/Stage 8, 2026-05-21T01:48:57.446-04:00"
 ---
 
 ## Context
