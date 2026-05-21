@@ -8,6 +8,24 @@ from uuid import UUID
 from transpose.models.enums import TermSource
 
 
+def _clean_original_script(script: str) -> str:
+    """Strip U+FFFD and normalize Indic script text.
+
+    - NFC-normalizes via normalize_unicode
+    - Removes all U+FFFD (U+FFFD) replacement characters
+    - Returns empty string when only Latin characters remain after cleaning
+    - Strips stray Latin characters from otherwise-Indic strings
+
+    This function is module-level so it can be applied as a defensive final
+    pass at any stage of the pipeline (aggregation, dedup, entry build).
+    """
+    from transpose.utils.unicode import is_latin_only, normalize_unicode, strip_latin_from_indic
+
+    script = normalize_unicode(script).replace("\ufffd", "")
+    script = "" if is_latin_only(script) else strip_latin_from_indic(script)
+    return script.strip()
+
+
 @dataclass
 class GlossaryInput:
     book_id: UUID
@@ -53,10 +71,7 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
     from transpose.models.translation import CulturalTerm
     from transpose.utils.unicode import (
         contains_gurmukhi,
-        is_latin_only,
-        normalize_unicode,
         strip_gurmukhi,
-        strip_latin_from_indic,
         validate_script_for_language,
     )
 
@@ -108,12 +123,11 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
             # is for Indic script only; English loanwords don't belong here.
             # Strip stray Latin chars from mixed scripts (e.g. "L यान" → "यान").
             if extracted_term.original_script and not data["original_script"]:
-                script = normalize_unicode(extracted_term.original_script)
-                script = "" if is_latin_only(script) else strip_latin_from_indic(script)
+                script = _clean_original_script(extracted_term.original_script)
                 if script:
                     data["original_script"] = script
             if term_key in seed_terms and seed_terms[term_key][0]:
-                data["original_script"] = normalize_unicode(seed_terms[term_key][0])
+                data["original_script"] = _clean_original_script(seed_terms[term_key][0])
 
             # Collect definitions
             if extracted_term.definition and extracted_term.definition not in data["definitions"]:
@@ -135,6 +149,7 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
     # (अमृत) for terms that exist in both traditions.
     gurmukhi_fixed = 0
     for term, data in term_data.items():
+        data["original_script"] = _clean_original_script(data["original_script"])
         script = data["original_script"]
         is_wrong_script = (
             script
@@ -194,9 +209,13 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
         # Flag LLM-detected terms not in seed for review
         needs_review = data["source"] == TermSource.LLM_DETECTED and term not in seed_terms
 
+        # Defensive final scrub — removes any U+FFFD that survived aggregation,
+        # deduplication, or variant merging (fixes #89).
+        final_script = _clean_original_script(data["original_script"])
+
         entry = GlossaryEntry(
             term=term,
-            original_script=data["original_script"],
+            original_script=final_script,
             definition=definition,
             source=data["source"],
             occurrence_count=data["occurrences"],
@@ -219,7 +238,7 @@ async def run(input: GlossaryInput, ctx) -> GlossaryOutput:  # type: ignore[no-u
             book_id=input.book_id,
             term=term,
             definition=definition,
-            original_script=data["original_script"],
+            original_script=final_script,
             source=data["source"],
             occurrence_count=data["occurrences"],
             first_chapter=data["first_chapter"],

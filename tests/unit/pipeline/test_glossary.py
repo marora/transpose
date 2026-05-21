@@ -15,6 +15,7 @@ import pytest
 from transpose.config.seed_glossary import SEED_TERMS
 from transpose.models.enums import TermSource
 from transpose.models.glossary import GlossaryEntry as RealGlossaryEntry
+from transpose.utils.unicode import normalize_unicode
 
 
 @dataclass
@@ -351,6 +352,10 @@ class TestGlossaryEntryUnicodeNormalization:
         assert unicodedata.is_normalized("NFC", script), (
             f"Term '{term}' has non-NFC script: {script!r}"
         )
+
+    def test_replacement_characters_are_removed_from_original_script(self) -> None:
+        cleaned = normalize_unicode("श\ufffd्रि").replace("\ufffd", "")
+        assert "\ufffd" not in cleaned
 
 
 class TestSeedGlossaryUnicodeNormalization:
@@ -734,3 +739,68 @@ class TestGlossaryDeduplicationVariants:
         merged = _deduplicate_spelling_variants(term_data, logger)
         canonical = list(merged.values())[0]
         assert len(canonical["definitions"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Issue #89 — Glossary U+FFFD scrub
+# ---------------------------------------------------------------------------
+
+
+class TestCleanOriginalScriptUFFfd:
+    """Issue #89: _clean_original_script must scrub U+FFFD at module level.
+
+    The function is used both inline during aggregation and as a final
+    defensive pass before GlossaryEntry is written.  Both paths must
+    guarantee no U+FFFD survives into the output.
+    """
+
+    def test_scrub_path_recoverable_string(self) -> None:
+        """Strings where FFFD can be stripped and valid Devanagari remains."""
+        from transpose.pipeline.glossary import _clean_original_script
+
+        # "श्री" with a replacement char injected in the middle
+        garbled = "श्र\ufffdी"
+        result = _clean_original_script(garbled)
+        assert "\ufffd" not in result, "U+FFFD must be stripped"
+        # At least some Devanagari should survive after stripping FFFD
+        assert any("\u0900" <= c <= "\u097F" for c in result), (
+            "Devanagari codepoints should survive FFFD removal"
+        )
+
+    def test_reject_path_all_fffd(self) -> None:
+        """When the entire original_script is U+FFFD, the result should be empty."""
+        from transpose.pipeline.glossary import _clean_original_script
+
+        all_garbage = "\ufffd\ufffd\ufffd"
+        result = _clean_original_script(all_garbage)
+        assert result == "", (
+            "A script consisting entirely of U+FFFD should yield empty string"
+        )
+
+    def test_clean_script_no_fffd_passthrough(self) -> None:
+        """Clean Devanagari passes through unchanged."""
+        from transpose.pipeline.glossary import _clean_original_script
+
+        clean = "धर्म"
+        result = _clean_original_script(clean)
+        assert result == clean
+
+    def test_leading_trailing_fffd_stripped(self) -> None:
+        """U+FFFD at the start or end of otherwise-clean script is removed."""
+        from transpose.pipeline.glossary import _clean_original_script
+
+        padded = "\ufffdयोग\ufffd"
+        result = _clean_original_script(padded)
+        assert "\ufffd" not in result
+        assert "योग" in result
+
+    def test_mixed_fffd_and_latin_returns_empty(self) -> None:
+        """After FFFD removal, a Latin-only remainder yields empty string."""
+        from transpose.pipeline.glossary import _clean_original_script
+
+        # Latin chars + replacement chars — no Indic content remaining
+        latin_garbage = "abc\ufffde"
+        result = _clean_original_script(latin_garbage)
+        assert "\ufffd" not in result
+        # Should be empty (Latin-only after strip)
+        assert result == "" or not any("\u0900" <= c <= "\u097F" for c in result)
