@@ -158,3 +158,8 @@ Tank's workspace table design + migration script (schema additions to `books` ta
 - Fixed the local-dev hard dependency on Blob RBAC by allowing repo-local fallback on auth/config failures, restoring real blob/list-container readiness probes, and wiring configurable OpenAI timeouts through `ServiceContext` into `LlmClient`.
 - Verified with `pytest -q tests/unit/services/test_blob_client.py tests/unit/services/test_llm_client.py tests/unit/pipeline/test_gates.py tests/unit/pipeline/test_chunk.py tests/unit/pipeline/test_runner.py` and `TRANSPOSE_SMOKE_SOURCE=shiv pytest -q tests/integration/test_pipeline_smoke.py`.
 
+### Progress — 2026-05-21T11:00:50.468-04:00
+
+- Fixed oversized paragraph handling in the chunk stage so full runs now split pathological OCR blocks and keep emitted chunk sizes near the configured token target instead of leaking 10k+ token blobs downstream.
+- Verified with `pytest -q tests/unit/services/test_blob_client.py tests/unit/services/test_llm_client.py tests/unit/pipeline/test_gates.py tests/unit/pipeline/test_chunk.py tests/unit/pipeline/test_runner.py` and `TRANSPOSE_SMOKE_SOURCE=shiv pytest -q tests/integration/test_pipeline_smoke.py`.
+

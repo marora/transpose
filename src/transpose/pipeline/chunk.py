@@ -148,34 +148,39 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
             chunk_start_pos = full_text.find(para)
             continue
 
-        # Add paragraph to current chunk
-        para_tokens = len(encoding.encode(para))
+        for para_part in _split_oversized_paragraph(
+            para,
+            input.target_chunk_tokens,
+            encoding,
+        ):
+            para_tokens = len(encoding.encode(para_part))
 
-        if current_chunk_tokens + para_tokens > input.target_chunk_tokens and current_chunk_text:
-            # Save current chunk
-            chunks.append(
-                _create_chunk(
-                    book_id=input.book_id,
-                    sequence=sequence,
-                    text=current_chunk_text.strip(),
-                    encoding=encoding,
-                    page_boundaries=page_boundaries,
-                    chunk_start_pos=chunk_start_pos,
-                    current_chapter=current_chapter,
+            if (
+                current_chunk_tokens + para_tokens > input.target_chunk_tokens
+                and current_chunk_text
+            ):
+                chunks.append(
+                    _create_chunk(
+                        book_id=input.book_id,
+                        sequence=sequence,
+                        text=current_chunk_text.strip(),
+                        encoding=encoding,
+                        page_boundaries=page_boundaries,
+                        chunk_start_pos=chunk_start_pos,
+                        current_chapter=current_chapter,
+                    )
                 )
-            )
-            sequence += 1
+                sequence += 1
 
-            # Start new chunk with overlap
-            overlap_text = _get_overlap_text(
-                current_chunk_text, input.overlap_tokens, encoding
-            )
-            current_chunk_text = overlap_text + para + "\n\n"
-            current_chunk_tokens = len(encoding.encode(current_chunk_text))
-            chunk_start_pos = full_text.find(para)
-        else:
-            current_chunk_text += para + "\n\n"
-            current_chunk_tokens += para_tokens
+                overlap_text = _get_overlap_text(
+                    current_chunk_text, input.overlap_tokens, encoding
+                )
+                current_chunk_text = overlap_text + para_part + "\n\n"
+                current_chunk_tokens = len(encoding.encode(current_chunk_text))
+                chunk_start_pos = full_text.find(para_part)
+            else:
+                current_chunk_text += para_part + "\n\n"
+                current_chunk_tokens += para_tokens
 
     # Save final chunk
     if current_chunk_text.strip():
@@ -289,6 +294,46 @@ def _join_cross_page_paragraphs(pages) -> tuple[str, list[tuple[int, int]]]:
         full_text += text + "\n\n"
 
     return full_text, page_boundaries
+
+
+def _split_oversized_paragraph(text: str, target_chunk_tokens: int, encoding) -> list[str]:
+    """Split a large paragraph so no emitted part exceeds the target budget."""
+    import re
+
+    tokens = encoding.encode(text)
+    if len(tokens) <= target_chunk_tokens:
+        return [text]
+
+    sentences = [s.strip() for s in re.split(r"(?<=[।॥.!?])\s+", text) if s.strip()]
+    if len(sentences) <= 1:
+        return [
+            encoding.decode(tokens[i : i + target_chunk_tokens]).strip()
+            for i in range(0, len(tokens), target_chunk_tokens)
+            if encoding.decode(tokens[i : i + target_chunk_tokens]).strip()
+        ]
+
+    parts: list[str] = []
+    current = ""
+    current_tokens = 0
+    for sentence in sentences:
+        sentence_tokens = len(encoding.encode(sentence))
+        if sentence_tokens > target_chunk_tokens:
+            if current.strip():
+                parts.append(current.strip())
+                current = ""
+                current_tokens = 0
+            parts.extend(_split_oversized_paragraph(sentence, target_chunk_tokens, encoding))
+            continue
+        if current and current_tokens + sentence_tokens > target_chunk_tokens:
+            parts.append(current.strip())
+            current = sentence
+            current_tokens = sentence_tokens
+        else:
+            current = f"{current} {sentence}".strip()
+            current_tokens += sentence_tokens
+    if current.strip():
+        parts.append(current.strip())
+    return parts
 
 
 def _create_chunk(

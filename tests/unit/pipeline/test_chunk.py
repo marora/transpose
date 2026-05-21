@@ -17,6 +17,7 @@ from transpose.models.enums import SectionType
 from transpose.pipeline.chunk import (
     _ends_with_terminal,
     _join_cross_page_paragraphs,
+    _split_oversized_paragraph,
     _starts_with_continuation,
 )
 
@@ -196,6 +197,25 @@ class TestChunkChapterDetection:
             page_end=2,
         )
         assert chunk.section_type == SectionType.PROSE
+
+
+class TestOversizedParagraphSplitting:
+    """Tests for oversized paragraph splitting."""
+
+    def test_split_oversized_paragraph_hard_caps_token_count(self) -> None:
+        try:
+            import tiktoken
+        except ImportError:
+            pytest.skip("tiktoken not installed")
+
+        encoding = tiktoken.get_encoding("cl100k_base")
+        sentence = "यह एक लम्बा वाक्य है जो ध्यान, चेतना और साक्षीभाव पर विस्तार से बोलता है।"
+        text = " ".join([sentence] * 120)
+
+        parts = _split_oversized_paragraph(text, 200, encoding)
+
+        assert len(parts) > 1
+        assert all(len(encoding.encode(part)) <= 200 for part in parts)
 
 
 class TestChunkEdgeCases:
