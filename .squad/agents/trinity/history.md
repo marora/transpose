@@ -97,3 +97,15 @@ Tank traced true Shiv Sutra cost through PostgreSQL operational tables (not `boo
 
 ---
 
+### 2026-05-21T14:41:45-04:00: Pipeline optimization backlog filed
+
+**Status:** Issues filed (no implementation started)
+
+Per Manish's request, filed two LOW-PRIORITY optimization backlog issues based on Shiv Sutra telemetry:
+- **Issue #94:** Wall-time optimization — target <2h for 250-page book (currently 10h 32m; OCR + translation bottlenecks identified)
+- **Issue #95:** Cost optimization — target <$5 for 250-page book (currently $12.13; prompt overhead and model tier candidates identified)
+
+Both reference book_id `723477a9-7ca4-4ba6-944c-3abef1ee92a4` and include investigation avenues (parallelization, prompt caching, chunk tuning, model downgrade, OCR caching). No decisions made — backlog for future investigation.
+
+---
+
