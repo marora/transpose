@@ -1,40 +1,30 @@
 ---
-updated_at: 2026-04-21T16:19:43Z
-focus_area: MVP complete, all P0/P1 issues resolved, 624 tests passing, production-ready
-active_issues: []
+updated_at: 2026-05-21T16:08:19Z
+focus_area: Shiv Sutra e2e complete, pipeline hardened, 353 tests pass
+active_issues: [hardening-in-progress]
 ---
 
 # What We're Focused On
 
-**Full MVP complete.** 7-stage pipeline (Ingest → OCR → Chunk → Translate → Glossary → Assemble → Export) fully implemented with observability and cost tracking. All P0 (cultural term preservation) and P1 infrastructure issues resolved. Complete Azure infrastructure provisioned (Container Apps, PostgreSQL, Redis, Blob Storage, Document Intelligence, OpenAI, monitoring). Comprehensive test suite: 624 tests, all passing. Ready for first production book processing.
+**Shiv Sutra first real-book e2e pipeline complete.** Fixed critical glossary (U+FFFD) and export gate issues. Pipeline validated end-to-end with artifacts published to Azure. Momentum: moving from one-off heroics to systematic pipeline hardening for multi-book runs.
 
-## Key Achievements (Wave 2)
+## Recent Wins (Session 2026-05-21)
 
-- **Observability (#37):** 5-tab Pipeline Operations Dashboard with 13 reusable KQL functions and operator runbook
-- **Cost Tracking (#38):** Per-book cost tracking with token usage integration and Azure pricing rates
-- **Prior (Wave 1):** All P0/P1 issues resolved (gate wiring, settings fields, parallel translation, PDF fixes, golden target stability)
+- **Issue #89 (FIXED):** Glossary U+FFFD character contamination — defensive final scrub + 5 unit tests
+- **Issue #90 (FIXED):** export_rendering false positive on single repeated images (cover art, logos) — threshold raised to ≥2 distinct images
+- **Shiv Sutra E2E:** Pipeline ran to completion with validation=PASS; 275KB ePub and 1.38MB PDF published to Azure
+- **Unit test suite:** 353 tests, all passing (includes 6 new tests for #89, #90)
 
-## Infrastructure Posture
+## Pipeline Hardening Status
 
-✅ Managed Identity authentication (zero secrets in code)  
-✅ PostgreSQL Flexible Server with Entra ID + auto-pause  
-✅ Container Apps with 0-3 replica auto-scaling  
-✅ Application Insights + Log Analytics for observability  
-✅ Private Docker multi-stage builds with non-root user  
-✅ Bicep IaC with modular organization  
+| Component | Status | Tests |
+|-----------|--------|-------|
+| Glossary stage | ✅ Scrubbed | 5 new FFFD tests |
+| Export rendering | ✅ Tuned | 2 gate tests |
+| E2E validation | ✅ PASS | 353 pipeline tests |
+| Artifacts | ✅ Published | Shiv_Sutra.epub, .pdf in Azure |
 
-## Test Coverage
+## Next: Multi-Book Runs
 
-- **Unit:** 120 tests (all passing, all ruff clean)
-- **Integration:** 21 tests (end-to-end pipeline validation)
-- **Contract:** 16 cultural term preservation tests (dharma, karma, moksha, etc.)
-- **Visual:** 12 PDF visual regression tests
-- **API:** 455 API contract + edge case tests
-- **Total:** 624 passing tests
+Morpheus pipeline hardening plan (P0 fixes #87, #86, #81) prioritized for 3–5 book ingestion. Focus: chunk invariants, translation timeout budgets, local artifact fallback.
 
-## Next Phase
-
-- Multi-replica deployment (cost tracking wiring complete)
-- VNet + Private Endpoints for production hardening
-- Custom domain + managed certificates
-- Real data ingestion and monitoring

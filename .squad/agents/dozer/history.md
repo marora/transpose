@@ -145,3 +145,36 @@ Calling an async function that makes deeply-nested `AsyncMock` calls without pro
 #### 5. Twitter Card spec gap (flagged to Morpheus)
 Morpheus's landing page HTML template in `decisions.md §C` does NOT include `<meta name="twitter:card">` tags, but Dozer's D-2 spec requires testing for them. The golden fixture (`tests/golden/landing_page_fixture.html`) includes Twitter Card tags as an assertion target. Trinity must add them when implementing TR-3. See `.squad/decisions/inbox/dozer-twitter-card-gap.md`.
 
+
+---
+
+## 2026-05-21T16:08:19Z: Trinity Fixed Glossary & Export Gate Tests — 6 New Unit Tests
+
+**From:** Scribe (orchestration log)  
+**Context:** Issues #89 and #90 resolved via Trinity's defensive scrub + gate threshold tuning
+
+### New Unit Tests That Landed
+
+**Issue #89 — Glossary U+FFFD Scrub (5 tests):**
+- `test_scrub_path_recoverable_string` — FFFD stripped, Devanagari preserved
+- `test_reject_path_all_fffd` — entirely U+FFFD → empty string
+- `test_clean_script_no_fffd_passthrough` — clean Devanagari unchanged
+- `test_leading_trailing_fffd_stripped` — padding FFFD removed
+- `test_mixed_fffd_and_latin_returns_empty` — Latin-only remainder → empty
+
+All located in `tests/unit/pipeline/test_glossary.py :: TestCleanOriginalScriptUFFfd`
+
+**Issue #90 — export_rendering Gate (1 updated, 1 new):**
+- `test_fails_on_large_repeated_placed_images` — updated: now checks ≥2 distinct images (xref 777, 888) both repeating
+- `test_passes_single_large_repeated_image_real_book` — new: ONE large image repeating 5 pages; gate must pass
+
+Both in `tests/unit/pipeline/test_gates.py :: TestExportRenderingGate`
+
+### Total Pipeline Tests
+All 353 tests pass (6 additions + any existing).
+
+### Takeaway for Dozer
+- The `_clean_original_script` utility is now module-level and independently unit-testable (not nested inside `run()`)
+- Export gate threshold is now parameterized: watch for future tuning as more real books run
+- Both fixes are stable on shiv-sutra full-book completion
+

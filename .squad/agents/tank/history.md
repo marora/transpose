@@ -145,3 +145,28 @@ None — architecture complete. Start immediately.
 - Tank: If not already printed by your `azure-setup.sh`, ensure `TRANSPOSE_BLOB_STATIC_WEBSITE_URL=https://transposebooks.z{n}.web.core.windows.net` is passed to all downstream Container App deployments.
 
 **See also:** `.squad/orchestration-log/2026-05-21T05-11-39Z-trinity-1-backfill.md`
+
+---
+
+## 2026-05-21T16:08:19Z: Azure Blob Containers Auto-Created During Shiv Sutra Run
+
+**From:** Trinity (session completion)  
+**Context:** Shiv Sutra e2e pipeline completed successfully; artifacts published to Azure
+
+### Containers Created Mid-Run
+
+During shiv sutra execution, Trinity auto-created two Azure Blob containers that were not pre-provisioned in azure-setup.sh:
+- **`output`** container — received exported artifacts (Shiv_Sutra.epub 275KB, Shiv_Sutra.pdf 1.38MB)
+- **`source-pdfs`** container — may have been used for intermediate pipeline artifacts
+
+### Action Item for Tank
+
+Flag in `azure-setup.sh`: Add explicit pre-creation of `output` and `source-pdfs` containers so:
+1. Container creation is idempotent and documented
+2. ACLs and retention policies can be set upfront (not inferred post-hoc)
+3. Next book runs don't require mid-run container auto-creation
+
+### Related Files
+- `.squad/orchestration-log/2026-05-21T16-08-trinity.md` — full Trinity context
+- Shiv Sutra artifacts in Azure `output` container
+
