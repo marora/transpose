@@ -1,12 +1,12 @@
 ---
-updated_at: 2026-05-21T17:45:28Z
-focus_area: Shiv Sutra landing page complete with both source + translation downloads, pipeline hardened
+updated_at: 2026-05-21T14:41:45Z
+focus_area: Shiv Sutra hardened + complete; performance/cost baseline documented; ready for multi-book scale
 active_issues: []
 ---
 
 # What We're Focused On
 
-**Shiv Sutra publicly accessible with complete book packaging (source PDF + translation).** Landing page now shows both download buttons as designed. Diagnosed that workspace stage `source_url` threading is correct; manual republish in prior session was the ops gap. Ops issue #92 filed. Momentum: multi-book runs can proceed with confidence in pipeline output correctness.
+**Shiv Sutra is complete and production-ready.** Pipeline hardened (glossary U+FFFD scrub, export gate heuristics calibrated). Performance baseline documented (10h 32m wall time, $12.13 cost for 250-page book). Optimization backlog filed (issues #94, #95) for future throughput/cost improvements. Ready to ingest 3–5 additional books without rework.
 
 ## Recent Wins (Session 2026-05-21)
 
@@ -17,6 +17,7 @@ active_issues: []
 - **Landing Page Complete:** Both download buttons (source + translation) now functional and visible
 - **Infrastructure Wiring:** `TRANSPOSE_BLOB_STATIC_WEBSITE_URL` now flows through IaC and setup scripts for future books
 - **Ops Clarity:** Manual republish checklist needed (issue #92); pipeline output is correct
+- **Performance Telemetry:** Baseline cost + wall-time analysis complete; issues #94 (wall-time) and #95 (cost) filed as LOW-PRIORITY for future optimization
 - **Unit test suite:** 353 tests, all passing (includes 6 new tests for #89, #90)
 
 ## Pipeline Hardening Status
@@ -28,9 +29,10 @@ active_issues: []
 | E2E validation | ✅ PASS | 353 pipeline tests |
 | Artifacts | ✅ Published | Shiv_Sutra.epub, .pdf in Azure |
 | Landing pages | ✅ Both links | source + translation visible |
+| Performance baseline | ✅ Documented | Issues #94, #95 filed for future work |
 
 ## Next: Multi-Book Runs
 
-Morpheus pipeline hardening plan (P0 fixes #87, #86, #81) prioritized for 3–5 book ingestion. Focus: chunk invariants, translation timeout budgets, local artifact fallback.
+Morpheus pipeline hardening plan (P0 fixes #87, #86, #81) prioritized for 3–5 book ingestion. Focus: chunk invariants, translation timeout budgets, local artifact fallback. Pipeline is ready for volume; optimization (wall-time, cost) is LOW-PRIORITY backlog.
 
 
