@@ -766,3 +766,611 @@ On the DB side, a `book_events` table (or existing `pipeline_state` if repurpose
 **Related Decisions:** 2026-05-20 Workspace abstraction (blob architecture), 2026-05-19 License status gate  
 **Handoff:** Trinity (export/publish gate), Tank (blob ACL + workspace layout), Dozer (license gate tests)
 
+# Niobe: Open Questions Closed — Shape A Product Rules Finalized
+
+**Date:** 2026-05-20T23:10:06.050-04:00  
+**Requested by:** Manish  
+**Author:** Niobe (Product Manager)  
+**Type:** Product Decision — Scope, Licensing, Share UX  
+**Status:** DECIDED / CLOSED
+
+---
+
+## Summary
+
+Four open questions have been answered by Manish. This note captures his answers verbatim, synthesizes the resulting firm product rules, makes a call on the WhatsApp preview feature (deferred post-MVP), and documents team-side impacts.
+
+---
+
+## Manish's Answers (Verbatim)
+
+### Q1: `claimed-public-domain` visibility under Shape A
+
+**Manish's answer:**
+> "Keep them fully private until I have upgraded them to verified-public-domain."
+
+**Translation:** Books marked `claimed-public-domain` must NOT be shareable via private URL, even to close friends. The private-until-verified rule is firm. Shape A "close friend" share capability applies only to `verified-public-domain` and `rights-cleared` books.
+
+---
+
+### Q2: Azure subscription
+
+**Manish's answer:** Active subscription already logged in.
+
+**Routing:** Morpheus owns technical setup (Blob ACL, SAS token generation, container layout). No product action required.
+
+---
+
+### Q3: Share URL scope + Bonus: WhatsApp preview
+
+**Manish's answer:**
+> "Both source PDF AND translated PDF. Bonus ask: When I share the URL via WhatsApp, can it also pull in a small 1-sentence title of the translated book and/or author?"
+
+**Interpretation:** 
+- **Scope:** Share URLs point to *both* source and translated PDFs (not one or the other).
+- **Bonus:** WhatsApp link previews should render a small text snippet (title/author) instead of a raw Blob URL. This requires OpenGraph `<meta>` tags or a lightweight preview wrapper, not raw SAS URLs.
+
+---
+
+### Q4: PDF ownership
+
+**Manish's answer:**
+> "Third-party PDFs collected from the internet."
+
+**Implication:** No chain of custody. Every book starts as `rights-unknown`. This is the *hard risk* path, not the soft path. Urgency of per-book license research is maximized.
+
+---
+
+## Firm Product Rules (Resulting from Answers)
+
+### Rule 1: Private-Until-Verified (Closed Loop)
+
+**Books must NOT be shareable via private URL if `license.status` is `claimed-public-domain` or `rights-unknown`.**
+
+- `claimed-public-domain` → Workspace private only. Manish's judgment, not verified. Shape A close-friend share is unavailable.
+- `rights-unknown` → Workspace private only. Default at workspace creation. No shared access.
+- `verified-public-domain` or `rights-cleared` → Eligible for Shape A private URL share (SAS token).
+
+**Rationale:** Manish's explicit rule closes the gap between workspace-metadata judgment and sharing policy. No exception for trusted friends; the rigor is per-book, not per-person.
+
+---
+
+### Rule 2: `rights-unknown` as Mandatory Default
+
+**Every workspace created for a new book starts with `license.status = 'rights-unknown'`.**
+
+- Not a soft default; a hard constraint enforced at workspace creation (Trinity: must set this field explicitly).
+- DB column has CHECK constraint + default value (Tank: `license_status TEXT NOT NULL DEFAULT 'rights-unknown'`).
+- Upgrade from `rights-unknown` is a deliberate, auditable per-book action. No silent assumption of public domain.
+
+**Rationale:** Third-party PDFs from the internet have no chain of custody. Default to caution. Manish must research and upgrade each book explicitly.
+
+---
+
+### Rule 3: Deliberate License Claim (Per-Book, Per-Action)
+
+**Claiming public domain is not a workflow shortcut; it's a conscious, auditable decision.**
+
+- Manish upgrades a book's `license.status` only after he has verified the source PDF's provenance and rights.
+- Every status change appends to workspace lifecycle history (timestamp + from/to + notes).
+- "Claim PD" is not a one-click batch operation; it's a deliberate per-book action.
+
+**Rationale:** With third-party internet PDFs, there is no good reason to batch-upgrade. Each book needs individual research. Enforce this at the UX level.
+
+---
+
+## WhatsApp Preview Decision: DEFERRED (Not Shape A MVP)
+
+**Decision:** The WhatsApp preview feature (OpenGraph metadata rendering title/author) is **deferred post-MVP**.
+
+**Reasoning:**
+
+1. **Shape A is personal + close friends.** Friends who receive a SAS URL link are already in a high-trust context (Manish sends the URL directly). A link preview is a nice-to-have, not a blocker for usability.
+
+2. **OpenGraph requires infrastructure.** Raw Blob SAS URLs are static, signed objects. Rendering OpenGraph metadata requires either:
+   - A lightweight web proxy/wrapper service (added latency, cost, operational surface)
+   - Dynamic URL rewriting (more complex, couples storage to HTTP layer)
+   - Both are out of scope for Shape A MVP.
+
+3. **MVP ship criterion:** Friends can access and download translated PDFs via private URL. That's enough. Preview can come when Shape B (public archive) is designed, which will need a proper web UI anyway.
+
+**Recommendation:** Build Shape A with plain SAS URLs (no preview). When Shape B design begins and a public website is laid out, both WhatsApp preview and general OpenGraph metadata become natural features of the archive UI.
+
+**Deferred to:** Phase 2 (public archive + web UI).
+
+---
+
+## Team-Side Impacts
+
+### Trinity (Pipeline / Workspace Creation)
+
+**Change:**
+- Workspace creation API must **always** set `license.status = 'rights-unknown'` for new books.
+- No auto-claim, no silent assumption of PD. Explicit field population is non-negotiable.
+
+**Test:** Unit test: workspace creation produces `license.status = 'rights-unknown'` every time.
+
+---
+
+### Tank (Infrastructure / Database)
+
+**Change:**
+- `books` table gains column:
+  ```sql
+  ALTER TABLE books ADD COLUMN license_status TEXT 
+    NOT NULL DEFAULT 'rights-unknown'
+    CHECK (license_status IN ('rights-unknown','claimed-public-domain','verified-public-domain','rights-cleared'));
+  ```
+- Backfill: all existing books → `license_status = 'rights-unknown'` with migration timestamp.
+- Private container ACL for Blob (already decided; no change).
+
+**Artifact:** Tank provides schema migration + test fixtures.
+
+---
+
+### Dozer (Tests)
+
+**Change:**
+- Add test: workspace creation always defaults to `rights-unknown`.
+- Add test: `claimed-public-domain` books are NOT eligible for shape-A-share (promotion gate rejects them).
+- Extend share-URL gate tests: only `verified-public-domain` and `rights-cleared` qualify for SAS token generation.
+
+**Artifact:** Dozer updates test suite; updates gates in Trinity's promotion logic if not already done.
+
+---
+
+## Newly Opened Questions
+
+None. All four outstanding questions are now answered. License status rules are firm; rules are complete; team impacts are clear.
+
+---
+
+## Next Steps
+
+1. **Morpheus:** Confirm Blob setup (SAS token generation, container ACL, workspace path layout) with Tank.
+2. **Trinity + Tank + Dozer:** Begin Phase 1 schema migrations + tests using `rights-unknown` default.
+3. **Niobe:** Pause product framing until 3–5 books are live in Shape A. Then re-open Shape B (public archive site design, per-book promotion workflow, researcher/scholar distribution strategy) — likely 3–4 weeks out.
+
+---
+
+## Related Decisions
+
+- 2026-05-20: License status gate (copyright posture per book)
+- 2026-05-20: Workspace abstraction (Blob storage, Shape A MVP scope)
+- 2026-05-20: Storage location (Blob from day one, not public GitHub)
+# Architecture Addendum: Share URL + WhatsApp Preview Resolution
+
+**Author:** Morpheus (Lead / Architect)
+**Requested by:** Manish
+**Date:** 2026-05-20T23:10:06.050-04:00
+**Status:** DECIDED — ready for Tank, Trinity, Dozer implementation
+**Resolves:** Four open questions posed in 2026-05-20T22:52 license/provenance decision and 2026-05-20T22:57 hybrid-storage decision
+
+---
+
+## A. Azure Storage Setup — Copy-Pasteable Command Sequence
+
+Assumes: `az login` is complete in the active terminal.
+
+```bash
+# Step 1: Confirm active subscription
+az account show --query "{name:name, subscriptionId:id, state:state}" -o table
+
+# Step 2: Create resource group (idempotent — safe to re-run if it exists)
+az group create \
+  --name transpose-rg \
+  --location eastus \
+  --output table
+
+# Step 3: Create storage account
+# NOTE: Name must be globally unique, 3–24 chars, lowercase alphanumeric only.
+# If "transposebooks" is taken, try "transposebksmr" (append your initials).
+az storage account create \
+  --name transposebooks \
+  --resource-group transpose-rg \
+  --location eastus \
+  --sku Standard_LRS \
+  --kind StorageV2 \
+  --allow-blob-public-access false \
+  --min-tls-version TLS1_2 \
+  --output table
+
+# Step 4: Create private container for book workspaces
+az storage container create \
+  --name book-workspaces \
+  --account-name transposebooks \
+  --auth-mode login \
+  --public-access off \
+  --output table
+
+# Step 5: Enable Static Website feature (used for OG landing pages — see Section C)
+az storage blob service-properties update \
+  --account-name transposebooks \
+  --static-website \
+  --index-document index.html \
+  --auth-mode login
+
+# After this command, note the static website URL in the output under "w" (web endpoint).
+# It will look like: https://transposebooks.z6.web.core.windows.net/
+# Save it — this becomes the base URL for all landing pages.
+
+# Step 6: Assign Storage Blob Data Contributor to your identity
+# (Required for auth-mode login to work for reads/writes/SAS generation)
+ACCOUNT_ID=$(az storage account show \
+  --name transposebooks \
+  --resource-group transpose-rg \
+  --query id -o tsv)
+
+USER_ID=$(az ad signed-in-user show --query id -o tsv)
+
+az role assignment create \
+  --role "Storage Blob Data Contributor" \
+  --assignee "$USER_ID" \
+  --scope "$ACCOUNT_ID" \
+  --output table
+
+# Step 7: Verify — list containers (expect "book-workspaces" with privateAccess)
+az storage container list \
+  --account-name transposebooks \
+  --auth-mode login \
+  -o table
+
+# Step 8: Verify static website endpoint responds
+STATIC_URL=$(az storage account show \
+  --name transposebooks \
+  --resource-group transpose-rg \
+  --query "primaryEndpoints.web" -o tsv)
+echo "Landing page base URL: $STATIC_URL"
+curl -s -o /dev/null -w "HTTP %{http_code}\n" "${STATIC_URL}"
+# Expect HTTP 404 (no index.html yet) — that's correct. 404 != unreachable.
+```
+
+**Estimated time:** 5–10 minutes end-to-end.
+**Cost:** Standard_LRS in East US ≈ $0.018/GB/month. For Shape A book volume (tens of books, each ≤ 500 MB), < $1/month total.
+
+---
+
+## B. Share URL Design
+
+### Blob Path Layout
+
+All artifacts live under the `book-workspaces` private container:
+
+```
+book-workspaces/
+  {slug}--{book_id}/
+    input/
+      source.pdf                ← original scanned PDF uploaded at ingest
+    output/
+      translated.pdf            ← generated at pipeline translation-complete stage
+    landing/
+      index.html                ← local workspace copy of landing page (reference)
+    metadata.json               ← git-tracked (workspace canonical copy)
+    glossary.json               ← git-tracked
+    reports/
+      pipeline-report.json
+```
+
+Static website container (`$web`, managed by Azure):
+
+```
+$web/
+  {slug}--{book_id}/
+    index.html                  ← served as the landing page (see Section C)
+```
+
+**Slug format:** kebab-case title, first 40 chars, ASCII-normalized. Example: `vigyan-bhairav-tantra--b7f3a2`.
+**`book_id`:** UUID, last 6 hex chars used in folder name for brevity with collision-safety.
+
+### SAS Token Policy
+
+| Dimension       | Decision                                                    |
+|-----------------|-------------------------------------------------------------|
+| Scope           | **Per-file** (not per-prefix). Each PDF gets its own token. |
+| Permissions     | `r` (read only). No write, delete, list.                    |
+| Default expiry  | **30 days** from generation.                                |
+| Storage         | `metadata.json` → `share.source_pdf_sas_url` and `share.translated_pdf_sas_url` |
+| Rotation        | Manual CLI re-generation + metadata.json update + landing page re-upload. See Open Question. |
+
+Per-file SAS is the correct scope: friends receive access to the specific PDFs they need, not to the workspace directory listing or any other workspace artifact.
+
+**Both** source PDF and translated PDF get SAS URLs, as Manish requested. The source URL enables anyone to verify the original scan; the translated URL is the primary share artifact.
+
+**Generation command (example — Trinity will automate this):**
+
+```bash
+# Translated PDF SAS — 30-day read-only
+END_DATE=$(date -u -d "+30 days" '+%Y-%m-%dT%H:%MZ')
+az storage blob generate-sas \
+  --account-name transposebooks \
+  --container-name book-workspaces \
+  --name "{slug}--{book_id}/output/translated.pdf" \
+  --permissions r \
+  --expiry "$END_DATE" \
+  --auth-mode login \
+  --as-user \
+  --full-uri \
+  --output tsv
+```
+
+---
+
+## C. WhatsApp Preview Decision: Option A — Static HTML Landing Page
+
+**Decision: Option A. Landing page per book, served from Azure Static Website.**
+
+### Why Not B or C
+
+**Option B (serverless redirect function):** Heavier infra — Azure Functions, cold-start latency, deployment pipeline, costs. Overkill for Shape A friend-share. The OG-bot detection + 302-redirect pattern is clever but adds a moving part that breaks if the function cold-starts mid-scrape. Reject for now.
+
+**Option C (defer):** Manish explicitly wants WhatsApp previews. Deferral is not an option. Reject.
+
+**Option A wins** for three reasons:
+1. **Zero new infra.** Static Website is a feature toggle on the storage account already being created (Step 5 above). No additional Azure resources.
+2. **Shape A → Shape B stepping stone.** The exact same HTML page format, hosted at the exact same URL path, becomes the public Shape B archive page once `license.status` flips to `verified-public-domain`. The URL never changes for the reader. PDF links just swap from SAS to public when the time comes.
+3. **WhatsApp, iMessage, Signal, Telegram all scrape raw HTTP.** A static HTML file served from `*.web.core.windows.net` has correct `Content-Type: text/html`, is reachable by scrapers, and returns OG meta tags synchronously. No JavaScript rendering required.
+
+### Where Landing Pages Live
+
+**Azure Static Website on the same storage account** (`$web` container, automatically created when static website is enabled).
+
+- URL pattern: `https://transposebooks.z{n}.web.core.windows.net/{slug}--{book_id}/`
+- The `$web` container is separate from `book-workspaces`. It is **public** (read-only, no directory listing), which is required for WhatsApp scrapers to fetch the HTML without authentication.
+- The HTML page itself contains only: title, author, language pair, page count, translator note, and links to SAS-protected PDFs. The page does not expose any binary content.
+
+**Landing page privacy posture:** Public-but-unindexed.
+- `robots.txt` at `$web/robots.txt`: `User-agent: *\nDisallow: /` — prevents Google/Bing indexing.
+- WhatsApp/iMessage/Signal scrapers do not respect `robots.txt` (they are not indexers; they are link-preview fetchers). They will fetch and parse OG tags. This is the intended behaviour.
+- The URL itself is unguessable (contains UUID hex suffix). "Security by obscurity" is acceptable for Shape A friend-share — it matches the stated audience (close colleagues/friends) and the same model used by Google Docs "anyone with the link" sharing.
+
+**Does the landing page reveal `license.status`?**
+**No.** The landing page in Shape A shows: title, author, language pair, description, and PDF download links. It does not render "license status" to readers. `license.status` is an internal operational field — it gates promotion and pipeline behaviour, not what friends see. The Shape B archive page may eventually show a "Heritage Archive" badge, but that is a future surface decision for Niobe.
+
+### Generator Approach
+
+Trinity adds a **`generate-landing-page`** pipeline step, triggered at `translation-complete`:
+
+1. Read `metadata.json` from the book workspace.
+2. Render `landing/index.html` using a single Jinja2 template (committed to the pipeline source, no external dependencies).
+3. Upload rendered HTML to:
+   - `book-workspaces/{slug}--{book_id}/landing/index.html` (workspace copy, private)
+   - `$web/{slug}--{book_id}/index.html` (served copy, public)
+4. Set blob content-type: `text/html; charset=utf-8`.
+5. Regenerate SAS URLs for `source.pdf` and `translated.pdf`.
+6. Write SAS URLs and `landing_page_url` back to `metadata.json`.
+
+**Template minimum:**
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta property="og:type" content="book" />
+  <meta property="og:title" content="{{ title }} — {{ author }}" />
+  <meta property="og:description" content="{{ translator_note | truncate(200) }}" />
+  <meta property="og:url" content="{{ landing_page_url }}" />
+  {% if cover_image_blob_url %}
+  <meta property="og:image" content="{{ cover_image_blob_url }}" />
+  {% endif %}
+  <meta property="og:site_name" content="Transpose" />
+  <title>{{ title }} — {{ author }}</title>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <p>{{ author }} · {{ source_language }} → {{ target_language }} · {{ page_count }} pages</p>
+  <p>{{ translator_note }}</p>
+  <a href="{{ share.translated_pdf_sas_url }}">Download Translation (PDF)</a>
+  <a href="{{ share.source_pdf_sas_url }}">View Original Scan (PDF)</a>
+</body>
+</html>
+```
+
+No CSS framework, no JavaScript, no CDN dependency. The page must render OG tags synchronously on first byte.
+
+---
+
+## D. `metadata.json` Schema Additions
+
+Fields required to support the landing page. All fields nested under logical keys for clarity. Fields already in the schema are noted.
+
+| Field | Type | Source | Mandatory Before Share |
+|-------|------|--------|------------------------|
+| `title` | string | manual (Manish at ingest) | ✅ yes |
+| `author` | string | manual (Manish at ingest) | ✅ yes |
+| `source_language` | string (e.g. `"Hindi"`) | auto (pipeline detects) | ✅ yes |
+| `target_language` | string (e.g. `"English"`) | auto (pipeline constant) | ✅ yes |
+| `page_count` | integer | auto (OCR stage) | ✅ yes |
+| `slug` | string (kebab-case, ASCII-safe) | auto (derived from title + book_id at ingest) | ✅ yes |
+| `translator_note` | string (max 500 chars) | manual (Manish, post-translation) | ⚠️ optional but strongly recommended for OG description |
+| `cover_image_blob_url` | string or null | manual (Manish uploads cover scan) | ❌ optional (OG image falls back to site default or absent) |
+| `landing_page_url` | string (full HTTPS URL to `$web/{slug}--{book_id}/`) | auto (generated at landing-page step) | ✅ yes (generated automatically) |
+| `share.source_pdf_sas_url` | string (full SAS URL) | auto (generated at landing-page step) | ✅ yes |
+| `share.translated_pdf_sas_url` | string (full SAS URL) | auto (generated at landing-page step) | ✅ yes |
+| `share.sas_expiry` | ISO-8601 datetime string | auto (generated at landing-page step) | ✅ yes (drives rotation reminder) |
+| `share.generated_at` | ISO-8601 datetime string | auto | ✅ yes |
+| `license.status` *(existing)* | enum | manual (post-ingest upgrade only) | — (internal; not surfaced on landing page) |
+| `provenance.source` *(existing)* | object | manual / ingest params | — (internal) |
+
+**Structural example (`share` block):**
+```json
+{
+  "title": "Vigyan Bhairav Tantra Vol. 1",
+  "author": "Osho",
+  "source_language": "Hindi",
+  "target_language": "English",
+  "page_count": 312,
+  "slug": "vigyan-bhairav-tantra-vol-1",
+  "translator_note": "A Tantra classic. 112 meditation techniques as described by Shiva to Devi.",
+  "cover_image_blob_url": null,
+  "landing_page_url": "https://transposebooks.z6.web.core.windows.net/vigyan-bhairav-tantra-vol-1--b7f3a2/",
+  "share": {
+    "source_pdf_sas_url": "https://transposebooks.blob.core.windows.net/book-workspaces/vigyan-bhairav-tantra-vol-1--b7f3a2/input/source.pdf?sv=...&sig=...",
+    "translated_pdf_sas_url": "https://transposebooks.blob.core.windows.net/book-workspaces/vigyan-bhairav-tantra-vol-1--b7f3a2/output/translated.pdf?sv=...&sig=...",
+    "sas_expiry": "2026-06-19T23:10:00Z",
+    "generated_at": "2026-05-20T23:10:06Z"
+  }
+}
+```
+
+---
+
+## E. Hard Constraint: `license.status = rights-unknown` at Creation
+
+**Manish confirmed:** Source PDFs are third-party internet scans. This makes `rights-unknown` not just a conservative default — it is the only honest starting state. There is no chain of custody. No code path may set `license.status` to anything else at book creation time.
+
+This constraint is enforced at **four layers**. All four are required. Any one layer alone is insufficient.
+
+### 1. Database Layer (Tank owns)
+
+```sql
+-- Column must have DEFAULT and CHECK constraint.
+-- DEFAULT ensures any INSERT that omits license_status gets the right value.
+-- CHECK ensures no application code can bypass it with an explicit wrong value.
+ALTER TABLE books
+  ADD COLUMN IF NOT EXISTS license_status TEXT NOT NULL DEFAULT 'rights-unknown'
+    CHECK (license_status IN ('rights-unknown', 'claimed-public-domain', 'verified-public-domain', 'rights-cleared'));
+```
+
+The DB is the last line of defence. It must refuse any INSERT or UPDATE that violates the enum regardless of what the application layer sends.
+
+### 2. Application Layer — Pipeline Guard (Trinity owns)
+
+The ingest function must:
+1. Never accept `license_status` as an ingest parameter. It is not in the ingest API signature.
+2. After INSERT, immediately re-read `books.license_status` and assert `== 'rights-unknown'`. If not, raise `AssertionError` and roll back.
+
+```python
+# Pseudocode — Trinity implements the real version
+def ingest_book(title, author, source_language, source_blob_uri, ...):
+    # license_status is NOT a parameter. Period.
+    book_id = db.insert_book(
+        title=title, author=author,
+        source_language=source_language,
+        source_blob_uri=source_blob_uri,
+        # No license_status argument here.
+    )
+    row = db.fetch_book(book_id)
+    assert row.license_status == 'rights-unknown', (
+        f"HARD CONSTRAINT VIOLATED: book {book_id} created with license_status={row.license_status!r}. "
+        "Ingest must never set license_status. DB default should have applied."
+    )
+    return book_id
+```
+
+### 3. `metadata.json` Guard (Trinity owns)
+
+`metadata.json` is written at workspace creation. The writer must:
+1. Always set `license.status = "rights-unknown"` when creating a new workspace.
+2. Never accept a `license_status` override from pipeline config or environment.
+
+### 4. Tests (Dozer owns)
+
+Dozer must write and maintain all of the following — they are not optional:
+
+| Test | Type | What it asserts |
+|------|------|-----------------|
+| `test_ingest_sets_rights_unknown` | Unit | `ingest_book(...)` → `book.license_status == 'rights-unknown'` |
+| `test_ingest_rejects_license_param` | Unit | `ingest_book(..., license_status='claimed-public-domain')` raises `TypeError` (param doesn't exist) |
+| `test_db_default_is_rights_unknown` | Integration | Raw SQL `INSERT INTO books (...) VALUES (...)` omitting `license_status` → row has `license_status = 'rights-unknown'` |
+| `test_db_check_constraint` | Integration | Raw SQL `INSERT INTO books (..., license_status='made-up')` raises `IntegrityError` |
+| `test_metadata_json_default` | Unit | Workspace creation writes `metadata.json` with `license.status == "rights-unknown"` |
+
+---
+
+## F. Implementation Handoff
+
+Work breakdown with the landing-page addition. Acceptance criteria are binding — done means all criteria pass.
+
+---
+
+### Tank (Infrastructure + DB)
+
+**Task T-1: Azure Storage Setup**
+- Run the command sequence from Section A in order.
+- Confirm: `book-workspaces` container exists, public access = off.
+- Confirm: Static Website enabled, base URL noted and recorded in `.squad/decisions.md` (Tank update).
+- Confirm: `Storage Blob Data Contributor` role assigned; `az storage blob list` works with `--auth-mode login`.
+- **Acceptance:** Section A Step 7 and Step 8 both succeed. Base URL reachable (HTTP 404 is passing — means endpoint is live, no content yet).
+
+**Task T-2: DB Migration — license_status + metadata JSONB**
+- Write and run migration: add `license_status TEXT NOT NULL DEFAULT 'rights-unknown' CHECK (...)` and `metadata JSONB` and `provenance_source JSONB` to `books` table (per 2026-05-20T22:52 decision schema).
+- Write and run backfill: all existing rows get `license_status = 'rights-unknown'`, `metadata = '{}'::jsonb`, `provenance_source = '{}'::jsonb`.
+- **Acceptance:** `SELECT license_status, count(*) FROM books GROUP BY 1` → exactly one row: `rights-unknown | N`. `\d books` shows check constraint. Dozer's DB integration tests pass (see E above).
+
+**Task T-3: Static Website `robots.txt`**
+- Upload `robots.txt` to `$web/robots.txt` with content:
+  ```
+  User-agent: *
+  Disallow: /
+  ```
+- **Acceptance:** `curl https://transposebooks.z{n}.web.core.windows.net/robots.txt` returns 200 with the correct content.
+
+---
+
+### Trinity (Pipeline)
+
+**Task TR-1: Enforce `rights-unknown` at Ingest**
+- Remove any code path that accepts or writes `license_status` at book creation.
+- Add the post-insert assertion (see Section E, layer 2).
+- **Acceptance:** Dozer's `test_ingest_sets_rights_unknown` and `test_ingest_rejects_license_param` pass.
+
+**Task TR-2: `metadata.json` Writer Update**
+- Workspace creation writes `license.status = "rights-unknown"` in `metadata.json`. No override path.
+- Add all new fields from Section D schema to the workspace creation writer: `slug`, `title`, `author`, `source_language`, `target_language`, `page_count`.
+- **Acceptance:** Every newly created workspace has a valid `metadata.json` with all mandatory fields populated. `license.status == "rights-unknown"`.
+
+**Task TR-3: Landing Page Generator Step**
+- New pipeline stage: `generate-landing-page`, triggered at `translation-complete`.
+- Input: `metadata.json` (must have all mandatory-before-share fields populated).
+- Actions:
+  1. Generate SAS URLs for `source.pdf` and `translated.pdf` (30-day read-only, per-file).
+  2. Render `landing/index.html` from Jinja2 template (template committed to `src/transpose/templates/landing.html.j2`).
+  3. Upload to `$web/{slug}--{book_id}/index.html` (content-type: `text/html; charset=utf-8`).
+  4. Upload workspace copy to `book-workspaces/{slug}--{book_id}/landing/index.html`.
+  5. Update `metadata.json`: write `landing_page_url`, `share.source_pdf_sas_url`, `share.translated_pdf_sas_url`, `share.sas_expiry`, `share.generated_at`.
+- **Acceptance:**
+  - `curl -s https://transposebooks.z{n}.web.core.windows.net/{slug}--{book_id}/` returns HTML containing `og:title` and `og:description` meta tags.
+  - `og:title` contains book title and author.
+  - SAS URL in the page (source) responds HTTP 200 to a GET request.
+  - SAS URL in the page (translated) responds HTTP 200 to a GET request.
+  - `metadata.json` has all `share.*` fields populated with non-null values.
+
+**Task TR-4: `translator_note` Prompt**
+- After translation-complete, if `metadata.json` has no `translator_note`, print a CLI prompt asking Manish to add one before generating the landing page (it's optional but affects OG description quality). Do not block the pipeline — use a default of `"{title} by {author}, translated from {source_language} to {target_language} by Transpose ({page_count} pages)."` if Manish doesn't provide one within the step.
+- **Acceptance:** Landing page always has a non-empty `og:description` even without manual input.
+
+---
+
+### Dozer (Tests)
+
+**Task D-1: License constraint tests**
+All five tests from Section E. These must be written before T-2 and TR-1 are merged.
+
+**Task D-2: Landing page tests**
+- `test_landing_page_contains_og_title` — rendered HTML has `<meta property="og:title">` with correct content.
+- `test_landing_page_contains_og_description` — has `<meta property="og:description">`.
+- `test_landing_page_sas_urls_present` — HTML source and translated SAS URL links are present and non-empty.
+- `test_sas_url_readable` — integration test: generated SAS URL responds HTTP 200.
+- **Acceptance:** All tests pass in CI.
+
+**Task D-3: `metadata.json` schema validation test**
+- Write a schema validator (pydantic or jsonschema) for `metadata.json` covering all mandatory-before-share fields.
+- Validate in a unit test against a fixture and against a freshly created workspace.
+- **Acceptance:** Schema validator rejects a `metadata.json` missing `title`, `author`, or `landing_page_url`.
+
+---
+
+## G. Open Questions
+
+**One remaining question for Manish:**
+
+**SAS expiry rotation:** When a 30-day SAS URL expires, what triggers regeneration? Options:
+- (a) Manual: Manish runs a CLI command (`transpose share rotate --book-id {id}`), landing page re-uploads automatically.
+- (b) Scheduled: a nightly job checks `share.sas_expiry` across all workspaces and regenerates if within 7 days of expiry.
+
+This affects Trinity's design of the share command and Tank's infra (option b needs a scheduled trigger). It does not block any other task — Trinity can implement option (a) first and option (b) can be layered on. **Recommendation: implement (a) now, (b) deferred.** If Manish agrees, no answer required and this question is closed.
+
+---
+
+**Related Decisions:** 2026-05-20T22:52 license+provenance, 2026-05-20T22:57 hybrid-storage
+**Handoff:** Tank (T-1, T-2, T-3), Trinity (TR-1, TR-2, TR-3, TR-4), Dozer (D-1, D-2, D-3)
