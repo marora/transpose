@@ -25,7 +25,11 @@
 
 **Role assignment idempotency:** `az role assignment create` returns an error if the assignment already exists; script wraps it in `|| { echo NOTE; }` so re-runs don't abort on idempotent state.
 
-**Static Website `--error-document-404-path`:** Used the correct Azure CLI flag name (not `--error-document`); the old CLI used `--404-document`. Verified with `bash -n` syntax check.
+**Static Website `--404-document`:** Azure CLI now expects `--404-document` for Static Website error pages; `--error-document-404-path` is stale and fails with `unrecognized arguments`. Verified via `az storage blob service-properties update -h` and `bash -n` syntax check.
+
+### 2026-05-21T01:34:36.290-04:00: Azure CLI flag drift gotcha
+
+**Static Website 404 flag drift:** `az storage blob service-properties update` currently accepts `--404-document`, not `--error-document-404-path`. When recovering a failed rerun, prefer checking `az ... -h` for the installed CLI version instead of relying on older command snippets.
 
 ---
 
