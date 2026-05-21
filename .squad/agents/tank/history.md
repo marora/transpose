@@ -9,6 +9,12 @@
 ## Learnings
 (Recast from Idaho — Matrix universe. All prior knowledge preserved in alumni archive.)
 
+### 2026-05-21T12:17:57.347-04:00: Static Website is the public book surface; `output` stays private
+
+**Pattern:** `output` and `source-pdfs` are internal pipeline containers even when they hold the final exported book. Public reading/downloading must go through Azure Static Website under `$web/<slug>/`, with a landing page plus public PDF/ePub assets.
+
+**Operational rule:** If someone shares a raw `blob.core.windows.net/output/...` URL and the storage account has `allowBlobPublicAccess=false`, that is a usage bug, not a storage misconfiguration. Fix the publish path or copy the release artifacts into `$web/<slug>/`; do not relax account-level public access.
+
 ### 2026-05-21T01:39:16.276-04:00: Azure RBAC propagation lag on Storage data-plane
 
 **Pattern:** `az role assignment create` can succeed several seconds before `az storage blob ... --auth-mode login` or `az storage container ... --auth-mode login` starts honoring the new role. Typical Azure Entra ID RBAC propagation to the Blob data plane is 30s–2min, occasionally up to ~5min.
