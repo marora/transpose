@@ -28,3 +28,5 @@ test-visual-output.*
 
 # Generated validation artifacts
 validation-report.json
+.env*.bak
+.env.*

@@ -436,6 +436,84 @@ def validate_production_readiness(
 
 ---
 
+## Validation Report
+
+Produced by `_build_validation_report()` in `src/transpose/pipeline/runner.py`. One JSON object is emitted per pipeline run, aggregating every `GateResult` collected during the run plus the exported artifacts. This is the contract the `/admin/` observability dashboard (and any other downstream tooling) consumes — pin it before changing the shape.
+
+```python
+@dataclass
+class ValidationReport:
+    book_id: str | None              # UUID string, or None if the run failed before ingest
+    overall: Literal["PASS", "FAIL"] # PASS iff every gate in `gates[]` passed
+    timestamp: str                   # UTC ISO 8601, generated at report build time
+    gates: list[GateEntry]
+    artifacts: dict[str, ArtifactEntry]  # keyed by format ("pdf", "epub", ...)
+
+
+@dataclass
+class GateEntry:
+    name: str          # Gate function name, matches GateResult.gate_name
+    passed: bool
+    failures: list[str]
+    details: dict      # Gate-specific structured details
+    timestamp: str     # UTC ISO 8601, set when the gate ran
+
+
+@dataclass
+class ArtifactEntry:
+    path: str          # blob_uri (mirrored in `url`)
+    size_bytes: int
+    url: str           # blob_uri
+```
+
+### Example
+
+```json
+{
+  "book_id": "0e7a3b2c-1234-5678-9abc-def012345678",
+  "overall": "PASS",
+  "timestamp": "2026-05-22T15:04:05.123456+00:00",
+  "gates": [
+    {
+      "name": "ocr_sanity_gate",
+      "passed": true,
+      "failures": [],
+      "details": {"avg_confidence": 0.91, "ufffd_ratio": 0.001},
+      "timestamp": "2026-05-22T14:32:11.000000+00:00"
+    },
+    {
+      "name": "translation_completeness_gate",
+      "passed": true,
+      "failures": [],
+      "details": {"chunks_total": 412, "chunks_failed": 0},
+      "timestamp": "2026-05-22T14:58:02.000000+00:00"
+    }
+  ],
+  "artifacts": {
+    "pdf": {
+      "path": "https://example.blob.core.windows.net/books/0e7a.../book.pdf",
+      "size_bytes": 4823109,
+      "url":  "https://example.blob.core.windows.net/books/0e7a.../book.pdf"
+    },
+    "epub": {
+      "path": "https://example.blob.core.windows.net/books/0e7a.../book.epub",
+      "size_bytes": 1284213,
+      "url":  "https://example.blob.core.windows.net/books/0e7a.../book.epub"
+    }
+  }
+}
+```
+
+### Rules
+
+- `overall` is derived: `"PASS"` iff `all(g.passed for g in gates)`; `"FAIL"` otherwise. Never set it manually.
+- `gates` preserves execution order. Consumers ordering by `timestamp` get the same result and should not assume any other ordering invariant.
+- `artifacts` is keyed by format identifier (`"pdf"`, `"epub"`, …). Missing formats are absent, not present with empty values.
+- `book_id` may be `null` for runs that failed before ingest assigned an ID — consumers must handle this case.
+- All timestamps are UTC ISO 8601 strings.
+
+---
+
 ## Contract Rules
 
 1. **Every stage function has the signature:** `async def run(input: StageInput) -> StageOutput`

@@ -463,19 +463,22 @@ All logs include: `book_id`, `stage`, `correlation_id`. JSON format. No PII in l
 
 ## Quality Gates (`pipeline/gates.py`)
 
-Blocking checks that run between pipeline stages. If a gate fails, the pipeline halts with a `QualityGateError` — no stage runs until the previous gate passes.
+Blocking checks that run between pipeline stages. If a gate fails, the pipeline halts with a `QualityGateError` — no stage runs until the previous gate passes. Gates are addressed by name (matching the function name in `pipeline/gates.py`) — code is the source of truth. There are **10 gates** in production.
 
-| Gate | Runs After | Checks |
-|------|-----------|--------|
-| **Gate 1: OCR Sanity** | OCR → Chunk | Garbled Unicode (U+FFFD ratio), Devanagari codepoint density (≥5%), per-page confidence (≥0.6) |
-| **Gate 2: Translation Completeness** | Translate → Glossary | Every chunk has a translation, failed-chunk ratio ≤10%, no raw Devanagari passthrough (>30% threshold) |
-| **Gate 3: Glossary Integrity** | Glossary → Assemble | Non-empty glossary, NFC-normalized `original_script`, no U+FFFD in any field, no Latin chars in Devanagari fields |
-| **Gate 4: Document Structure** | Assemble → Export | ToC count matches chapter count, Translator's Foreword present (≥50 words), title text present, sequential chapter numbering |
-| **Gate 5: Artifact Availability** | After Export | PDF and ePub both present and >1 KB, valid URIs (http/https/file/absolute paths verified) |
-| **Gate 6: Golden-Targeted QA** | Post-export | Compares candidate PDF against `tests/golden/golden-target.json` — structural match (chapter count, sections), content completeness (per-chapter word counts ±30%), script hygiene (<2% Devanagari in body), glossary term presence, page-count regression (≤1.5× source) |
-| **Gate 7: Production Readiness** | Post-export | Rendered output inspection — Devanagari rendering integrity (no IPA/digit substitutions), ToC page-number verification (present, monotonic, not all "1"), per-chapter word counts, cover-page validation, no empty pages |
+| Gate | Stage | Checks |
+|------|-------|--------|
+| `operational_readiness_gate` | Preflight (before Stage 1: Ingest) | Azure / DB / Redis / model-endpoint reachability checks. Returns `OperationalReadinessResult`. Halts the run early if infrastructure dependencies are unavailable. |
+| `ocr_sanity_gate` | After OCR (before Chunk) | Garbled Unicode (U+FFFD ratio), Devanagari codepoint density (≥5%), per-page confidence (≥0.6) |
+| `translation_completeness_gate` | After Translate (before Glossary) | Every chunk has a translation, failed-chunk ratio ≤10%, no raw Devanagari passthrough (>30% threshold) |
+| `glossary_integrity_gate` | After Glossary (before Assemble) | Non-empty glossary, NFC-normalized `original_script`, no U+FFFD in any field, no Latin chars in Devanagari fields |
+| `document_structure_gate` | After Assemble (before Export) | ToC count matches chapter count, Translator's Foreword present (≥50 words), title text present, sequential chapter numbering |
+| `artifact_availability_gate` | After Export | PDF and ePub both present and >1 KB, valid URIs (http/https/file/absolute paths verified) |
+| `golden_targeted_qa_gate` | Post-export | Compares candidate PDF against `tests/golden/golden-target.json` — structural match (chapter count, sections), content completeness (per-chapter word counts ±30%), script hygiene (<2% Devanagari in body), glossary term presence, page-count regression (≤1.5× source). Validates the golden target file itself before trusting it as a reference. |
+| `validate_production_readiness` | Post-export | Rendered output inspection — Devanagari rendering integrity (no IPA/digit substitutions), ToC page-number verification (present, monotonic, not all "1"), per-chapter word counts, cover-page validation, no empty pages |
+| `export_rendering_gate` | Post-export (on produced PDF) | Verifies the exported PDF renders correctly: fonts embed, pages are countable, the document opens without errors |
+| `source_output_comparison_gate` | Post-export (source vs. output) | Compares source PDF against translated PDF: page-count ratio (within `_STRUCTURAL_PAGE_RATIO_MIN` / `_STRUCTURAL_PAGE_RATIO_MAX`), text density, structural consistency |
 
-Each gate returns a `GateResult` with `gate_name`, `passed`, `failures[]`, `details{}`, and a UTC timestamp. Gate 6 also validates the golden target file itself before trusting it as a reference.
+Each gate returns a `GateResult` with `gate_name`, `passed`, `failures[]`, `details{}`, and a UTC timestamp (`operational_readiness_gate` returns the richer `OperationalReadinessResult`). All gate executions are wrapped in a `quality_gate` OTel span and emit the `gate_executions` / `gate_duration_seconds` metrics — see [observability.md](observability.md) for the telemetry contract. The aggregated per-run validation report shape is documented in [api-contracts.md](api-contracts.md).
 
 ---
 
@@ -529,7 +532,7 @@ This architecture is designed to evolve:
 4. **Parallel book processing** — PostgreSQL advisory locks and per-book state allow multiple books to process concurrently.
 5. **Alternative LLMs** — translation service is behind an interface. Swap GPT-4o for another model without touching pipeline logic.
 6. **Streaming/event-driven** — stages currently run sequentially per book. Can be converted to event-driven (Service Bus/Event Grid) by publishing stage-completion events.
-7. **Quality scoring** — translation quality metrics (BLEU, human ratings) can attach to `Translation` records.
+7. **Quality scoring** — a v1 Translation Quality Score is being defined (multilingual-embedding semantic similarity + reference-free MT QE + cross-family LLM judge on a sample). See `.squad/decisions/inbox/niobe-oracle-quality-score-brief.md` for the architecture; scores will attach to `Translation` records once Oracle ships the implementation.
 
 ---
 

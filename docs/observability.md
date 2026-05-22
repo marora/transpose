@@ -23,6 +23,8 @@ The pipeline emits telemetry via [azure-monitor-opentelemetry](https://pypi.org/
 | `transpose.ocr.pages_processed` | Counter | Pages processed by Document Intelligence |
 | `transpose.ocr.low_confidence_pages` | Counter | Pages below OCR confidence threshold |
 | `transpose.errors` | Counter | Errors by `stage` and `error_type` dimensions |
+| `gate_executions` | Counter | Quality gate executions, tagged by `gate_name` and `result` (`pass`/`fail`) |
+| `gate_duration_seconds` | Histogram | Quality gate execution duration in seconds, tagged by `gate_name` |
 
 ---
 
@@ -208,6 +210,70 @@ requests
 | order by timestamp asc
 | project timestamp, itemType, name, duration, success, message
 ```
+
+### Quality gates
+
+Quality gates are first-class telemetry. Every gate execution (10 total — see [architecture.md](architecture.md#quality-gates-pipelinegatespy) for the catalog) is wrapped in an OTel span and emits two metrics. The aggregate validation report consumed by downstream tooling is documented in [api-contracts.md](api-contracts.md#validation-report).
+
+#### Span shape
+
+Every gate runs inside a span named `quality_gate` with these attributes:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `gate.name` | string | Gate function name, e.g. `ocr_sanity_gate` |
+| `gate.passed` | bool | `true` if the gate passed |
+| `gate.duration_ms` | float | Gate execution duration in milliseconds |
+| `gate.failure_reason` | string | Set only when `gate.passed == false`; semicolon-joined `failures[]` from `GateResult` |
+
+#### Metrics
+
+| Metric | Type | Tags |
+|--------|------|------|
+| `gate_executions` | Counter | `gate_name`, `result` (`pass` / `fail`) |
+| `gate_duration_seconds` | Histogram | `gate_name` |
+
+#### KQL — gate failures
+
+```kusto
+// All gate failures in the last 24 hours
+dependencies
+| where name == "quality_gate"
+| extend gate_name = tostring(customDimensions["gate.name"]),
+         passed = tobool(customDimensions["gate.passed"]),
+         reason = tostring(customDimensions["gate.failure_reason"])
+| where passed == false
+| project timestamp, operation_Id, gate_name, reason
+| order by timestamp desc
+```
+
+```kusto
+// Gate pass/fail counts by gate name
+customMetrics
+| where name == "gate_executions"
+| extend gate_name = tostring(customDimensions.gate_name),
+         result = tostring(customDimensions.result)
+| summarize executions = sum(value) by gate_name, result
+| order by gate_name asc, result asc
+```
+
+```kusto
+// Gate duration percentiles
+customMetrics
+| where name == "gate_duration_seconds"
+| extend gate_name = tostring(customDimensions.gate_name)
+| summarize
+    p50_s = round(percentile(value, 50), 3),
+    p95_s = round(percentile(value, 95), 3),
+    max_s = round(max(value), 3),
+    runs = count()
+  by gate_name
+| order by p95_s desc
+```
+
+#### Dashboard surface
+
+The per-book observability dashboard at `/admin/` (Issue #100, in flight) surfaces aggregate gate pass/fail per book by reading the validation report produced by `_build_validation_report()` in `runner.py`. The dashboard is the operator-facing summary; the spans and metrics above are the underlying source. If the dashboard shows a gate failure, the `quality_gate` span linked to that book's `book_id` (carried as `operation_Id`) contains the full `failure_reason`.
 
 ---
 
