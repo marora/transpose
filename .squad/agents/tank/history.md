@@ -34,13 +34,9 @@
 
 ---
 
-## Session History (Pre-2026-05-21)
+## Session History
 
-**2026-05-20T23:19:30Z — Phase 1 Deliverables (T-1/T-2/T-3):** Workspace schema extension. Used dedicated columns (`license_status`, `provenance_source`, `license_history`) rather than nested JSONB for performance (indexed queries). Idempotent DDL with CHECK constraints named and guarded with `DO IF NOT EXISTS`. Inline self-test in migration validates constraint is present. Backfill strategy: `ILIKE 'http%'` to distinguish real URLs from blob URIs. Azure setup script: dry-run uses `run()` function wrapper; subscription-confirm step executes even in dry-run (read-only).
-
-**2026-05-21T01:39:16Z — Azure RBAC Propagation Lag:** `az role assignment create` succeeds before Blob data-plane honors the role (typical 30s–2min, up to ~5min). Wrap first data-plane calls in retry helper (backoff: 15s, 30s, 60s, 60s, 60s). Fail fast on non-auth errors.
-
-**2026-05-21T01:34:36Z — Azure CLI Flag Drift:** `--404-document` (current) vs. `--error-document-404-path` (stale). Always check `az ... -h` for installed version.
+**Pre-2026-05-21 work:** Built foundational infrastructure in Phase 1 — workspace schema extension with license/provenance columns, Azure storage setup (RBAC propagation patterns), static website configuration, DB migrations with CHECK constraints. Shipped TR-1/T-2/T-3 deliverables. Investigated and resolved Azure RBAC timing and CLI flag drift issues. See `.squad/agents/tank/history-archive.md` for full dated entries.
 
 ---
 
@@ -91,155 +87,82 @@ Full spec: `.squad/decisions.md` — Oracle Translation Quality Score v1 entry (
 
 ---
 
-## Learnings
+## Learnings and Historical Context
 
-### 2026-05-21T12:17:57-04:00: Static Website is the public book surface; `output` stays private
-
-**Pattern:** `output` and `source-pdfs` are internal pipeline containers even when they hold the final exported book. Public reading/downloading must go through Azure Static Website under `$web/<slug>/`, with a landing page plus public PDF/ePub assets.
-
-**Operational rule:** If someone shares a raw `blob.core.windows.net/output/...` URL and the storage account has `allowBlobPublicAccess=false`, that is a usage bug, not a storage misconfiguration. Fix the publish path or copy the release artifacts into `$web/<slug>/`; do not relax account-level public access.
-
-### 2026-05-21T13:45:28-04:00: Public-domain original scans should live at `$web/{slug}/source.pdf`
-
-**Pattern:** When a book is safe to publish publicly, the reader-facing Original Scan link should target the static website path, not a private container. For Shiv Sutra, the source file already existed privately at `book-workspaces/shiv-sutra--ee92a4/input/source.pdf`; copying it to `$web/shiv-sutra/source.pdf` restored the TR-3 landing contract immediately.
-
-**Operational rule:** Keep the filename stable as `source.pdf` on the public slug path. It mirrors the workspace convention (`input/source.pdf`), keeps manual repairs deterministic, and avoids exposing private-container URLs in the live landing page.
-
-### 2026-05-21T14:19:30-04:00: Book-cost source of truth is DB-first, not `book_costs`
-
-**Pattern:** For completed-or-resumed books, the durable source for true OpenAI/OCR cost is PostgreSQL operational data (`translations.prompt_tokens`, `translations.completion_tokens`, `books.page_count` / `pages`), not the summarized `book_costs` table.
-
-**Why:** `CostTracker.persist()` runs only on the happy path after workspace completes. If a run crashes or fails a gate, `book_costs` can be empty or partial. Shiv Sutra proved this: `book_costs` kept only the final resume's 2 blob writes, while the real spend had to be reconstructed from DB rows plus logs/App Insights.
-
-**Operational rule:** For ad-hoc cost forensics, query DB first, then use local logs/App Insights only to fill blob-ops and stage-timing gaps. If blob counts are reconstructed rather than durably stored, say so explicitly and point to issue #93.
+See `.squad/agents/tank/history-archive.md` for pre-2026-05-22 dated learnings, investigations, and archived sessions. Includes:
+- Static website patterns and blob container organization
+- Cost forensics from Shiv Sutra ($12.13, $0 → trace through DB sources)
+- RBAC propagation lag and Azure CLI evolution
+- Azure storage setup procedures and Phase 1 infrastructure work
 
 ---
 
-## 2026-05-20T23:10:06.050-04:00: Azure Storage + Landing Page Architecture — Additional Phase 1 Work
+---
 
-**From:** Morpheus (Architect), Niobe (Product)  
-**Scope:** Azure Blob setup, static website hosting, `rights-unknown` enforcement at DB layer
+### 2026-05-22T15:19:09-04:00: Team update — Step 6 migration assignment + Oracle infra brief (Step 2)
 
-### Your Added Tasks (Phase 1 — Priority)
+**From:** Scribe (on behalf of Coordinator)  
+**Status:** Session resumption; Steps 1–5 shipped, Step 6 (your migrations) in progress
 
-**T-1: Azure Storage Setup** (Copy-pasteable command sequence in `.squad/decisions.md` Morpheus decision, Section A)
-- Confirm active Azure subscription: `az account show`
-- Create resource group: `transpose-rg` (eastus, idempotent)
-- Create storage account: `transposebooks` (Standard_LRS, StorageV2, public access OFF, TLS1.2 min)
-- Create private container: `book-workspaces` (public-access: off)
-- Enable Static Website feature: `az storage blob service-properties update --static-website --index-document index.html`
-- Assign `Storage Blob Data Contributor` role to your user identity
-- Verify: `az storage container list` shows `book-workspaces` with privateAccess; `curl` to static website endpoint returns 404 (correct — means live)
-- **Acceptance:** Steps 7–8 succeed; base URL noted and saved to `.squad/decisions.md`
+**Your immediate focus (Step 6 — in progress):**
+- Alembic upgrade head: Apply both new migrations (license/provenance columns + `book_validation_reports` table)
+- Schema validation: `\d book_validation_reports`, `\d books` confirm license columns present
+- Command: `alembic current` should report `3a9e1b27c4f1 (head)` after upgrade
+- Next: Step 7 (container deploy) — you own the build/push/revision update/health-check validation
 
-**T-2: DB Migration — `license_status` + `metadata` JSONB** (Extends prior migration from 2026-05-20T22:55)
-- Add columns to `books` table:
-  - `license_status TEXT NOT NULL DEFAULT 'rights-unknown' CHECK (license_status IN ('rights-unknown', 'claimed-public-domain', 'verified-public-domain', 'rights-cleared'))`
-  - `metadata JSONB` (for landing page + share data; schema in Morpheus decision Section D)
-  - `provenance_source JSONB` (source URL, edition, acquired_at — from prior decision)
-- Backfill script: all existing rows get `license_status = 'rights-unknown'`, `metadata = '{}'::jsonb`, `provenance_source = '{}'::jsonb`
-- **Acceptance:** 
-  - `SELECT license_status, count(*) FROM books GROUP BY 1` → exactly one row: `rights-unknown | N`
-  - `\d books` shows check constraint and defaults
-  - Dozer's DB integration tests pass (T-2 test, constraint test)
+**Your Phase 2 focus (Step 2 of priority ladder):**
+- **Tank Oracle infra brief:** Inboxed 2026-05-22 (now merged into `.squad/decisions.md`)
+- **Scope:** Layer A (LaBSE sidecar, 109 languages, 1.8 GB model) + Layer C (Claude Sonnet judge on 5% sample)
+- **What you own:** Anthropic API key storage (KV secret + Container App secret ref), LaBSE sidecar (multi-container, not separate job), cost modeling, monitoring, failure modes
+- **What Trinity owns:** Python client modules in Phase 1b
+- **What Morpheus owns:** Architecture decisions already written
+- **Effort estimate:** 2–4 days for IaC (bicep edits, KV integration, sidecar sizing) + docker-compose local-dev stub
+- **Timeline:** After run #3, in parallel with Trinity's #97 (cost events)
 
-**T-3: Static Website `robots.txt`**
-- Upload `robots.txt` to `$web/robots.txt` with content:
-  ```
-  User-agent: *
-  Disallow: /
-  ```
-- Prevents Google/Bing indexing; WhatsApp/iMessage/Signal scrapers not affected (intended)
-- **Acceptance:** `curl https://transposebooks.z{n}.web.core.windows.net/robots.txt` returns 200 with correct content
+**Steps 1.5a / 1.5b also yours (cost guardrails + Foundry Agent IaC):**
+- **1.5a (0.5 day):** Set `minReplicas: 0` non-prod default, add $25/month budget alert, document teardown commands
+- **1.5b (1–2 days):** Bring Foundry Agent under bicep (`Microsoft.App/agents`), wire into `azd` lifecycle so `azd down` cleans it up
+- **Why:** Dormant RG burned $436 over 28 days; 92% from Foundry Agent ($290) + Container App ($111). Structural fix is IaC defaults + budget alerts, not behavioral discipline.
 
-### Related Decisions
+Full context in `.squad/decisions.md` (Tank-oracle-infra-brief, niobe-priority-ladder-2026-05-22-v2, niobe-lesson-dormant-azure-cost).
 
-- `.squad/decisions.md`: "2026-05-20: Niobe: Open Questions Closed — Shape A Product Rules Finalized"
-- `.squad/decisions.md`: "2026-05-20: Morpheus: Architecture Addendum: Share URL + WhatsApp Preview Resolution"
-- `.squad/orchestration-log/2026-05-20T23-10-06Z-morpheus-3.md`: Full technical handoff
-
-### Blocking On
-
-None — architecture complete. Start immediately.
-
-### Unblocks
-
-- Trinity: TR-3 landing page generation (needs Blob endpoint + static website URL)
-- Dozer: All DB constraint tests
+---
 
 
 ---
 
-## 2026-05-21T05:11:39Z: Cross-Agent Note — Trinity Backfill CLI Dependency
+### 2026-05-22T15:19:09-04:00: Step 6 — DB Migrations — DONE-IDEMPOTENT
 
-**From:** Scribe (session log)  
-**Context:** Trinity-1 built backfill_workspace.py + CLI for one-shot publishing of already-translated books.
+**Outcome:** DONE-IDEMPOTENT  
+**Head before:** `3a9e1b27c4f1 (head)` — already at target on shell entry; migrations had landed in a prior session attempt.  
+**Head after:** `3a9e1b27c4f1 (head)` — no upgrade applied.
 
-**Your Output Used:**
-- `TRANSPOSE_BLOB_STATIC_WEBSITE_URL` env var must be set in deployment. Trinity's backfill CLI requires this; if unset, warnings + skip workspace stage (non-fatal).
+**Spot-checks (all PASS):**
+- `book_validation_reports`: table present with PK, FK on `book_id` → `books(id)` ON DELETE CASCADE, CHECK constraint on `overall` (`PASS`/`FAIL`).
+- `books` license columns: `license_status`, `provenance_source`, `metadata`, `license_history` — all 4 PRESENT.
 
-**Routing:**
-- Tank: If not already printed by your `azure-setup.sh`, ensure `TRANSPOSE_BLOB_STATIC_WEBSITE_URL=https://transposebooks.z{n}.web.core.windows.net` is passed to all downstream Container App deployments.
-
-**See also:** `.squad/orchestration-log/2026-05-21T05-11-39Z-trinity-1-backfill.md`
-
----
-
-## 2026-05-21T16:08:19Z: Azure Blob Containers Auto-Created During Shiv Sutra Run
-
-**From:** Trinity (session completion)  
-**Context:** Shiv Sutra e2e pipeline completed successfully; artifacts published to Azure
-
-### Containers Created Mid-Run
-
-During shiv sutra execution, Trinity auto-created two Azure Blob containers that were not pre-provisioned in azure-setup.sh:
-- **`output`** container — received exported artifacts (Shiv_Sutra.epub 275KB, Shiv_Sutra.pdf 1.38MB)
-- **`source-pdfs`** container — may have been used for intermediate pipeline artifacts
-
-### Action Item for Tank
-
-Flag in `azure-setup.sh`: Add explicit pre-creation of `output` and `source-pdfs` containers so:
-1. Container creation is idempotent and documented
-2. ACLs and retention policies can be set upfront (not inferred post-hoc)
-3. Next book runs don't require mid-run container auto-creation
-
-### Related Files
-- `.squad/orchestration-log/2026-05-21T16-08-trinity.md` — full Trinity context
-- Shiv Sutra artifacts in Azure `output` container
+**Operational gotchas:**
+- `psql` not installed in this shell. Spot-checks ran via `psycopg2-binary 2.9.11` (equivalent result).
+- `DATABASE_URL` not exported directly. Alembic resolves from `TRANSPOSE_POSTGRES_*` vars sourced via `set -a && . ./.env && set +a`.
 
 ---
 
-## 2026-05-21T14:19:30.760-04:00: Shiv Sutra Cost Forensics — $12.13 Total Spend
+### 2026-05-22T15:19:09-04:00: Step 7 — Container Deploy — DONE
 
-**From:** Tank (cost investigation)  
-**Context:** Manish asked "what did the Shiv Sutra e2e run cost?" Investigation traced spend through PostgreSQL + logs.
+**Outcome:** DONE  
+**Revision deployed:** `transpose-dev-app--0000008`  
+**Image digest:** `transposedevacr.azurecr.io/transpose@sha256:b2a3cdb692624eee926db66f323bc90805cf149d8d8dfa566e495175ce15d86b`  
+**Tags applied:** `sha-4e2d527`, `v5`  
+**Previous revision (rollback target if needed):** `transpose-dev-app--rb2-7397468` (image: `transposedevacr.azurecr.io/transpose:v4`)
 
-### True Cost Breakdown
+**Health verdict:**
+- kube-probe `/health` → 200 in cold-start window — probes green.
+- App Insights telemetry flowing (transmission 200, items accepted).
+- `/admin/api/books` → 401 Unauthorized (not 500) — auth layer correct.
+- No `Failed to persist validation report` warnings in cold-start log sample.
 
-| Component | Details | Cost |
-|-----------|---------|------|
-| OpenAI (GPT-4o) | 1,161,417 input + 255,580 output tokens | $9.64 |
-| OCR (Doc Intelligence) | 249 pages | $2.49 |
-| Blob storage | ~100 operations (reconstructed) | $0.00006 |
-| **Total** | **Wall time: 10h 32m** | **$12.13** |
-
-### Key Learning: `book_costs` Unreliable on Resume/Failure
-
-`CostTracker.persist()` only fires on happy-path workspace completion. Shiv Sutra resumed from glossary after crash:
-- `book_costs` table retained **only** the final resume's blob summary (2 writes)
-- Real OpenAI + OCR spend lived in `translations`, `books.page_count`, `pages` tables (durable across all runs)
-
-**Operational rule:** For cost forensics, query DB operational tables first; logs/App Insights second for blob ops; state confidence explicitly if reconstructed.
-
-### Decisions Written + Filed
-
-1. **Tank: Cost Telemetry Source of Truth** — merged into `.squad/decisions.md`
-2. **Tank: Original Scan Publishing** — merged into `.squad/decisions.md`
-3. **GitHub #93:** `cost_tracker` persistence gap — persist `book_costs` even on failed/resumed runs
-
-### Related Files
-
-- `.squad/log/2026-05-21T14-19-30Z-shiv-sutra-true-cost.md` — session log
-- `.squad/orchestration-log/2026-05-21T14-19-30Z-tank-cost-telemetry.md` — investigation notes
-- `.squad/decisions.md` — 2 new decisions appended
-
+**Operational gotchas:**
+- `curl` absent from `python:3.12-slim`. Auth endpoint check required `az containerapp exec` + `python3 -c "import urllib.request; ..."`. urllib raises `HTTPError` for 4xx — the 401 shows as an exception message. Document in ops runbook.
+- App ingress is **internal** (not external). FQDN not reachable from outside the Container Apps environment. All external probing must go through `az containerapp exec` or an internal consumer.
+- No `.dockerignore` in repo — build context was 12.246 MiB. Uncommitted drift in `.squad/` etc. is uploaded but never COPYed into the image (Dockerfile is explicit). Low-risk but wasteful. Consider adding `.dockerignore` in a future housekeeping PR.
+- `az acr repository show-manifests` is deprecated. Use `az acr manifest list-metadata` for future digest lookups.

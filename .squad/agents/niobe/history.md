@@ -125,3 +125,30 @@ Oracle's brief made it clear: *don't let "we have Azure OpenAI today" constrain 
 
 ---
 
+### 2026-05-22T15:19:09-04:00: Team update — session resumption + priority ladder v2 locked
+
+**From:** Scribe (on behalf of Coordinator)  
+**Status:** Steps 1–5 shipped (Coordinator resumption at Step 6)
+
+**Your workstream state:**
+- Steps 1–5 all delivered per handoff packet (commit + deploy cycle, run #3 execution framework, Entra auth, Phase 1a backend, doc-drift)
+- All three major decision packets now inboxed and merged into `.squad/decisions.md`:
+  - Observability framing + FinOps (2026-05-21T23:02:20) ✓
+  - Backlog prioritization (2026-05-21T23:30:27) ✓
+  - e2e run #3 readiness + coordinator handoff (2026-05-22) ✓
+  - Dormant cost lesson + lessons revamp (2026-05-22) ✓
+  - Priority ladder v2 (2026-05-22) ✓
+
+**Priority ladder v2 locked (Step 1 = Run #3 + Phase 1a ship):**
+- **Steps 1.5a / 1.5b:** Tank's cost guardrails + Foundry Agent IaC migration (parallel with Step 2)
+- **Step 2:** Tank Oracle infra brief (Anthropic + LaBSE sidecar)
+- **Step 3:** #97 (Trinity cost events) — Trinity owns, your priority ladder becomes the execution guide
+- **Step 4:** Phase 1b (Oracle quality score) — depends on Tank Step 2
+- **Step 5:** #101 (Dozer perf optimization) — last; needs Step 3's per-stage timing data
+
+Manish's framing **observability before perf** still load-bearing. No reordering without explicit approval.
+
+**For you (Phase 2 focus):** Niobe, decision-making is complete. Next cycle is execution + experimentation. Watch run #3 landing data on the dashboard; iterate on priority ladder if operational reality surprises the estimates. Your briefings for Tank (Step 2) and coordination with Trinity (#97 scope) are the next synchronization points.
+
+---
+

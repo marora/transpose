@@ -92,36 +92,15 @@ Tank must wire up **infrastructure for Layer A + C:** Anthropic API key (Key Vau
 
 ---
 
-## Learnings
+## Learnings and Historical Context
 
-### 2026-05-21T23:02:20-04:00: Parallelism diagnosis for slow book runs (#94, #95, #96)
+See `.squad/agents/trinity/history-archive.md` for pre-2026-05-22 learnings, investigations, and improvements. Includes:
+- Phase 1a dashboard architectural decisions and patterns
+- Parallelism investigation for Shiv Sutra (partial parallelization, prompt overhead)
+- Gate heuristic calibration (FFFD scrub strategy, export rendering threshold)
+- Phase 1 workspace integration (TR-1 through TR-4)
 
-**Verdict:** Shiv Sutra was **partially** parallelized.
-
-- **Translation:** real async parallelism is present and default-enabled. `runner.py` passes `translate_concurrency`, `translate.py` uses `asyncio.Semaphore(...)` + `asyncio.gather(...)` when concurrency > 1, defaults are `translate_concurrency=5`, and no `.env` override lowered it.
-- **OCR:** the `ocr_concurrency` knob is currently inert. `ServiceContext` passes it into `OcrClient`, but `OcrClient.extract_pages()` still submits a single `begin_analyze_document(...)` call for the whole PDF and waits for one poller result. Commit `d5e46b4` explicitly described this as "stored for future per-page parallelism".
-- **Prompt overhead matters almost as much as concurrency:** local `gpt-4o` tokenization estimates ~1,785 fixed prompt tokens per translation chunk before source text. On Shiv Sutra's 454 chunks, that is roughly ~810k repeated prompt tokens — about 70% of total prompt spend.
-- **No rollback found:** git history and `decisions.md` showed no decision/commit that deliberately serialized the pipeline. The relevant change (`aecb19b`) did the opposite: it introduced parallel translation.
-
-**Pattern:** After any slow run, verify concurrency at three layers: **setting exists → setting is wired → setting is actually consumed**. A stored knob is not a feature. Also separate **stage wall time** from **prompt-shape waste**; for LLM stages, high input:output ratios often indicate repeated scaffold cost.
-
-### 2026-05-21T11:40:56-04:00: Glossary U+FFFD scrub (Issue #89)
-
-**Root cause:** `_clean_original_script` stripped FFFD at three points during aggregation, but variant merging in `_deduplicate_spelling_variants` could pull in raw `original_script` without re-cleaning. Bug manifested for `'shri'` (LLM-extracted, not in seed).
-
-**Fix:** Promoted `_clean_original_script` to module level and added **final defensive scrub at entry-write time** (before `GlossaryEntry` built, before `CulturalTerm` written to DB). Belt-and-suspenders: earlier scrubs remain, final scrub is safety net regardless of path.
-
-**Pattern:** For any pipeline stage normalizing/cleaning field values during aggregation, add **final write-time scrub**. Aggregation path may be complex; write site is always a single chokepoint.
-
-**Tests added:** 5 new unit tests in `test_glossary.py :: TestCleanOriginalScriptUFFfd` — all passing.
-
-### 2026-05-21T11:40:56-04:00: Gate heuristics need real-book calibration (Issue #90)
-
-**Root cause:** `export_rendering` gate flagged "1 image(s) repeated 3+ times" as assembly dedup bug. On Shiv Sutra, chapter ornament/cover art legitimately repeats — design, not bug.
-
-**Fix:** Threshold changed from `significant_dupes >= 1` to `>= 2` distinct large images each repeating 3+ times. One repeated image (regardless of size/frequency) never flagged.
-
-**Pattern:** Gate thresholds must be validated against real-book corpora, not synthetic test PDFs. When gate is heuristic-based, ask: "can this pattern appear in well-formed real book?" If yes, threshold is too aggressive. A threshold blocking real exports is worse than one slightly loose.
+---
 
 **Tests updated:** 2 tests in `test_gates.py :: TestExportRenderingGate` — both passing.
 
@@ -190,6 +169,29 @@ Per Manish's request, filed two LOW-PRIORITY optimization backlog issues based o
 - **Issue #95:** Cost optimization — target <$5 for 250-page book (currently $12.13; prompt overhead and model tier candidates identified)
 
 Both reference book_id `723477a9-7ca4-4ba6-944c-3abef1ee92a4` and include investigation avenues (parallelization, prompt caching, chunk tuning, model downgrade, OCR caching). No decisions made — backlog for future investigation.
+
+---
+
+### 2026-05-22T15:19:09-04:00: Team update — Phase 1a shipped + priority ladder locked
+
+**From:** Scribe (on behalf of Coordinator)  
+**Status:** Session resumption; Steps 1–5 complete, Step 6 (Tank migrations) in progress
+
+**Your Phase 1a has shipped:**
+- Commits 405b8c4 (Entra auth), c61c87e (Phase 1a pipeline), 7397468 (gateway) on origin/master
+- Two new migrations applied: license/provenance columns + `book_validation_reports` table
+- GateResult now includes `duration_ms` field
+- Dashboard API routes behind Entra auth; frontend static files served from `/admin/`
+- Validation reports persisted best-effort on all terminal branches (success + error paths)
+
+**Your investigation results referenced in priority ladder:**
+- Parallelism investigation (2026-05-21T23:02:20) documented in `.squad/decisions.md`; parallelism defaults + Trinity brief already inboxed for phase 2
+- Phase 1a dashboard shipped doc filed today (2026-05-22T15:40:25Z) with full spec + known gaps + Phase 1b unblocking list
+
+**Next for you:** See `.squad/decisions.md` lines for priority ladder v2 (2026-05-22T15:19):
+- Step 3: #97 (cost events table + per-stage telemetry) — **your next high-priority task**
+- Step 4: Phase 1b (Oracle quality column wired to dashboard) — depends on Tank infra brief (Step 2) landing first
+- Full ladder available in `niobe-priority-ladder-2026-05-22-v2.md` inbox entry (now merged into decisions)
 
 ---
 
