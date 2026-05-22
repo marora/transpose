@@ -62,78 +62,78 @@ See [docs/project-structure.md](docs/project-structure.md).
 
 ## Architectural Progression / Lessons Learned
 
-A durable record of the architectural calls this project has made and the *reasoning* behind them. The bullet-level changelog tells you what changed; this section exists so future contributors (agents, operators, future-Manish) inherit the *why*. Entries are short prose: context → decision → lesson → citation.
+A durable record of architectural decisions and the reasoning behind them — written for any reader, not only project insiders. The bullet-level changelog tells you what changed; this section exists so the *why* travels with the code. Entries are grouped by theme; the data anchoring each one (dollar figures, time windows, percentages) is project-empirical.
 
-**Maintenance convention (Scribe-owned):** when a decision file lands in `.squad/decisions/inbox/` that captures an architectural lesson (not just a task assignment), the lesson is pulled into this section as part of the normal merge process. Inbox files remain the primary record; this section is the curated narrative on top.
+### Cost & operations
 
-### 1. Dormant Azure dev environments are not free — set `minReplicas: 0` and budget alerts before walking away
+#### 1. Dormant cloud environments are not free — the fix is structural, not behavioral
 
-A dev/sandbox resource group (`transpose-sc`) accrued **~$436 over 28 dormant days** (≈ $15.60/day, ~$468/month projected if untouched) **before any real usage resumed**. The RG was provisioned in late April and left idle for ~4 weeks. Despite zero application traffic, cost continued to accrue because several Azure resources bill for provisioned capacity, not invocations.
+A development resource group billed roughly **$436 over 28 dormant days** (≈ $15.60/day, projected ~$468/month) with zero application traffic, because several resource types bill for provisioned capacity rather than for invocations.
 
-**Where the money went (Apr 22 → May 19, dormant window):**
+| Resource type | Idle $/day | Why it bills idle |
+|---|---|---|
+| Foundry / inference agent | $10.36 | Flat-rate provisioned 24/7 |
+| Container App (`minReplicas ≥ 1`) | $3.97 | One always-on replica per default config |
+| PostgreSQL Flexible Server | $0.66 | Compute always-on unless stopped |
+| Storage / registry | <$0.50 | Capacity + flat SKU |
+| Token-based LLM endpoint | $0.10 | Behaves correctly — no idle billing |
 
-| Resource | Type | Dormant total | $/day idle | Billing model |
-|---|---|---|---|---|
-| `transpose-sc-agent` | Foundry Agent (`Microsoft.App/agents`) | $289.97 | $10.36 | Flat-rate provisioned 24/7 |
-| `transpose-dev-app` | Container App | $111.14 | $3.97 | `minReplicas ≥ 1` keeps a container alive |
-| `transpose-dev-psql` | PostgreSQL Flexible Server | $18.36 | $0.66 | Compute always-on unless explicitly stopped |
-| `transposedevst` | Storage account | $9.00 | $0.32 | Capacity only |
-| `transposedevacr` | Container Registry | $4.66 | $0.17 | Flat SKU price |
-| `transpose-dev-openai` | Azure OpenAI | $2.70 | $0.10 | Token-based — behaved correctly (no idle billing) |
-| `transpose-dev-logs` / `vault` | Log Analytics / Key Vault | <$0.30 | negligible | — |
+Over 90% of the burn came from two resources: the inference agent and the always-on container. The pattern is structural — per-day cost under real usage was the same or lower than during dormancy for those two resources, confirming they bill on provisioning, not traffic.
 
-**92% of dormant spend came from just two resources** — the Foundry Agent and the Container App.
+The fix is structural too. Defaults in infrastructure-as-code (`minReplicas: 0` for non-production container apps, agents declared under IaC lifecycle so teardown is one command) plus a low-threshold budget alert ($25/month on the dev resource group) catch dormant burn within days without depending on a human remembering to scale down. Operational thrift is a property of the infrastructure code, not a discipline expected of the operator.
 
-**Confirmation the pattern is structural, not usage-driven:** after work resumed (May 20–22), per-day cost for the Foundry Agent ($8.95/day) and Container App ($3.24/day) was the same or lower than during dormancy. The charges aren't traffic-driven. The only resource that jumped under real usage was `transpose-dev-openai` (28×), which is exactly the correct behavior for a pay-per-token service.
+#### 2. Summary tables are not source of truth — reconstruct from primary records
 
-**Root causes:**
-1. **Foundry Agents bill 24/7 for provisioned capacity** regardless of invocation count. Easy to forget once deployed.
-2. **Container Apps default to `minReplicas: 1`** in many templates — a single always-on replica is ~$120/month.
-3. **PostgreSQL Flexible Server compute is billed while running**, even with zero connections. Must be explicitly stopped.
-4. **No cost guardrails** were in place — no budget alert, no scheduled scale-down.
+A per-book cost summary table originally treated as the canonical cost record turned out to contain only the final blob-write summary on a 10h+ pipeline run — missing ~99% of the actual spend, which lived in the underlying translation, page, and book records. The persistence helper only fired on the happy path after the final stage; failed, interrupted, and resumed runs left the summary partial or empty.
 
-**Remediation (the runbook before walking away from a dev env):**
+A summary table is a convenience, never an audit trail. For cost forensics, reconstruct from the primary records that capture each unit of work (per-call token usage, per-page operations). Persist summary rows on every terminal state — success, failure, resume — but treat the primary records as the source of truth.
 
-```bash
-SUB=<subscription-id>
-RG=transpose-sc
-# 1) Scale Container Apps to zero
-az containerapp update -g $RG -n transpose-dev-app --min-replicas 0 --subscription $SUB
-# 2) Stop PostgreSQL (resumes in seconds)
-az postgres flexible-server stop -g $RG -n transpose-dev-psql --subscription $SUB
-# 3) Foundry Agent — delete via `az` for now; durable fix is Step 1.5b (bring under bicep + azd lifecycle)
-#    Manual provisioning was the root cause of forgetting it for 28 days. (~$300/month idle.)
-```
+### Quality & evaluation
 
-**Bake in by default (Tank-owned IaC follow-up — see Steps 1.5a and 1.5b of the priority ladder):**
-- Set Container App `minReplicas: 0` in Bicep/Terraform for non-prod environments. *(Step 1.5a)*
-- Add an Azure Budget alert on the RG at $25/month so a dormant burn is caught in days, not weeks. *(Step 1.5a)*
-- **Foundry Agent should be in bicep under `azd` lifecycle so `azd down` cleans it up automatically. Manual provisioning was the root cause of forgetting it for 28 days.** *(Step 1.5b)*
-- Tag resources with `env=dev` + `auto-shutdown=true` and consider an Azure Automation runbook that stops them nightly.
-- For Foundry Agents specifically: once under IaC (Step 1.5b), `azd down` is the disposition command. No more "remember to delete it manually."
+#### 3. Same-family LLM-as-judge introduces measurable self-preference bias
 
-**The lesson:** in a serverless-coded stack, it's natural to assume "no traffic = no cost." That assumption is false for any resource that bills on provisioned capacity (Foundry Agents, Container Apps with `minReplicas ≥ 1`, PostgreSQL Flexible Server compute, Container Registry, Storage). The fix is structural, not behavioral — defaults in IaC + budget alerts catch this without depending on a human remembering to scale down. Operational thrift is a property of the infrastructure code, not a discipline expected of the operator.
+Asking the model that produced an output to grade its own output is convenient and wrong. Same-family judges exhibit measurable self-preference bias — a well-documented evaluation failure mode. The remedy is a layered architecture: cheap multilingual-embedding similarity on every output (catches meaning drift), and a cross-family LLM judge on a stratified sample (rates literary or domain-specific dimensions deterministic tools can't reach). Convenience of an already-integrated model is not a substitute for evaluation rigor; cross-family judges plus specialized tooling produce better signal at lower cost than recycling the generation model to grade itself.
 
-Citation: `.squad/decisions/inbox/niobe-lesson-dormant-azure-cost.md`.
+#### 4. Quality gates are calibrated against real corpora, not synthetic fixtures
 
-### 2. Observability is an operator-decision tool, not a single-metric dashboard
+A quality gate is finished when it does NOT fire on well-formed real-world content, not when it fires on the bug pattern. Repeated cover art on legitimate pages triggered an "image repetition" gate; OCR-degraded text mixed with Unicode replacement characters survived to a downstream writer because the gate checked input but not output. Both classes of failure are fixed by maintaining a real-corpus fixture set alongside the synthetic one and requiring both to pass.
 
-The initial framing was "cost visibility" — surface OpenAI spend per book so we know what each translation cost. Review converged on something larger: a four-column per-book operations dashboard surfacing cost, wall-time, validation status, and quality score side by side. The lesson is that operator dashboards are about *decision velocity*, not single-metric visibility. The operator's question after a run is "ship, re-run, or review?" and the dashboard must let them answer that in one glance — every signal needed for that decision belongs on the same surface. Citations: `.squad/decisions/inbox/niobe-observability-finops-framing.md`, `.squad/decisions/inbox/morpheus-observability-architecture.md`, `.squad/decisions/inbox/niobe-trinity-brief-phase1.md`.
+Before shipping any numeric threshold, ask: *can this exact pattern appear in a legitimate input?* If yes, the threshold needs narrowing.
 
-### 3. Quality gates are first-class — count is 10, not 7, and they are addressed by name
+#### 5. Cost levers are not fungible — each has a different quality blast radius
 
-Code has always had 10 gates in `src/transpose/pipeline/gates.py`; the docs described 7 because they pre-dated `operational_readiness_gate`, `export_rendering_gate`, and `source_output_comparison_gate`. The fix wasn't only to add the missing three — it was to drop the "Gate 1 / Gate 2 / …" numbering. Numbered enumeration in prose drifts every time a gate is added or reordered. Gates are now listed by function name in stage order, with code (`pipeline/gates.py`) as the source of truth. The lesson: when there's a list of named code-level objects, document them by name and link to the source; never by position. Citation: `.squad/decisions/inbox/niobe-scribe-gate-doc-drift.md`.
+Cost optimization is not a single "save money" toggle. Prompt caching is always-on because it carries no quality risk. Larger chunk sizes and lower-tier OCR require per-input A/B because the quality impact depends on the material. Swapping the primary translation model for a smaller variant was rejected outright for literary content because the smaller model loses register and cultural-term handling that justify the entire pipeline. Treat cost levers individually, attach each to a quality gate or A/B, and never bundle them.
 
-### 4. Quality scoring rejects same-family LLM-as-judge
+#### 6. Content-filter false positives are handled by graduated fallback, not bypass
 
-The convenient option for translation quality scoring was to ask GPT-4o (the model that produced the translation) to grade its own output. We rejected it on rigour grounds: same-family judges exhibit measurable self-preference bias. The v1 quality score is layered: (A) multilingual embeddings for semantic similarity on every chunk, and (C) a cross-family LLM judge (Claude Sonnet 4.5) on a 5% stratified sample.[^layer-b] The lesson is that convenience of an already-integrated model is not a substitute for evaluation rigour — cross-family judges plus specialised embedding tooling produce better signal at lower cost than recycling the generation model to grade itself. Citation: `.squad/decisions/inbox/niobe-oracle-quality-score-brief.md`.
+Commercial-LLM content filters false-positive on classical religious and philosophical text — body/energy/union terminology overlaps with patterns the filters were trained to flag. Roughly 2–3% of chunks trigger on this corpus.
 
-[^layer-b]: Layer B (reference-free MT QE, COMET-Kiwi class) was scoped out of v1 per Oracle's final spec (commit `404a439`) and deferred to v1.1.
+The fix is a four-stage graduated escalation: (1) prepend scholarly context to the system prompt, (2) add publisher/discipline framing, (3) replace trigger terms with clinical placeholders, (4) fall back to sentence-level filtering with scholarly paraphrase of individual triggering sentences. Each stage runs only if the previous failed. Disabling or bypassing the filter outright is rejected — the filter is doing its job; the prompt is the variable.
 
-### 5. Phase 2 cost optimization (#95) is quality-gated, not deferred
+When a safety filter false-positives on legitimate content, the answer is contextual reframing, not bypass. Build a graduated chain so most cases resolve at the cheapest stage.
 
-Cost levers are not fungible. Prompt caching is always-on because it carries no quality risk. Larger chunks and Document Intelligence tier downgrades require an Oracle A/B per book — the quality impact depends on the material. The GPT-4o → GPT-4o-mini swap was rejected outright for literary content because the smaller model loses the register and cultural-term handling that justify the whole pipeline. The lesson: every cost lever has a different quality blast radius. Treat them individually, attach each to a quality gate or A/B, and never bundle them as a single "save money" toggle. Citation: `.squad/decisions/inbox/niobe-backlog-prioritization.md`.
+### Documentation & process
 
-### 6. Performance work is sequenced behind observability, not deferred
+#### 7. Operator dashboards optimize for decision velocity, not single-metric visibility
 
-An earlier framing argued throughput was the only metric that mattered, so wall-time optimisation could wait. The correction: a 10-hour wall time prevents same-day operator iteration regardless of throughput. Observability ships first so that subsequent performance cuts are surgical and data-driven rather than speculative. The lesson: "throughput is the only metric" misses the operator-feedback loop; latency matters even at low volume because it gates the iteration speed of the humans driving the system. Citations: `.squad/decisions/inbox/niobe-priority-ladder-2026-05-22.md`, `.squad/decisions/inbox/trinity-parallelism-investigation.md`.
+Initial framing for a per-book observability surface was "cost visibility" — surface translation spend so it's known. The framing converged on something larger: a per-book operations table surfacing cost, wall-time, validation status, and quality score side by side. The operator's question after a run is "ship, re-run, or review?" and the dashboard must let them answer that in one glance. Every signal needed for the decision belongs on the same surface.
+
+#### 8. Document lists of code-level objects by name and link to source — never by position
+
+Project documentation drifted from describing 7 quality gates to describing the same gates as 10 over time because the prose enumerated them as "Gate 1 / Gate 2 / …" while the code source-of-truth grew. Numbered enumeration in prose drifts every time the underlying list is reordered or extended. For any list of named code-level objects (gates, hooks, middleware, signals), document by function name in stage order and link to the source file. Code is the source of truth; prose tracks it by name.
+
+#### 9. Latency matters even at low volume — observability sequences before performance
+
+A natural framing argued throughput was the only meaningful metric because volume was low, so wall-time optimization could wait. A 10-hour pipeline runtime invalidated that: latency gates same-day operator iteration regardless of throughput. Observability ships first so subsequent performance cuts are surgical and data-driven rather than speculative. "Throughput is the only metric" misses the operator-feedback loop; latency matters even at low volume because it gates the iteration speed of the humans driving the system.
+
+### Architecture & publishing
+
+#### 10. Provenance artifacts ship with the published work
+
+For any derivative work published openly — translations, transcriptions, restorations, annotations — the source artifact ships alongside the derivative on the same public surface. The reader must be able to verify the derivative against the source without asking for special access. Concretely: a public-domain translation publishes the original scan at `{landing}/source.pdf` next to the translated `{landing}/translated.pdf`. Provenance is a reader-facing contract, not an internal-only record.
+
+#### 11. Publishing is a pipeline stage, not an external step
+
+If a step is required for the work to be useful to its consumer, it belongs in the pipeline's dependency graph. Treating publishing (writing the artifact + landing page to public storage) as a post-pipeline manual script produced two recurring failures: landing pages shipped with broken links because the upload ran independently of the pipeline's success state, and resume-from-failure couldn't restore the published artifact because the publisher had no model of what the pipeline produced.
+
+Pull consumer-facing steps into the pipeline as explicit stages, validated by the same surface as upstream work. Mark them non-fatal if their failure shouldn't lose upstream output — but keep them in the graph so they participate in resume, validation, and observability.
