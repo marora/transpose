@@ -103,6 +103,10 @@ class Database:
                 return await conn.fetch(query, *args)
         return await self._retry(_inner)
 
+    async def fetch_all(self, query: str, *args) -> list[asyncpg.Record]:
+        """Compatibility alias used by readiness checks."""
+        return await self.fetch_many(query, *args)
+
     async def execute_many(self, query: str, args_list: list[tuple]) -> None:
         """Execute a query for multiple arg sets, with retry."""
         async def _inner():
@@ -692,4 +696,72 @@ class Database:
             }
             for r in rows
         ]
+
+    # --- Validation Reports (dashboard / issue #99) ---
+
+    async def ensure_validation_reports_table(self) -> None:
+        """Create the book_validation_reports table if it doesn't exist.
+
+        Mirrors the migration in `3a9e1b27c4f1_add_book_validation_reports.py`
+        for environments that have not yet run alembic upgrade.
+        """
+        await self.execute(
+            """
+            CREATE TABLE IF NOT EXISTS book_validation_reports (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                overall TEXT NOT NULL CHECK (overall IN ('PASS', 'FAIL')),
+                report JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        await self.execute(
+            """
+            CREATE INDEX IF NOT EXISTS book_validation_reports_book_id_created_at_idx
+            ON book_validation_reports (book_id, created_at DESC)
+            """
+        )
+
+    async def save_validation_report(
+        self, book_id: UUID, report: dict
+    ) -> None:
+        """Persist a validation report (one row per run, append-only)."""
+        import json
+
+        overall = report.get("overall", "FAIL")
+        await self.execute(
+            """
+            INSERT INTO book_validation_reports (book_id, overall, report)
+            VALUES ($1, $2, $3::jsonb)
+            """,
+            book_id,
+            overall,
+            json.dumps(report, default=str),
+        )
+
+    async def get_latest_validation_report(self, book_id: UUID) -> dict | None:
+        """Return the most recent validation report for a book, or None."""
+        import json
+
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT report, overall, created_at
+                FROM book_validation_reports
+                WHERE book_id = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                book_id,
+            )
+            if not row:
+                return None
+            report = row["report"]
+            if isinstance(report, str):
+                report = json.loads(report)
+            # Surface DB metadata alongside the embedded report payload
+            report.setdefault("overall", row["overall"])
+            report["_persisted_at"] = row["created_at"].isoformat() if row["created_at"] else None
+            return report
 

@@ -2,6 +2,7 @@
 
 import os
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -49,6 +50,35 @@ class Settings(BaseSettings):
     # Application Insights
     applicationinsights_connection_string: str = ""
 
+    # Entra ID admin dashboard auth
+    entra_tenant_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("TRANSPOSE_ENTRA_TENANT_ID", "ENTRA_TENANT_ID"),
+    )
+    entra_admin_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("TRANSPOSE_ENTRA_ADMIN_CLIENT_ID", "ENTRA_ADMIN_CLIENT_ID"),
+    )
+    entra_admin_audience: str = Field(
+        default="",
+        validation_alias=AliasChoices("TRANSPOSE_ENTRA_ADMIN_AUDIENCE", "ENTRA_ADMIN_AUDIENCE"),
+    )
+    entra_issuer: str = Field(
+        default="",
+        validation_alias=AliasChoices("TRANSPOSE_ENTRA_ISSUER", "ENTRA_ISSUER"),
+    )
+    entra_jwks_uri: str = Field(
+        default="",
+        validation_alias=AliasChoices("TRANSPOSE_ENTRA_JWKS_URI", "ENTRA_JWKS_URI"),
+    )
+    entra_jwks_cache_ttl_seconds: int = Field(
+        default=300,
+        validation_alias=AliasChoices(
+            "TRANSPOSE_ENTRA_JWKS_CACHE_TTL_SECONDS",
+            "ENTRA_JWKS_CACHE_TTL_SECONDS",
+        ),
+    )
+
     # Pipeline tuning
     ocr_concurrency: int = 5
     translate_concurrency: int = 5
@@ -69,6 +99,43 @@ class Settings(BaseSettings):
 
     # API authentication (empty = permissive mode for local dev)
     api_key: str = ""
+
+    @property
+    def entra_admin_auth_configured(self) -> bool:
+        """Return True when the admin dashboard auth inputs are configured."""
+        return bool(
+            self.entra_tenant_id
+            and self.entra_admin_client_id
+            and self.entra_admin_audience
+        )
+
+    def get_entra_authority_url(self) -> str:
+        """Return the tenant authority base URL used in WWW-Authenticate challenges."""
+        if not self.entra_tenant_id:
+            return "https://login.microsoftonline.com"
+        return f"https://login.microsoftonline.com/{self.entra_tenant_id}"
+
+    def get_entra_discovery_url(self) -> str:
+        """Return the OpenID discovery endpoint for the configured tenant."""
+        if not self.entra_tenant_id:
+            return ""
+        return f"{self.get_entra_authority_url()}/v2.0/.well-known/openid-configuration"
+
+    def get_entra_issuer(self) -> str:
+        """Return the expected token issuer for the configured tenant."""
+        if self.entra_issuer:
+            return self.entra_issuer
+        if not self.entra_tenant_id:
+            return ""
+        return f"{self.get_entra_authority_url()}/v2.0"
+
+    def get_entra_jwks_uri(self) -> str:
+        """Return the configured or derived JWKS URI for the tenant."""
+        if self.entra_jwks_uri:
+            return self.entra_jwks_uri
+        if not self.entra_tenant_id:
+            return ""
+        return f"{self.get_entra_authority_url()}/discovery/v2.0/keys"
 
     def validate_for_pipeline(self) -> list[str]:
         """Validate that required settings are configured for pipeline execution.

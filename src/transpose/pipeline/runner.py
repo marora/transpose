@@ -92,11 +92,13 @@ def _run_gate(gate_fn, gate_input, gate_results: list[GateResult]) -> GateResult
     with tracer.start_as_current_span("quality_gate") as span:
         result = gate_fn(gate_input)
         duration = time.monotonic() - start
+        # Stamp duration on the result so the validation report can surface it.
+        result.duration_ms = round(duration * 1000, 2)
 
         # Annotate the span with gate metadata
         span.set_attribute("gate.name", result.gate_name)
         span.set_attribute("gate.passed", result.passed)
-        span.set_attribute("gate.duration_ms", round(duration * 1000, 2))
+        span.set_attribute("gate.duration_ms", result.duration_ms)
         if not result.passed:
             span.set_attribute("gate.failure_reason", "; ".join(result.failures))
 
@@ -146,12 +148,31 @@ def _build_validation_report(
                 "failures": g.failures,
                 "details": g.details,
                 "timestamp": g.timestamp,
+                "duration_ms": g.duration_ms,
             }
             for g in gate_results
         ],
         "overall": overall,
         "artifacts": artifact_map,
     }
+
+
+async def _persist_validation_report(ctx, book_id, report: dict) -> None:
+    """Best-effort: write the validation report to Postgres for the dashboard.
+
+    Never raises — observability must not block the pipeline. Called from
+    every terminal branch in run_pipeline (success + both error paths).
+    """
+    if not book_id or not ctx or not getattr(ctx, "db", None):
+        return
+    try:
+        import uuid as _uuid
+        bid = book_id if isinstance(book_id, _uuid.UUID) else _uuid.UUID(str(book_id))
+        await ctx.db.ensure_validation_reports_table()
+        await ctx.db.save_validation_report(bid, report)
+    except Exception as exc:
+        logger.warning("Failed to persist validation report: %s", exc)
+
 
 
 async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # type: ignore[no-untyped-def]
@@ -666,6 +687,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps(report, indent=2, default=str))
             logger.info("Validation report written to %s", report_path)
+        await _persist_validation_report(ctx, book_id, report)
 
         # Persist cost tracking
         if cost_tracker:
@@ -699,6 +721,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             report_path = Path(input.output_dir) / "validation-report.json"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps(report, indent=2, default=str))
+        await _persist_validation_report(ctx, book_id, report)
 
         if book_id:
             await ctx.db.update_book_status(book_id, BookStatus.FAILED)
@@ -732,6 +755,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             report_path = Path(input.output_dir) / "validation-report.json"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps(report, indent=2, default=str))
+        await _persist_validation_report(ctx, book_id, report)
 
         # Update book status to FAILED
         if book_id:

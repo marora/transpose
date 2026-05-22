@@ -24,6 +24,7 @@ class GateResult:
     failures: list[str] = field(default_factory=list)
     details: dict = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    duration_ms: float | None = None
 
 
 class QualityGateError(Exception):

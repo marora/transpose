@@ -22,11 +22,17 @@ import contextlib
 import hmac
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from aiohttp import web
 
+from transpose.api.auth.entra_middleware import (
+    EntraTokenValidator,
+    entra_admin_middleware,
+    is_admin_path,
+)
 from transpose.config.settings import get_settings
 
 logging.basicConfig(
@@ -47,23 +53,37 @@ class JobTracker:
         self._background_tasks: set[asyncio.Task] = set()
 
     async def connect(self):
-        """Initialize database connection."""
+        """Initialize database connection.
+
+        On failure, leaves ``self._ctx`` as ``None`` so callers can detect
+        DB-less mode via the ``if job_tracker._ctx`` guard pattern used
+        throughout the API.
+        """
         from transpose.services import ServiceContext
 
-        self._ctx = ServiceContext()
-        await self._ctx.connect()
-        # Ensure jobs table exists
-        await self._ctx.db.execute("""
-            CREATE TABLE IF NOT EXISTS pipeline_jobs (
-                book_id TEXT PRIMARY KEY,
-                status TEXT NOT NULL DEFAULT 'accepted',
-                stage TEXT,
-                error TEXT,
-                result JSONB,
-                created_at TIMESTAMPTZ DEFAULT now(),
-                updated_at TIMESTAMPTZ DEFAULT now()
-            )
-        """)
+        ctx = ServiceContext()
+        try:
+            await ctx.connect()
+            # Ensure jobs table exists
+            await ctx.db.execute("""
+                CREATE TABLE IF NOT EXISTS pipeline_jobs (
+                    book_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL DEFAULT 'accepted',
+                    stage TEXT,
+                    error TEXT,
+                    result JSONB,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )
+            """)
+        except Exception:
+            # Ensure partially-initialized context is not retained so the
+            # DB-less fallback guard (`if job_tracker._ctx`) works correctly.
+            with contextlib.suppress(Exception):
+                await ctx.close()
+            self._ctx = None
+            raise
+        self._ctx = ctx
 
     async def create_job(self, book_id: str) -> dict:
         job = {"book_id": book_id, "status": "accepted", "stage": None, "error": None}
@@ -127,7 +147,7 @@ async def _check_database(app: web.Application) -> str:
             timeout=_HEALTH_CHECK_TIMEOUT,
         )
         return "ok" if row else "error: empty result"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "error: timeout"
     except Exception as exc:
         return f"error: {type(exc).__name__}"
@@ -158,7 +178,7 @@ async def _check_blob(app: web.Application) -> str:
                 await credential.close()
 
         return await asyncio.wait_for(_probe(), timeout=_HEALTH_CHECK_TIMEOUT)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "error: timeout"
     except ImportError:
         return "not_configured"
@@ -175,7 +195,10 @@ async def _check_openai(app: web.Application) -> str:
         import httpx
 
         async def _probe():
-            url = f"{settings.openai_endpoint.rstrip('/')}/openai/models?api-version={settings.openai_api_version}"
+            url = (
+                f"{settings.openai_endpoint.rstrip('/')}"
+                f"/openai/models?api-version={settings.openai_api_version}"
+            )
             from azure.identity.aio import DefaultAzureCredential
 
             credential = DefaultAzureCredential()
@@ -187,12 +210,14 @@ async def _check_openai(app: web.Application) -> str:
                         headers={"Authorization": f"Bearer {token.token}"},
                         timeout=_HEALTH_CHECK_TIMEOUT,
                     )
-                    return "ok" if resp.status_code < 400 else f"error: HTTP {resp.status_code}"
+                    if resp.status_code < 400:
+                        return "ok"
+                    return f"error: HTTP {resp.status_code}"
             finally:
                 await credential.close()
 
         return await asyncio.wait_for(_probe(), timeout=_HEALTH_CHECK_TIMEOUT)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "error: timeout"
     except ImportError:
         return "not_configured"
@@ -219,15 +244,12 @@ async def _run_health_checks(app: web.Application) -> dict:
 
     # Determine overall status
     errors = [v for v in checks.values() if v.startswith("error:")]
-    if errors:
-        status = "degraded" if len(errors) < len(checks) else "unhealthy"
-    else:
-        status = "healthy"
+    status = ("degraded" if len(errors) < len(checks) else "unhealthy") if errors else "healthy"
 
     return {
         "status": status,
         "checks": checks,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 
@@ -235,7 +257,7 @@ async def _run_health_checks(app: web.Application) -> dict:
 # API Key Authentication
 # ---------------------------------------------------------------------------
 
-# Paths that bypass authentication (health probes, status polling)
+# Paths that bypass API key authentication (health probes, status polling, Entra admin routes)
 _PUBLIC_PATHS = frozenset({"/health", "/ready"})
 _PUBLIC_PREFIXES = ("/status/",)
 
@@ -253,7 +275,11 @@ async def api_key_middleware(request: web.Request, handler):
     """Enforce API key authentication on protected endpoints."""
     # Allow public paths through unconditionally
     path = request.path
-    if path in _PUBLIC_PATHS or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+    is_public_path = (
+        path in _PUBLIC_PATHS
+        or any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES)
+    )
+    if is_public_path or is_admin_path(path):
         return await handler(request)
 
     configured_key: str = request.app["api_key"]
@@ -335,12 +361,30 @@ async def ready(request: web.Request) -> web.Response:
     return web.json_response(result, status=status)
 
 
+_ADMIN_ROOT = Path(__file__).resolve().parents[3] / "web" / "admin"
+
+
+async def admin_index(request: web.Request) -> web.StreamResponse:
+    """Serve the protected admin dashboard shell."""
+    return web.FileResponse(_ADMIN_ROOT / "index.html")
+
+
+async def admin_auth_smoke(request: web.Request) -> web.Response:
+    """Return the authenticated principal for smoke testing /admin protection."""
+    return web.json_response({"status": "ok", "user": request["user"]})
+
+
 async def translate(request: web.Request) -> web.Response:
     """Accept a translation request and run the pipeline in background."""
     try:
         body = await request.json()
     except (json.JSONDecodeError, Exception):
-        return _error_response("invalid JSON body", code="INVALID_JSON", status=400, request=request)
+        return _error_response(
+            "invalid JSON body",
+            code="INVALID_JSON",
+            status=400,
+            request=request,
+        )
 
     # Validate required fields
     blob_uri = body.get("blob_uri")
@@ -372,13 +416,24 @@ async def translate(request: web.Request) -> web.Response:
         await job_tracker.create_job(book_id)
 
     concurrency = body.get("concurrency")
-    if concurrency is not None:
-        if not isinstance(concurrency, int) or concurrency < 1:
-            return web.json_response({"error": "concurrency must be a positive integer"}, status=400)
+    if concurrency is not None and (not isinstance(concurrency, int) or concurrency < 1):
+        return web.json_response(
+            {"error": "concurrency must be a positive integer"},
+            status=400,
+        )
 
     # Launch pipeline task with proper lifecycle management
     task = asyncio.create_task(
-        _run_pipeline_job(job_tracker, book_id, blob_uri, title, author, language, formats, concurrency)
+        _run_pipeline_job(
+            job_tracker,
+            book_id,
+            blob_uri,
+            title,
+            author,
+            language,
+            formats,
+            concurrency,
+        )
     )
     # Prevent GC collection and log failures
     if job_tracker:
@@ -428,7 +483,7 @@ async def get_status(request: web.Request) -> web.Response:
             })
         finally:
             await ctx.close()
-    except Exception as exc:
+    except Exception:
         request_id = request.get("request_id", "unknown")
         logger.exception("Error fetching status from DB [request_id=%s]", request_id)
         return _error_response(
@@ -526,6 +581,7 @@ async def _run_pipeline_job(
 # ---------------------------------------------------------------------------
 
 
+@web.middleware
 async def _json_error_handler(request: web.Request, handler):
     """Catch unhandled exceptions and return structured JSON errors."""
     try:
@@ -565,11 +621,16 @@ def create_app() -> web.Application:
 
     app = web.Application(middlewares=[
         request_id_middleware,
+        entra_admin_middleware,
         api_key_middleware,
         _json_error_handler,
     ])
+    app["settings"] = settings
     app["api_key"] = settings.api_key
     app["job_tracker"] = JobTracker()
+    app["entra_authority"] = settings.get_entra_authority_url()
+    if settings.entra_admin_auth_configured:
+        app["entra_token_validator"] = EntraTokenValidator(settings)
 
     if not settings.api_key:
         logger.warning(
@@ -584,10 +645,8 @@ def create_app() -> web.Application:
             logger.warning("JobTracker DB connection unavailable — falling back to DB-less mode")
 
     async def on_cleanup(app: web.Application) -> None:
-        try:
+        with contextlib.suppress(Exception):
             await app["job_tracker"].close()
-        except Exception:
-            pass
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
@@ -596,6 +655,13 @@ def create_app() -> web.Application:
     app.router.add_get("/ready", ready)
     app.router.add_post("/translate", translate)
     app.router.add_get("/status/{book_id}", get_status)
+    app.router.add_get("/admin", admin_index)
+    app.router.add_get("/admin/", admin_index)
+    app.router.add_get("/admin/index.html", admin_index)
+    app.router.add_get("/admin/api/test", admin_auth_smoke)
+    from transpose.api.dashboard import register_dashboard_routes
+    register_dashboard_routes(app)
+    app.router.add_static("/admin/", path=_ADMIN_ROOT, show_index=False)
     return app
 
 
