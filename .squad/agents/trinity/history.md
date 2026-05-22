@@ -21,6 +21,17 @@
 
 ## Learnings
 
+### 2026-05-21T23:02:20-04:00: Parallelism diagnosis for slow book runs (#94, #95, #96)
+
+**Verdict:** Shiv Sutra was **partially** parallelized.
+
+- **Translation:** real async parallelism is present and default-enabled. `runner.py` passes `translate_concurrency`, `translate.py` uses `asyncio.Semaphore(...)` + `asyncio.gather(...)` when concurrency > 1, defaults are `translate_concurrency=5`, and no `.env` override lowered it.
+- **OCR:** the `ocr_concurrency` knob is currently inert. `ServiceContext` passes it into `OcrClient`, but `OcrClient.extract_pages()` still submits a single `begin_analyze_document(...)` call for the whole PDF and waits for one poller result. Commit `d5e46b4` explicitly described this as "stored for future per-page parallelism".
+- **Prompt overhead matters almost as much as concurrency:** local `gpt-4o` tokenization estimates ~1,785 fixed prompt tokens per translation chunk before source text. On Shiv Sutra's 454 chunks, that is roughly ~810k repeated prompt tokens — about 70% of total prompt spend.
+- **No rollback found:** git history and `decisions.md` showed no decision/commit that deliberately serialized the pipeline. The relevant change (`aecb19b`) did the opposite: it introduced parallel translation.
+
+**Pattern:** After any slow run, verify concurrency at three layers: **setting exists → setting is wired → setting is actually consumed**. A stored knob is not a feature. Also separate **stage wall time** from **prompt-shape waste**; for LLM stages, high input:output ratios often indicate repeated scaffold cost.
+
 ### 2026-05-21T11:40:56-04:00: Glossary U+FFFD scrub (Issue #89)
 
 **Root cause:** `_clean_original_script` stripped FFFD at three points during aggregation, but variant merging in `_deduplicate_spelling_variants` could pull in raw `original_script` without re-cleaning. Bug manifested for `'shri'` (LLM-extracted, not in seed).
