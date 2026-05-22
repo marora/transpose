@@ -6,6 +6,34 @@
 - **Owner:** Manish
 - **Previous incarnation:** Idaho (Dune cast) — see .squad/agents/_alumni/idaho/history.md for accumulated knowledge
 
+---
+
+## 🔔 CROSS-AGENT: Observability Dashboard Work Incoming (2026-05-21T23:17:42Z)
+
+**From:** Morpheus (Architect), Scribe (Orchestrator)  
+**Status:** Architecture locked; GitHub issues pending
+
+### YOUR TASK: Issue #98 — Entra ID Auth Middleware [**BLOCKER for v1**]
+
+**Priority:** FIRST — Trinity/Dozer depend on this
+
+**What:** Set up Entra ID app registration (`transpose-admin`) + bearer-token validation middleware on Container App `/admin/*` routes.
+
+**Why blocking:** Trinity can't write test fixtures or integration tests for cost_events/dashboard_api without a working auth pattern. Tank's auth code is the gate.
+
+**Details:**
+- Register single-tenant app in Entra ID
+- Middleware validates `Authorization: Bearer <token>` against JWKS
+- Admin page does MSAL.js PKCE flow (client-only, no service principal secrets)
+- Decorator pattern: `@require_entra_auth` on all `/admin/*` routes
+- No new Azure resources; existing Container App + Managed Identity
+
+**Sequence:** Tank #98 → Trinity #97 (schema) → Trinity #99 (API) → Trinity #100 (frontend) → Dozer #101 (tests)
+
+**Reference:** `.squad/decisions.md` — 2026-05-21T23:17:42-04:00 entry (Architecture Decision — section 1)
+
+---
+
 ## Session History (Pre-2026-05-21)
 
 **2026-05-20T23:19:30Z — Phase 1 Deliverables (T-1/T-2/T-3):** Workspace schema extension. Used dedicated columns (`license_status`, `provenance_source`, `license_history`) rather than nested JSONB for performance (indexed queries). Idempotent DDL with CHECK constraints named and guarded with `DO IF NOT EXISTS`. Inline self-test in migration validates constraint is present. Backfill strategy: `ILIKE 'http%'` to distinguish real URLs from blob URIs. Azure setup script: dry-run uses `run()` function wrapper; subscription-confirm step executes even in dry-run (read-only).

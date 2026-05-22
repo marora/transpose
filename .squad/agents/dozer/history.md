@@ -6,6 +6,47 @@
 - **Owner:** Manish
 - **Previous incarnation:** Thufir (Dune cast) — see .squad/agents/_alumni/thufir/history.md for accumulated knowledge
 
+---
+
+## 🔔 CROSS-AGENT: Observability Dashboard Test Coverage Incoming (2026-05-21T23:17:42Z)
+
+**From:** Morpheus (Architect), Scribe (Orchestrator)  
+**Status:** Architecture locked; GitHub issues pending
+
+### YOUR TASK: Issue #101 — Test Coverage for Dashboard + Cost Events
+
+**Priority:** LAST (depends on Trinity #100 frontend done)
+
+**What:** Unit + integration tests for three new modules + Tank's auth middleware
+
+**Test scope:**
+
+1. **`cost_events.py` (unit, mocked DB):**
+   - `record_stage_start()` → inserts row with status='started', now() timestamp, zeroed metrics
+   - `record_stage_end()` → updates same row with completion data + status change
+   - Error handling: retry logic, malformed UUIDs, DB connection failures
+
+2. **`projector.py` (unit, pure functions):**
+   - Linear estimation: `estimate(page_count, history)` returns `list[StageProjection]`
+   - 3-book rolling median logic: mean vs. median comparison
+   - Confidence levels: "low" (1 book), "medium" (2 books), "high" (3+ books)
+   - Edge case: fewer than 3 books in history
+
+3. **`dashboard_api.py` (unit + integration):**
+   - `GET /admin/api/books` → JSON list, uses cost_events table
+   - `GET /admin/api/books/{id}/stages` → per-stage breakdown
+   - `GET /admin/api/projection?pages=N` → calls projector module
+   - Entra auth middleware validation (Tank provides pattern)
+
+4. **Integration (auth middleware):**
+   - Requests without valid bearer token → 401
+   - Requests with valid token → 200 + data
+   - Expired/invalid signatures → 401
+
+**Reference:** `.squad/decisions.md` — 2026-05-21T23:17:42-04:00 entry (sections 6, 8)
+
+---
+
 ## Learnings
 
 - **2026-05-21T11:00:50.468-04:00 — Pipeline smoke-test pattern:** Use a repo-local synthetic 2-page Hindi PDF plus a repo-local blob shim so the real runner, chunker, assemble/export, and workspace publish stages execute end-to-end without Azure dependencies; only translation and heavy post-export gates should be mocked. Keep a dual threshold (fast synthetic default, slower real-book override), assert either successful PDF+landing-page publish or a clean failure with validation-report output, and pin open issues as dedicated `xfail(strict=False)` regressions in the same file.

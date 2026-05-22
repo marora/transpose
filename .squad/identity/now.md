@@ -1,63 +1,61 @@
 ---
-updated_at: 2026-05-21T23:02:20Z
-focus_area: Observability framing + parallelization audit. Audiobook deferred pending observability decision.
-active_issues: ["#94 wall-time", "#95 cost", "#96 OCR batching", "#93 durable cost tracking"]
+updated_at: 2026-05-21T23:17:42Z
+focus_area: Observability dashboard MVP implementation (5 GitHub issues incoming). Parallelization (#94/#95/#96) and audiobook deferred until observability ships.
+active_issues: ["#97 append-only cost events", "#98 Entra ID auth infra", "#99 dashboard API", "#100 admin frontend", "#101 test coverage"]
 ---
 
 # What We're Focused On
 
-**Shiv Sutra is complete and production-ready.** Pipeline hardened (glossary U+FFFD scrub, export gate heuristics calibrated). Performance baseline documented (10h 32m wall time, $12.13 cost for 250-page book). Parallelization audit complete; observability framing drafted. Team now awaiting Manish decisions on two fronts before proceeding to next phase.
+**Shiv Sutra production-ready. Pipeline hardened.** Observability/FinOps framing approved by Manish and architecture locked by Morpheus. Team now moving into implementation sprint: 5 GitHub issues, strict sequencing, 4-week timeline (Manish will feed 3–5 additional books during build).
 
-## Current Session (2026-05-21T23:02:20Z)
+## Current Session (2026-05-21T23:17:42Z)
 
-### Trinity — Parallelism Audit ✅ Complete
+### Manish Approval ✅ Complete
 
-Investigated Shiv Sutra's 10h 32m wall time. **Findings:**
-- **Translation:** Parallelization active (concurrency=5, asyncio.gather + semaphore working; 8–11 chunks/min)
-- **OCR:** Configured but non-functional (single entire-PDF job, not batched; accounts for 55% of wall time)
+Manish answered three concrete gates for observability framing:
+1. **Security:** Dashboard auth-protected (Entra ID, not IP allowlist)
+2. **Metrics:** Stage-level granularity (8 stages: ingest, ocr, chunk, translate, glossary, assemble, export, workspace)
+3. **Projections:** Auto-estimate cost/time from N-1 actuals (linear by page count)
 
-**Proposed next steps:**
-1. Increase translation concurrency 5 → 8 (low-risk, quota-dependent) — awaiting Manish quota approval
-2. Implement OCR batching (Issue #96; real code work, 50–60% wall-time upside)
-3. Reduce repeated prompt cost (future optimization)
+### Morpheus Architecture ✅ Complete
 
-**Constraint:** Manish issued directive "Parallelization MUST be enabled at all times; 10-hour wall time is unacceptable." No changes proceed without explicit approval.
+**Executive decisions locked:**
 
-### Niobe — Observability / FinOps Framing ✅ Complete
+| Question | Choice | Rationale |
+|----------|--------|-----------|
+| AuthN/AuthZ | Container App + Entra ID bearer tokens | No new infra, $0 cost, ships hours not days |
+| Data path | Thin JSON API on Container App | Live Postgres queries, no pre-computed artifacts |
+| Persistence | Append-only `book_cost_events` table | Stage-level durability, survives failed/resumed runs (closes #93) |
 
-Shiv Sutra cost took 5+ minutes to reconstruct manually from scattered DB sources. Frames observability as first-class capability.
+**No new Azure resources.** Existing Container App + Postgres.
 
-**Recommended solution:** Option B — static HTML page on `$web/admin/` querying Postgres directly. Success = answer cost/time in <1 minute without SQL/grep.
+**MVP boundary:** v1 ships with per-book cost inquiry, stage breakdown, linear projection. No real-time, no export, no multi-tenant.
 
-**MVP scope (v1):**
-- Per-book cost table (total, breakdown by OCR | Translation | Glossary, page count, wall time, stage durations)
-- Cost calculation module (utility; sum tokens, price against rate card)
-- Durable `book_costs` rows (fixes Issue #93)
+### Implementation Sequencing
 
-**Out of scope (v1):**
-- Real-time progress (WebSocket infrastructure)
-- Cost projections (need 3–5 books history)
-- Enterprise finops integration
+**5 GitHub issues, strict order:**
 
-**Open questions for Manish:**
-1. Security: IP allowlist, auth, or public for `$web/admin/`?
-2. Wall-time granularity: which stages separately?
-3. Cost prediction: linear scaling or defer?
+| # | Issue | Owner | Prerequisite | Status |
+|---|-------|-------|--------------|--------|
+| 98 | Entra ID auth infra | Tank | — | **BLOCKER** — Ship first |
+| 97 | Append-only cost events + runner instrumentation | Trinity | Tank #98 | Second |
+| 99 | Dashboard API routes + projector | Trinity | #97 done | Third |
+| 100 | Admin frontend static files | Trinity | #99 done | Fourth |
+| 101 | Test coverage (unit + integration) | Dozer | Trinity #100 done | Fifth |
 
-**Audiobook dependency:** NO. Cost structures orthogonal (TTS vs. OCR+translation). v1 is PDF-only; audiobook telemetry added to same dashboard when it ships (v1.1).
+**Constraint:** Manish directive "Parallelization MUST be enabled" still active, but perf work (#94, #95, #96) **deferred** behind observability implementation. Once observability ships, revisit parallelization.
 
-## Decision Gates Pending
+**Audiobook:** Deferred pending observability completion. Cost structures orthogonal (TTS vs. OCR+translation). When audiobook pipeline launches, add telemetry to same dashboard (v1.1, not blocking v1).
 
-**Manish must decide:**
+## Decision Gates Completed
 
-1. **Parallelism defaults:** Approve Trinity's 5→8 translation concurrency (quota-dependent)?
-2. **Observability MVP:** Approve Niobe's Option B framing (static page, Postgres direct-query)?
-3. **Audiobook timeline:** Proceed before or after observability? (Independent, but informs roadmap)
+✅ Manish approves observability MVP (Niobe framing Option B)  
+✅ Manish locks 3 concrete answers (auth, granularity, projections)  
+✅ Morpheus designs architecture (Container App + Entra ID + append-only events)  
 
-If parallelism approved → Trinity/Tank implement (quota review + default changes).
-If observability approved → Morpheus designs → Trinity/Tank implement (cost module + dashboard + Issue #93 fix).
+**Next gate:** GitHub issues filed + Tank starts #98 auth implementation.
 
-## Recent Session History (2026-05-20 through 2026-05-21)
+## Recent Session History (2026-05-20 through 2026-05-21T23:17:42Z)
 
 - **Issue #89 (FIXED):** Glossary U+FFFD character contamination — defensive final scrub + 5 unit tests
 - **Issue #90 (FIXED):** export_rendering false positive on single repeated images — threshold raised to ≥2 distinct images

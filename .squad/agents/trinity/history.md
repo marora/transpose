@@ -6,6 +6,41 @@
 - **Owner:** Manish
 - **Previous incarnation:** Chani (Dune cast) — see .squad/agents/_alumni/chani/history.md for accumulated knowledge
 
+---
+
+## 🔔 CROSS-AGENT: Observability Dashboard Work Incoming (2026-05-21T23:17:42Z)
+
+**From:** Morpheus (Architect), Scribe (Orchestrator)  
+**Status:** Architecture locked; GitHub issues pending
+
+### YOUR TASKS: Issues #97, #99, #100 (3 issues, strict sequence)
+
+**Priority:** SECOND (after Tank #98 auth middleware)
+
+**Sequence matters:**
+1. **#97 — Schema + Runner Instrumentation** (you own; depends on Tank #98 for auth test pattern)
+   - `book_cost_events` table: append-only, stage-level telemetry
+   - `cost_events.py` module: `record_stage_start()`, `record_stage_end()`
+   - Modify `runner.py`: emit INSERT/UPDATE at stage boundaries (run_id already exists as `pipeline_start_time`)
+   - Closes #93 (persistent cost tracking on failed/resumed runs)
+
+2. **#99 — Dashboard API Routes** (depends on #97 schema existing)
+   - `dashboard_api.py` module: `/admin/api/books`, `/admin/api/books/{id}/stages`, `/admin/api/projection?pages=N`
+   - `projector.py` module: linear estimation, 3-book rolling window, pure functions
+   - Register routes in `api.py` with Tank's Entra auth middleware
+   - JSON responses, no pagination needed (MVP <10 books)
+
+3. **#100 — Admin Frontend Static Files** (depends on #99 API routes done)
+   - `web/admin/index.html`, `web/admin/app.js`, `web/admin/style.css`
+   - Fetch API calls to `/admin/api/*` routes
+   - Tables: books with totals, expandable stage breakdown, projection input
+   - Cross-book trend chart (optional v1.1; table fine for v1)
+   - Served by Container App from `/admin/` directory (aiohttp static middleware)
+
+**Reference:** `.squad/decisions.md` — 2026-05-21T23:17:42-04:00 entry (Architecture Decision — sections 2, 3, 6)
+
+---
+
 ## Prior Work Summary (Archived from earlier sessions)
 
 **2026-05-20 through 2026-05-21T01:48:** 
