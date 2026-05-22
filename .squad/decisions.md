@@ -213,3 +213,175 @@ GitHub issue #93 filed: persist `book_costs` summary rows even on failed/resumed
 
 ---
 
+## 2026-05-21T23:02:20-04:00: User directive — Parallelization must remain enabled
+
+**By:** Manish (via Copilot)
+
+**Decision:** Parallelization measures (proven beneficial in prior experiments) MUST be enabled in the pipeline at all times going forward. The 10-hour single-book wall time observed for Shiv Sutra is unacceptable and should never recur without explicit override.
+
+**Rationale:** User request — captured for team memory. Pipeline must default to parallelized execution for all future books. Optimization work (#94, #95, #96) should focus on enabling and strengthening parallelism, not disabling it.
+
+---
+
+## 2026-05-21T23:02:20-04:00: Trinity — Parallelism Investigation Results
+
+**Author:** Trinity
+
+**Status:** Investigation Complete
+
+**Related issues:** #94 (wall time), #95 (cost), #96 (OCR parallelization)
+
+### Question
+
+Was parallelization used in the Shiv Sutra run (10h 32m, 250 pages)? If not fully, why not, and what should change?
+
+### Finding
+
+**Partially.**
+
+- **Translation:** Yes, parallelization enabled and likely active.
+  - `translate_concurrency=5` default active
+  - `asyncio.Semaphore` + `asyncio.gather()` dispatches concurrent chunks
+  - DB evidence: 454 final translation rows across 420 seconds; 8–11 chunks/minute early in run suggest overlapping requests, not strict sequential
+  
+- **OCR:** No meaningful parallelization.
+  - `ocr_client.py` stores `ocr_concurrency` config but never uses it
+  - `extract_pages()` submits **one** entire-PDF `begin_analyze_document()` call and waits
+  - Code comment (commit `d5e46b4`) notes concurrency is "stored for future per-page parallelism"
+
+### Why Wall Time Stayed High
+
+1. **OCR dominates:** ~5h 47m of 10h 32m total (55% of wall time) — effectively single-threaded per-book
+2. **Translation is parallel but expensive:** 454 chunks, 1.16M prompt tokens (repeated scaffold ~810k tokens), 255k completion tokens
+3. **No evidence of intentional throttle:** Code inspection + git history show parallelism was added, not removed
+
+### Safe Next Steps
+
+1. **Translation defaults (needs approval):** Consider increasing `translate_concurrency` from 5 → 8; scale DB pool accordingly. Expected 1.6x throughput if Azure OpenAI quota permits.
+2. **Quota-aware limiter:** Cap translation concurrency by observed/requested Azure OpenAI RPM/TPM, not just raw task count.
+3. **Make OCR concurrency real:** Split PDFs into page-range batches, run multiple Document Intelligence jobs behind `ocr_concurrency` semaphore, merge results in order. (Issue #96)
+4. **Reduce repeated prompt cost:** Optimize seed-term scaffold or use prompt caching.
+
+### Constraints
+
+- Translation is idempotent at chunk level; increasing parallelism is low-risk if DB pool and OpenAI quotas are respected.
+- OCR batching is real code work; needs deterministic page offsets, rerun/idempotency testing.
+- Evidence base: code inspection + DB telemetry; local `e2e-run.log` only covers later resume (glossary stage).
+
+---
+
+## 2026-05-21T23:02:20-04:00: Trinity — Proposed Parallelism Defaults
+
+**Author:** Trinity
+
+**Status:** Proposed (awaiting Manish approval on quota review)
+
+**Related decision:** Parallelism Investigation
+
+### Proposal
+
+Keep parallelism enabled by default and strengthen where it's already real:
+
+- `translate_concurrency`: default 5 → 8
+- `pool_max_size`: default 20 → 24 or 28 (must scale with translation workers)
+- `ocr_concurrency`: keep configured; note it's not functional until OCR batching ships
+
+### Rationale
+
+- Translation parallelism already implemented, enabled, and idempotent per-chunk
+- Shiv Sutra used 454 chunks; 5 → 8 workers has **1.6x throughput upside** if Azure OpenAI quota permits
+- DB pool sizing already documents tie to translation worker count; raising concurrency without raising pool size is unsafe
+
+### Approval Gate
+
+Manish should approve default increases after quota review. Until then:
+- Keep translation parallelism enabled
+- Do not reduce defaults to 1
+- Treat OCR parallelism as implementation backlog (#96), not solved
+
+---
+
+## 2026-05-21T23:02:20-04:00: Product Framing — Observability/FinOps as First-Class Capability
+
+**Author:** Niobe (PM)
+
+**Status:** Framing — awaiting Manish decision gate
+
+**Related decision:** Morpheus architecture call if approved; Tank/Trinity for implementation
+
+### Problem Summary
+
+**Current state:**
+- Manish ran Shiv Sutra (250 pages) for 10h 32m and spent $12.13
+- Tank had to manually reconstruct cost from three scattered sources (PostgreSQL `translations` table, `books.page_count`, logs)
+- **No self-serve cost inquiry:** Can't answer "How much did book X cost?" in under 5 minutes
+- **Ephemeral `book_costs` table (Issue #93):** Overwritten per run; not a reliable audit trail
+- **No cost visibility into planning:** Before running book N, Manish has no data-driven way to predict cost/wall-time
+
+**Who feels it:** Manish (operator, funder, engineer); Trinity/Tank (cost forensics manual each time)
+
+**Pain timeline:** Light today (one book). Becomes operational debt when processing 3–5 books in next 4 weeks.
+
+### Success Criteria
+
+Goal: Manish can answer cost + time questions in **under 1 minute** without SQL/grep.
+
+- **Outcome 1:** "How much did Shiv Sutra cost?" → Dashboard shows $12.13 total, breakdown by OCR ($2.49) + GPT-4o ($9.64)
+- **Outcome 2:** "How long did Shiv Sutra take?" → Dashboard shows wall time (10h 32m) + stage breakdown (OCR 5h 47m, Translation 3h 43m, Glossary 1h 30m, etc.)
+- **Outcome 3:** "Before I run book N, what should I expect?" → Compare book N page count to Shiv Sutra baseline and project cost/time
+
+### MVP Scope — Recommended Option (B)
+
+**Simple page on `$web/admin/` querying Postgres directly**
+
+**In scope (v1):**
+1. Per-book cost table (name, total cost, breakdown, page count, wall time, per-stage duration)
+2. Cost calculation module (utility; ingest book_id, compute total OpenAI + OCR + blob cost; return JSON)
+3. Durable `book_costs` row fix (Issue #93): persist after every completed run, even if resumed/failed
+
+**Out of scope (not v1):**
+- Real-time progress dashboard (requires WebSocket; v1 is static HTML + manual query button)
+- Cost projections / budget alerts (defer after observing 3+ books)
+- Comparative analytics (which book was most expensive per page)
+- Export to SaaS finops tools
+
+### Rationale for Option (B)
+
+1. **Fastest to build:** Static HTML + PostgreSQL SELECT. No app server, no new infra.
+2. **Operator-first UX:** App Insights workbooks (Option A) are dense/engineering-oriented. Simple table answers Manish's question immediately.
+3. **Single-operator scope:** No need for multi-tenant auth or enterprise finops. If Transpose scales later, revisit.
+4. **Owned UX:** We control look and feel. No dependency on App Insights UI team.
+5. **Cost-free:** Static HTML on blob storage costs nothing.
+
+**Trade-offs:**
+- No real-time progress during 10-hour runs (acceptable; cost insights work post-run)
+- Must be password-protected (IP allowlist or SAS-protected blob)
+- Manual query refresh (not streaming; acceptable for cost inquiry post-run)
+
+### Audiobook Prerequisite?
+
+**Answer: NO (conditional)**
+
+Audiobook is a new pipeline, not an optimization of current pipeline. Cost structure orthogonal (TTS + blob storage vs. OCR + translation). Observability v1 won't measure audiobook cost anyway. When audiobook ships, add its telemetry to the same dashboard (v1.1).
+
+**Implication:** Observability MVP is PDF pipeline only. Audiobook decision is independent and can proceed before or after observability ships.
+
+### Open Questions for Manish
+
+Before Morpheus designs:
+
+1. **Security posture:** Who accesses `$web/admin/`? (Password/SSO, IP-allowlisted, or public-unlisted?)
+   - Recommendation: Assume private (IP allowlist on blob storage) for v1.
+
+2. **Wall-time breakdown:** Which stages matter most to you?
+   - Recommendation: Show three main stages (OCR | Translation | Glossary) in v1. Export + publish are noise (<5 min each).
+
+3. **Predicted cost for book N:** Linear scaling (cost ∝ pages)?
+   - Recommendation: v1 shows Shiv Sutra baseline only. You do the mental math. Auto-projection in v1.1 after observing 3–5 books.
+
+### Next Step
+
+**Gate:** Manish approves framing → Morpheus designs cost dashboard architecture → Trinity/Tank implement
+
+---
+
