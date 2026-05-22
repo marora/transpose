@@ -610,3 +610,21 @@ web/admin/                       # NEW — static HTML/JS/CSS (served by Contain
 
 ---
 
+
+## 2026-05-21T23:30:27-04:00: Backlog Prioritization & Execution Sequencing — Observability MVP Target 2026-05-24
+
+**By:** Niobe (Product Manager)
+
+**Decision:** Adopt strict execution sequence for observability v1: #98 → #97 → #91 → #99 → #100 → #101. Five P0 blockers (observability MVP), five P1 operational bugs (setup/workspace/SAS), three P2 deferred (perf, parallelism). Close five legacy P0/P1 issues as stale (#73–77). Re-label #78 to squad:oracle (editorial), #79 to squad:trinity (pipeline). Manish approval pending; batch close to occur after approval.
+
+**Rationale:**
+- **Observability is gate:** Manish's stated priority before parallelism and audiobook decisions. Cost visibility operational necessity at 3+ concurrent books.
+- **Execution sequence prevents rework:** Dependencies within P0 block (#98 auth blocks #97 events, which block #99 API, which blocks #100 UI). P1 fixes are unblocked; #91 (SAS) parallel-friendly.
+- **Legacy triage clears noise:** Five issues stale against current pipeline (different source text format, metadata now implemented, image preservation deferred). Two issues re-labeled to correct owners (editorial vs. pipeline).
+- **Timeline aggressive but realistic:** ~20–25 billable hours Tank + Trinity over 2–3 sessions targets 2026-05-24 EOD. Aligns with Manish's 3–5 book readiness in next 4 weeks.
+
+**Owner:** Tank (auth), Trinity (observability pipeline), Dozer (test), Niobe (prioritization oversight)
+
+**Target Ship Date:** 2026-05-24 EOD
+
+---

@@ -1,7 +1,7 @@
 ---
-updated_at: 2026-05-21T23:17:42Z
-focus_area: Observability dashboard MVP implementation (5 GitHub issues incoming). Parallelization (#94/#95/#96) and audiobook deferred until observability ships.
-active_issues: ["#97 append-only cost events", "#98 Entra ID auth infra", "#99 dashboard API", "#100 admin frontend", "#101 test coverage"]
+updated_at: 2026-05-21T23:30:27Z
+focus_area: Observability v1 build (5 GitHub issues, strict sequence). Target ship 2026-05-24 EOD. Parallelization & perf deferred until #101 complete. 3–5 books ready for multi-book validation.
+active_issues: ["#98 Entra ID auth (Tank)", "#97 cost_events (Trinity)", "#91 SAS fix (Tank, parallel)", "#99 dashboard API (Trinity)", "#100 dashboard frontend (Trinity)", "#101 test coverage (Dozer)"]
 ---
 
 # What We're Focused On
@@ -52,6 +52,29 @@ Manish answered three concrete gates for observability framing:
 ✅ Manish approves observability MVP (Niobe framing Option B)  
 ✅ Manish locks 3 concrete answers (auth, granularity, projections)  
 ✅ Morpheus designs architecture (Container App + Entra ID + append-only events)  
+✅ **Niobe locks execution sequence + backlog tier** (2026-05-21T23:30:27Z)
+
+### Execution Sequence (Niobe Recommendation)
+
+**Strict order for observability v1:**
+
+1. **#98 (Tank)** — Entra ID auth for /admin/ (2–4h) — **MUST SHIP FIRST**
+2. **#97 (Trinity)** — Append-only cost_events + runner (4–6h) — depends on #98
+3. **#91 (Tank)** — SAS generation fix (1–2h) — parallel with Trinity's #97
+4. **#99 (Trinity)** — Dashboard API + projector (6–8h) — depends on #97
+5. **#100 (Trinity)** — Dashboard frontend (2–4h) — depends on #99
+6. **#101 (Dozer)** — Test coverage (TBD) — depends on #100
+
+**Effort:** 20–25 billable hours Tank + Trinity over 2–3 sessions  
+**Target ship date:** 2026-05-24 EOD
+
+### Legacy Backlog Triage (Niobe)
+
+**Close as stale (5 issues):** #73–77 (stale against current book format, metadata now implemented, image preservation deferred)  
+**Re-label (2 issues):** #78 → squad:oracle (editorial), #79 → squad:trinity (pipeline)  
+**Deferred (3 issues):** #92 (quality-of-life), #94–#95 (perf) — re-evaluate after observability ships
+
+**Awaiting Manish approval** before batch close & label updates.
 
 **Next gate:** GitHub issues filed + Tank starts #98 auth implementation.
 
