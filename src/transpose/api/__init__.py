@@ -361,7 +361,10 @@ async def ready(request: web.Request) -> web.Response:
     return web.json_response(result, status=status)
 
 
-_ADMIN_ROOT = Path(__file__).resolve().parents[3] / "web" / "admin"
+_ADMIN_ROOT = Path(
+    os.environ.get("TRANSPOSE_WEB_ROOT")
+    or (Path(__file__).resolve().parents[3] / "web")
+) / "admin"
 
 
 async def admin_index(request: web.Request) -> web.StreamResponse:
@@ -661,7 +664,10 @@ def create_app() -> web.Application:
     app.router.add_get("/admin/api/test", admin_auth_smoke)
     from transpose.api.dashboard import register_dashboard_routes
     register_dashboard_routes(app)
-    app.router.add_static("/admin/", path=_ADMIN_ROOT, show_index=False)
+    if _ADMIN_ROOT.is_dir():
+        app.router.add_static("/admin/", path=_ADMIN_ROOT, show_index=False)
+    else:
+        logger.warning("Admin UI directory not found at %s — /admin/ routes disabled", _ADMIN_ROOT)
     return app
 
 

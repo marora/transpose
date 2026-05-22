@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project files
 COPY pyproject.toml ./
 COPY src ./src
+COPY web ./web
 COPY README.md ./
 
 # Install Python dependencies
@@ -47,6 +48,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application source
 COPY --from=builder /build/src /app/src
+COPY --from=builder /build/web /app/web
+
+ENV TRANSPOSE_WEB_ROOT=/app/web
 
 # Create non-root user
 RUN useradd -m -u 1000 transpose && \
