@@ -14,27 +14,80 @@
 - **Human review loop:** Implied future capability. Whose review? Manish's? Outside reviewers? What's the workflow and quality gate?
 - **MVP boundaries:** What's the smallest demonstrable end-to-end Transpose product, and what's currently over-built or under-built relative to it?
 
-## Session History (Pre-2026-05-21)
+## Session History (Pre-2026-05-21) — Condensed
 
-**2026-05-20:** Niobe joined to fill product strategy gap. Framed three distinct questions bundled in Manish's workspace/archive/audiobook request: (1) workspace abstraction (technical debt), (2) public archive (product shape), (3) audiobook capability (distribution). Identified three product shapes: Shape A (personal translation tool, local/private), Shape B (curated public archive, metadata + free downloads), Shape C (publishing platform, multi-format + review). Parsing Manish's intent revealed trajectory thinking: near-term Shape A, long-term Shape B. Recommended building workspace storage layer now (works for all shapes), deferring archive UI/audiobook/review until shape is named.
+**2026-05-20 Discovery Phase:**
+- Niobe joined to fill product/strategy gap
+- Framed three product shapes: A (personal, near-term), B (public archive, long-term), C (publishing platform, deferred)
+- Manish's intent: Shape A now, Shape B trajectory long-term
+- Copyright posture: Add per-book `license_status` metadata field (claimed-PD | verified-PD | rights-cleared | rights-unknown); gate Shape B on verified-PD/rights-cleared
+- Firm rule: `claimed-PD` and `rights-unknown` books never shareable
 
-**2026-05-20 (Afternoon):** Manish answered Q1 — "For now it will be only me...longterm goal is a steadily built archive/repository." Signals: near-term = Shape A + tight circle + URL-protected; long-term = Shape B + open access + global scope (not just Hindi/Punjabi). Strategic shift: "enable the trajectory" — build Shape A now, keep Shape B reachable per-book.
+**2026-05-21 Early:**
+- Manish's "wow-factor directive": invest in polish (landing pages with OG from day one); Trinity implemented TR-3 landing generation
+- Shiv Sutra complete: 10h 32m wall time, $12.13 cost; filed perf backlog (#94 wall-time, #95 cost) as LOW-PRIORITY
+- Issue #91 filed: pipeline must validate SAS before publishing landing pages
 
-**2026-05-20 (Late):** Manish answered Q2 — copyright posture "generally considered public-domain work." Legal reality: source text (ancient Sanskrit) likely PD, but PDF edition (publisher commentary/typesetting) has fresh copyright; translation is his, but derivative of potentially copyrighted PDF. PM move (Path 2): Don't gatekeep; add per-book `license.status` (claimed-PD | verified-PD | rights-cleared | rights-unknown) and `provenance.source` fields. Shape A: any status fine. Shape B: gate on verified-PD or rights-cleared. Manish approved; enables trajectory without legal overreach.
-
-**2026-05-20 (Final):** Product brief locked. Scope: build Shape A now (personal workbench + private URL share), defer Shape B + audiobook + review workflow, add license/provenance schema to workspace. Key learning: Manish prefers "structured metadata field to make decision explicit per book" over "architectural gatekeeping." Trust + transparency > control.
-
-**2026-05-20 (Final):** Four open architecture questions answered. Firm rules: (1) `claimed-PD` and `rights-unknown` books never shareable; only `verified-PD` and `rights-cleared` qualify for Shape A URL. (2) Azure subscription active. (3) Share both source + translated PDFs; WhatsApp preview (OpenGraph) deferred to Phase 2 (Shape B archive UI). (4) PDF ownership is third-party internet sources; start with `rights-unknown`, research per-book. Key learning: Manish's "keep them private" closes copyright-risk gap. Third-party PDFs + no chain of custody = always start `rights-unknown`.
-
-**2026-05-21T04:39:36Z:** Manish's wow-factor directive — "Invest in polish (landing pages with OG previews from day one)." Overrides earlier MVP-minimalism recommendation. Trinity built landing page generation (TR-3) with Open Graph + Twitter Card meta tags. Books have public-but-unindexed landing pages from pipeline day one. Key learning: User priorities can override initial MVP framing. Manish's judgment is sound — early readers' first impression drives feedback quality. Polish is worth the small cost.
-
-**2026-05-21T12:17:57Z:** Issue #91 — Dead download links on existing landing pages. Pipeline must validate SAS generation before publishing landing page. If SAS fails, fail Stage 8 or publish with disabled buttons + error. Owner: Trinity (pipeline fix).
-
-**2026-05-21T14:41:45Z:** Trinity's performance optimization backlog. Shiv Sutra: 10h 32m wall time ($12.13 cost). Filed #94 (wall-time target <2h) and #95 (cost target <$5). Both LOW-PRIORITY; focus on hardening, not optimization. If Shape B scales up, cost per book will inform monetization model (free/donation/paid).
 
 ---
 
-## Learnings (Active)
+## 2026-05-22T11:35-04:00: Oracle Delivers Translation Quality Score v1 — Triangle Complete
+
+**From:** Oracle (Editorial), Scribe (Orchestrator)  
+**Status:** DELIVERED ✓ — Unblocks Phase 1b
+
+### What Just Happened
+
+You (Niobe) briefed Oracle with a tough ask: **"Define 'good translation' as a single 0–100 score, backed by both deterministic and semantic signals. No LLM-judge deferral. Get the editorial rubric right the first time."**
+
+Manish's directive (2026-05-22T11:03) had revoked the earlier deferral to v1.1. You framed the ask with:
+- Tier 1: Deterministic signals from existing gates (free)
+- Tier 2: Semantic signals (multilingual embeddings + LLM judge on 5% sample)
+- Cost constraints: <$3/book for judge
+- Editorial rubric required (not just a formula)
+
+Oracle shipped in **single turn** with **v1 spec locked.** Trinity Phase 1b now unblocked.
+
+### Oracle's Formula (Delivered)
+
+- **Tier 1 (structural, deterministic):** OCR sanity, translation completeness, glossary integrity, document structure, QA alignment, production readiness — from gate details blobs
+- **Layer A (cheap, 100% of chunks):** LaBSE multilingual embeddings for source↔translation semantic-similarity (self-hosted, near-zero cost)
+- **Layer C (sampled, specialized):** Claude Sonnet 4.5 (cross-family, no self-preference bias) as judge on 5% stratified sample; rates fluency, cultural register, terminology nuance
+- **Composition:** Single 0–100 score; color bands ≥85 green / 65–84 amber / <65 red
+- **Cost:** ~$0.16–$0.50/book (5% sample, Claude Sonnet 4.5)
+
+### Your Next Moves
+
+1. **File Tank brief** (separate from main thread):
+   - Anthropic API key in Key Vault
+   - LaBSE sidecar container (~1.9 GB) on Container App
+   - Outbound HTTPS to api.anthropic.com
+   - Reference: Oracle's full spec in `.squad/decisions.md`
+
+2. **Triangle is complete:**
+   - **Oracle:** Defined "good translation" ✓
+   - **Trinity:** Can build Phase 1b dashboard ✓
+   - **Tank:** Can wire infra ✓
+   - **You (Niobe):** Observability MVP ready to ship (cost + wall-time + quality, all tables on one page)
+
+### Product Learnings
+
+**Quality + Cost + Time = Operability Triangle**
+
+Your backlog triage (2026-05-21T23:30) predicted observability as P0. Oracle's delivery proves why: Manish can now see cost/time/quality on the same dashboard and make informed tradeoffs (e.g., "Is this book worth $X at 10h wall time for 75/100 quality?"). Without the quality column, the dashboard is incomplete.
+
+**Editorial bedrock must precede infrastructure:**
+
+Oracle's brief made it clear: *don't let "we have Azure OpenAI today" constrain editorial best practice.* Early spec was GPT-4o-only (same-family self-preference bias). Niobe's brief opened the aperture to cross-family judges (Claude, Gemini). Oracle chose Claude Sonnet 4.5 (right tool, right cost profile). Infrastructure (Tank) followed design (Oracle).
+
+### Decision References
+
+- Oracle's spec: `.squad/decisions.md` — Oracle Translation Quality Score v1 entry (post-merge from inbox)
+- Niobe's brief to Oracle: `.squad/decisions.md` — Niobe → Oracle: Translation Quality Score Brief entry (post-merge from inbox)
+- Session log: `.squad/log/2026-05-22T11-35-translation-quality-score-v1.md`
+- Orchestration log: `.squad/orchestration-log/2026-05-22T11-30-oracle.md`
+
+## Learnings
 
 ### 2026-05-21T23:02:20-04:00: Observability/FinOps Framing — Cost Visibility as First-Class Capability
 

@@ -44,7 +44,54 @@
 
 ---
 
-## Learnings (Active)
+## 🔔 CROSS-AGENT: Oracle Ships Translation Quality Score v1 — Infrastructure Brief Incoming (2026-05-22T11:35-04:00)
+
+**From:** Oracle (Editorial), Scribe (Orchestrator)  
+**Status:** DELIVERED — Infrastructure brief pending from Niobe
+
+### YOUR INFRASTRUCTURE TASKS
+
+Oracle's Translation Quality Score v1 spec is locked. Three infra blockers for you to tackle (Niobe will file formal brief):
+
+1. **Anthropic API Key in Key Vault**
+   - Store `ANTHROPIC_API_KEY` for Claude Sonnet 4.5 judge calls
+   - RBAC: Container App managed identity must read this secret
+   - Fallback behavior: If key is missing or API fails, scoring layer degrades (returns 0 or re-runs without Layer C)
+
+2. **LaBSE Sidecar Container (~1.9 GB)**
+   - Multilingual embedding model for semantic-similarity scoring (Layer A)
+   - Runs on Container App as a sidecar or separate service
+   - Public models available (huggingface/LaBSE, allenai/multilingual-e5-base)
+   - Accessed by main pipeline via localhost HTTP or shared volume
+   - Mount at startup; Trinity pipeline queries for embeddings post-export
+
+3. **Outbound HTTPS to api.anthropic.com**
+   - Ensure Azure Container App network policy / NAT gateway allows egress to Anthropic API
+   - No new inbound requirements; Layer A runs locally, Layer C reaches Anthropic outbound only
+   - Port 443 (HTTPS); no API gateway needed
+
+### Layers Are Stageable
+
+Per Oracle spec: each layer (Tier 1, Layer A, Layer C) can be independently enabled/disabled. You can:
+- Ship Layer A + Tier 1 first (zero cost, self-hosted); Layer C judge as Phase 2 (just needs API key)
+- Or ship all three at once if your timeline allows
+- Graceful degradation: missing layer → score uses remaining tiers
+
+### Score Integration Point
+
+Scoring runs **post-export**, not in critical path. Trinity's Stage 9 (or async post-pipeline) calls the scoring layer. If scoring times out or fails, book is still exported; quality score is 0 or `null` with annotation.
+
+### Your Direct Input Needed
+
+- How will Container App spawn LaBSE sidecar? (Init container + shared volume, or separate service mesh, or request-time startup?)
+- Can Anthropic API calls be routed through Azure Application Gateway / WAF, or direct egress?
+- Timeline: What's the fastest infra path for "Tier 1 + Layer A" (could ship in 2–3 days)?
+
+Full spec: `.squad/decisions.md` — Oracle Translation Quality Score v1 entry (post-merge from inbox)
+
+---
+
+## Learnings
 
 ### 2026-05-21T12:17:57-04:00: Static Website is the public book surface; `output` stays private
 

@@ -54,6 +54,44 @@
 
 ---
 
+## 🔔 CROSS-AGENT: Oracle Ships Translation Quality Score v1 (2026-05-22T11:35-04:00)
+
+**From:** Oracle (Editorial), Scribe (Orchestrator)  
+**Status:** DELIVERED — Phase 1b unblocked
+
+### YOUR PATH NOW CLEAR FOR #99, #100
+
+Oracle delivered **Translation Quality Score v1 spec — fully backed, no deferred LLM judgment.** This was the editorial blocker for Phase 1b dashboard quality column.
+
+**Score composition:**
+- **Tier 1 (deterministic, free):** Structural signals from gate details (OCR confidence, completeness, glossary, document structure, QA, production readiness)
+- **Layer A (100% of chunks):** LaBSE multilingual embeddings for semantic-similarity (near-zero cost, self-hosted)
+- **Layer C (5% stratified sample):** Claude Sonnet 4.5 cross-family judge rates fluency, cultural register, terminology nuance
+- **Output:** Single 0–100 score; color bands ≥85 green / 65–84 amber / <65 red
+- **Cost:** ~$0.16–$0.50/book (well under $3 target)
+
+**Full spec:** `.squad/decisions.md` — Oracle Translation Quality Score v1 entry (post-merge from inbox)
+
+### Your Dashboard Integration Path
+
+1. **#97 Schema:** Add `quality_score` INTEGER to book cost events or separate table
+2. **#99 API:** Return quality_score alongside cost breakdown in `/admin/api/books/{id}`
+3. **#100 Frontend:** Display score + color band in books table, drill-down to judge sample comments
+
+No changes to Trinity pipeline needed (judges run post-export as async layer per Oracle spec). Oracle's scoring layer will integrate separately via Tank infra.
+
+### Blocks Lifted
+
+- Phase 1b no longer gated on "what is good translation?" — score is defined
+- Manish can see quality + cost + wall-time on same dashboard
+- Team can calibrate quality/cost/speed tradeoffs per book
+
+### Next: Tank's Turn
+
+Tank must wire up **infrastructure for Layer A + C:** Anthropic API key (Key Vault) + LaBSE sidecar container + outbound HTTPS. Oracle's brief and full spec document all constraints. Niobe will file separate Tank brief.
+
+---
+
 ## Learnings
 
 ### 2026-05-21T23:02:20-04:00: Parallelism diagnosis for slow book runs (#94, #95, #96)
