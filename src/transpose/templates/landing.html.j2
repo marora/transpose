@@ -1,0 +1,60 @@
+{#
+  Transpose landing page template.
+  Rendered by generate_landing_html() in pipeline/workspace.py — this .j2 file
+  serves as the canonical reference template committed to source control.
+  The Python function embeds an equivalent template string directly to keep
+  the module self-contained.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="book" />
+  <meta property="og:site_name" content="Transpose" />
+  <meta property="og:title" content="{{ title }} — {{ author }}" />
+  <meta property="og:description" content="{{ translator_note | truncate(200) }}" />
+  <meta property="og:url" content="{{ landing_page_url }}" />
+  {% if cover_image_blob_url %}
+  <meta property="og:image" content="{{ cover_image_blob_url }}" />
+  {% else %}
+  <meta property="og:image" content="{{ default_og_image }}" />
+  {% endif %}
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="{{ title }} — {{ author }}" />
+  <meta name="twitter:description" content="{{ translator_note | truncate(200) }}" />
+  {% if cover_image_blob_url %}
+  <meta name="twitter:image" content="{{ cover_image_blob_url }}" />
+  {% else %}
+  <meta name="twitter:image" content="{{ default_og_image }}" />
+  {% endif %}
+
+  <title>{{ title }} — {{ author }}</title>
+</head>
+<body>
+  <!-- See workspace.py for the full inline-CSS version that is actually deployed. -->
+  <p class="brand">Transpose</p>
+  <div class="card">
+    <span class="badge">Translated Book</span>
+    <h1>{{ title }}</h1>
+    <p class="author">{{ author }}</p>
+    <p class="description">{{ translator_note }}</p>
+    <div class="downloads">
+      <a class="btn btn-primary" href="{{ share.translated_pdf_sas_url }}">
+        ↓ Download Translation
+      </a>
+      <a class="btn btn-secondary" href="{{ share.source_pdf_sas_url }}">
+        ↓ Original Scan
+      </a>
+    </div>
+  </div>
+  <footer>
+    <p>{{ source_language }} → {{ target_language }} · {{ page_count }} pages</p>
+    <p>Translated by <a href="https://github.com/marora/transpose">Transpose</a></p>
+  </footer>
+</body>
+</html>
