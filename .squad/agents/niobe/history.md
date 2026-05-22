@@ -14,185 +14,61 @@
 - **Human review loop:** Implied future capability. Whose review? Manish's? Outside reviewers? What's the workflow and quality gate?
 - **MVP boundaries:** What's the smallest demonstrable end-to-end Transpose product, and what's currently over-built or under-built relative to it?
 
-## Learnings
+## Session History (Pre-2026-05-21)
 
-### 2026-05-20: Initial Product Framing — Workspace/Archive/Audiobook Question
+**2026-05-20:** Niobe joined to fill product strategy gap. Framed three distinct questions bundled in Manish's workspace/archive/audiobook request: (1) workspace abstraction (technical debt), (2) public archive (product shape), (3) audiobook capability (distribution). Identified three product shapes: Shape A (personal translation tool, local/private), Shape B (curated public archive, metadata + free downloads), Shape C (publishing platform, multi-format + review). Parsing Manish's intent revealed trajectory thinking: near-term Shape A, long-term Shape B. Recommended building workspace storage layer now (works for all shapes), deferring archive UI/audiobook/review until shape is named.
 
-**Signal:** Manish's original request bundled three distinct product decisions together:
-1. Workspace abstraction (storage + artifact management) — *technical debt relief*
-2. Public archive of translated books — *new product shape*
-3. Audiobook capability (future) — *distribution/accessibility expansion*
+**2026-05-20 (Afternoon):** Manish answered Q1 — "For now it will be only me...longterm goal is a steadily built archive/repository." Signals: near-term = Shape A + tight circle + URL-protected; long-term = Shape B + open access + global scope (not just Hindi/Punjabi). Strategic shift: "enable the trajectory" — build Shape A now, keep Shape B reachable per-book.
 
-**Parsing his intent:** Manish wants to move from "one-off translates" toward a reusable platform that can handle multiple books, archive them in some coherent way, and eventually add audiobooks. He's not yet clear on *for whom* — personal collection, public showcase, or distribution platform.
+**2026-05-20 (Late):** Manish answered Q2 — copyright posture "generally considered public-domain work." Legal reality: source text (ancient Sanskrit) likely PD, but PDF edition (publisher commentary/typesetting) has fresh copyright; translation is his, but derivative of potentially copyrighted PDF. PM move (Path 2): Don't gatekeep; add per-book `license.status` (claimed-PD | verified-PD | rights-cleared | rights-unknown) and `provenance.source` fields. Shape A: any status fine. Shape B: gate on verified-PD or rights-cleared. Manish approved; enables trajectory without legal overreach.
 
-**Key insight:** Morpheus's architecture answer (BookWorkspace abstraction + Blob storage) is correct *for any shape*. But scope of "archive" and "audiobook" are wildly different across shapes. Must frame product before building storage layer.
+**2026-05-20 (Final):** Product brief locked. Scope: build Shape A now (personal workbench + private URL share), defer Shape B + audiobook + review workflow, add license/provenance schema to workspace. Key learning: Manish prefers "structured metadata field to make decision explicit per book" over "architectural gatekeeping." Trust + transparency > control.
 
-**Three shapes identified:**
-- Shape A (smallest): Personal translation tool. Workspace is local/private, archive is just artifact backup.
-- Shape B (medium): Curated public archive site. Metadata index + free downloads. No audiobooks in MVP.
-- Shape C (largest): Publishing platform. Multi-format (text/audio/glossary), review workflow, potential distribution.
+**2026-05-20 (Final):** Four open architecture questions answered. Firm rules: (1) `claimed-PD` and `rights-unknown` books never shareable; only `verified-PD` and `rights-cleared` qualify for Shape A URL. (2) Azure subscription active. (3) Share both source + translated PDFs; WhatsApp preview (OpenGraph) deferred to Phase 2 (Shape B archive UI). (4) PDF ownership is third-party internet sources; start with `rights-unknown`, research per-book. Key learning: Manish's "keep them private" closes copyright-risk gap. Third-party PDFs + no chain of custody = always start `rights-unknown`.
 
-**Recommendation:** Build workspace storage layer now (Morpheus's design works for all shapes). Defer archive UI, audiobook pipeline, and review workflow until Manish names the shape.
+**2026-05-21T04:39:36Z:** Manish's wow-factor directive — "Invest in polish (landing pages with OG previews from day one)." Overrides earlier MVP-minimalism recommendation. Trinity built landing page generation (TR-3) with Open Graph + Twitter Card meta tags. Books have public-but-unindexed landing pages from pipeline day one. Key learning: User priorities can override initial MVP framing. Manish's judgment is sound — early readers' first impression drives feedback quality. Polish is worth the small cost.
 
-### 2026-05-20 (Afternoon): Manish Answered Q1 — Trajectory, Not Single Shape
+**2026-05-21T12:17:57Z:** Issue #91 — Dead download links on existing landing pages. Pipeline must validate SAS generation before publishing landing page. If SAS fails, fail Stage 8 or publish with disabled buttons + error. Owner: Trinity (pipeline fix).
 
-**Manish's Q1 Answer (end readers):**
-> "For now it will be only me or some close colleagues or friends I will share the URL with so they can access and download or view. But the longterm goal is to steadily build an archive / repository of rare never-translated PDFs from different parts of the world, for whoever is interested in gaining access to these."
+**2026-05-21T14:41:45Z:** Trinity's performance optimization backlog. Shiv Sutra: 10h 32m wall time ($12.13 cost). Filed #94 (wall-time target <2h) and #95 (cost target <$5). Both LOW-PRIORITY; focus on hardening, not optimization. If Shape B scales up, cost per book will inform monetization model (free/donation/paid).
 
-**Key signals:**
-1. **Trajectory, not shape:** Near-term is Shape A (personal + tight circle, URL-protected). Long-term is Shape B (public archive, open to whoever).
-2. **Scope expansion:** "Rare never-translated PDFs from different parts of the world" — multilingual/global scope, not just Hindi/Punjabi heritage.
-3. **Implicit near-term product decision:** Needs URL-protected private archive surface right now.
-4. **Archive is discovery + access:** This is Shape B language (showcase), not Shape A language (lineage tracking).
+---
 
-**Strategic move:** Framing shifted from "pick one shape" to "enable the trajectory" — build Shape A now, keep Shape B reachable per-book.
+## Learnings (Active)
 
-### 2026-05-20 (Late): Manish Answered Q2 — Copyright Posture
+### 2026-05-21T23:02:20-04:00: Observability/FinOps Framing — Cost Visibility as First-Class Capability
 
-**Manish's Q2 Answer (copyright/redistribution rights):**
-> "I don't own the translation rights, I don't have explicit permission to redistribute, as I am looking at antiquated spiritual books, and my understanding is that these books' main purpose is to spread the wealth of information, IMHO they are generally considered public-domain work."
+**Request:** Manish asked Niobe to frame whether observability/finops dashboard should become a first-class product, whether it should integrate into Application Insights or another system.
 
-**The legal reality:**
-- Source text (ancient Sanskrit/etc.): Likely genuinely public domain.
-- Specific PDF edition: Modern publishers add commentary/typesetting/illustrations → fresh copyright (life+70).
-- His translation: He owns it, but it's a derivative of the PDF. If the PDF is copyrighted, translation may be infringing.
-- Jurisdiction matters: Public domain rules differ (India, US, UK, EU).
+**Context:** Tank had to manually reconstruct Shiv Sutra true cost ($12.13, split: GPT-4o $9.64 + Document Intelligence $2.49) from three scattered sources (Postgres `translations` table, `books.page_count`, and logs). The `book_costs` table is ephemeral (overwritten per run, lost on failure/resume). Issue #93 filed.
 
-**PM move (Path 2 — structured future-proofing):** Don't gatekeep him now. Add two fields to workspace metadata per book: `license.status` (claimed-public-domain | verified-public-domain | rights-cleared | rights-unknown) and `provenance.source` (URL/edition of PDF scanned). For Shape A: any status fine. For Shape B: gate on verified-public-domain or rights-cleared only.
+**Problem:** Manish has no self-serve visibility into book economics. Before running book N, he can't predict cost/time based on book N-1. When he scales to 3–5 books, ad-hoc cost forensics becomes operational debt.
 
-**Manish approved this framing.** It keeps him productive, preserves trajectory, and makes the workspace itself an audit trail for per-book public/private decisions.
+**Framing:** Observability is an operational necessity (not optional) IF Manish runs 3+ books in next 4 weeks. For 1–2 books, deferrable. Audience is Manish-the-operator (not public, not external finance). Success: Answer "How much did book X cost?" in under 1 minute without SQL.
 
-### 2026-05-20 (Final): Product Brief Locked
+**MVP Scope (Option B — recommended):**
+- **In:** Per-book cost table (HTML page on `$web/admin/` querying Postgres) showing OCR + Translation + Glossary cost breakdown, per-stage wall time.
+- **Out (not v1):** Real-time progress, budget alerts, SaaS integrations (Grafana/Datadog), cost projections.
 
-**Scope finalized:**
-- **Build now:** Shape A (personal workbench + private URL share)
-- **Shape B (public archive):** Gated per-book, not corpus-wide, via license.status field
-- **Copyright strategy:** Two metadata fields (license.status, provenance.source) track per-book judgment; public promotion deferred until status is verified/cleared
-- **Deferred:** audiobook pipeline, formal review workflow, archive site UX, multi-channel distribution
-- **Schema additions:** license{status, notes}, provenance{source, scanned_date, notes} baked into workspace metadata from day one
+**Tech Recommendation:** Option (B) — Small static page on `$web/admin/` querying Postgres directly.
+- **Why:** Fastest build (existing landing page template reusable), Manish-the-operator first (simpler than App Insights workbooks), single-operator scope (no SaaS needed yet), zero infra cost.
+- **Trade-off:** No real-time progress (acceptable for post-mortem; upgrade to WebSocket in v1.1 if needed).
 
-**Decision path:** Q1 → trajectory insight → Q2 → copyright risk → Path 2 (structured metadata, not gatekeeper) → Manish approval → final brief
+**Audiobook prerequisite?** NO. Audiobook is a different pipeline (TTS + storage, not OCR + translation). Cost structures are orthogonal. Observability informs but doesn't block the audiobook decision.
 
-**Key learning:** Manish prefers "structured field to make the decision explicit per book" over "I'll gatekeep you architecturally." This is the right posture — it gives him agency, keeps the vision alive, and makes the workspace itself the audit trail. Trust + transparency > control.
+**Kill criteria:**
+- If Manish only processes ≤2 books in 2026 (defer until volume picks up).
+- If Tank's one-off `compute-book-cost.sh` script satisfies Manish (dashboard becomes v1.1 nice-to-have).
+- If App Insights telemetry becomes unreliable (fix telemetry layer first).
 
-**Next:** Morpheus updates workspace schema, Trinity/Tank begin Phase 1 implementation.
+**Open questions for Manish:**
+1. Security posture for `$web/admin/` — public-unlisted, IP-allowlisted, or auth-protected?
+2. Wall-time breakdown — which stages matter? (Recommendation: show OCR | Translation | Glossary in v1.)
+3. Predicted cost for book N — should we auto-project cost based on page count, or manual estimate?
 
-### 2026-05-20 (Final): Four Open Questions Answered — Shape A Rules Locked
+**Next:** Manish approves framing → Morpheus designs cost module + dashboard. Niobe ready to iterate on scope if needed.
 
-**Manish's final answers to the four open architecture questions:**
-
-1. **`claimed-public-domain` visibility under Shape A:**
-   > "Keep them fully private until I have upgraded them to verified-public-domain."
-   
-   **Move:** Private-until-verified is now a firm rule, not a soft default. No exception for friends-share with claimed status. Books must be `verified-public-domain` or `rights-cleared` to qualify for any Shape A private URL share.
-
-2. **Azure subscription:**
-   > "Active, already logged in."
-   
-   **Routing:** Morpheus/Tank handle technical setup. No product action.
-
-3. **Share URL scope + WhatsApp preview bonus:**
-   > "Both source PDF AND translated PDF. Bonus ask: When I share the URL via WhatsApp, can it also pull in a small 1-sentence title of the translated book and/or author?"
-   
-   **Move:** Share URLs include both PDFs. WhatsApp preview (OpenGraph metadata) is DEFERRED post-MVP — it's nice-to-have for close-friend sharing (friends already trust the link), but essential when Shape B (public archive + website) is designed. For MVP: plain SAS URLs satisfy the use case. For Phase 2: OpenGraph + preview wrapper can be built as part of archive UI.
-
-4. **PDF ownership:**
-   > "Third-party PDFs collected from the internet."
-   
-   **Move:** This is the hard-risk path. No chain of custody. Every book defaults to `rights-unknown` and stays there until Manish researches and upgrades per-book. This locks the design: `rights-unknown` is not a soft default — it's mandatory and enforced at workspace creation. Urgency of per-book license verification is now elevated.
-
-**Resulting firm product rules:**
-- **Private-until-verified:** `claimed-public-domain` and `rights-unknown` books are never shareable; only `verified-public-domain` and `rights-cleared` qualify for Shape A private URL.
-- **`rights-unknown` is mandatory default:** Every new workspace defaults to this. Trinity must set it explicitly; Tank enforces it with CHECK constraint.
-- **Deliberate license claim is per-book:** Upgrade from `rights-unknown` is a conscious per-book action, not a batch operation or shortcut.
-
-**Team impacts:**
-- **Trinity:** Workspace creation API must always set `license.status = 'rights-unknown'` explicitly.
-- **Tank:** DB column + CHECK constraint + backfill for existing books; no change to Blob ACL/SAS setup.
-- **Dozer:** Tests verify default is `rights-unknown`; verify promotion gate rejects `claimed-public-domain` and `rights-unknown`; verify only `verified-public-domain` and `rights-cleared` qualify for SAS URL generation.
-
-**Key learning:** Manish's explicit "keep them private" answer closes a gap in the design. It's no longer a judgment call about whether claimed-PD is strict enough — it's a firm rule. Third-party internet PDFs + no chain of custody = always start with `rights-unknown` and research per-book. This is the right posture for copyright risk.
-
-**Next:** No open questions remain. Phase 1 can proceed with full license-status rigor. Pause Shape B product framing until 3–5 books are live (3–4 weeks).
-
-### 2026-05-21T04:39:36Z: Manish's Wow-Factor Directive — Landing Pages Ship from Day One
-
-**The input:** Manish (via Copilot directive) — "Invest in polish (e.g., landing pages with OG previews from day one) that gets initial readers excited to read and provide feedback. Don't ship a bare-bones MVP when a small additional investment yields a much stronger first impression."
-
-**Product context:** This overrides Niobe's earlier 2026-05-20 recommendation to defer WhatsApp preview + archive UI until Shape B (post-MVP). The directive prioritizes first-impression polish for early users over strict MVP minimalism.
-
-**What happened:** Trinity built landing page generation (TR-3) with Open Graph + Twitter Card meta tags. Dozer's tests now assert Twitter Card presence. Landing pages are live as part of the workspace pipeline (Stage 8). Books will have public-but-unindexed landing pages at `https://transposebooks.z{n}.web.core.windows.net/{slug}--{book_id_short}/` from day one.
-
-**Result:** Wow-factor achieved for Shape A private sharing. When Manish shares a book URL with friends via WhatsApp/iMessage/Slack, the landing page renders with OG preview (title, author, book cover, translator note, download links). This is a small build (static HTML, zero JS, zero external dependencies) but high-value signal for readers.
-
-**Key learning:** User priorities can override initial MVP framing. Manish's judgment here is sound — early readers' first impression drives feedback quality and word-of-mouth. The polish is worth the small cost in time. PM should not gatekeep early user experience based on abstract "MVP" ideals.
-
-**Next:** Shape B product framing can use the same landing page template as a foundation (expand metadata, add search index, add per-book review/feedback UI).
-
-
-### 2026-05-20 (Evening): Manish Asks — GitHub Repo vs. Blob Storage for Shape A Artifacts
-
-**Manish's question:** "Should this content be saved under the GitHub repo for the time being?"
-
-**Product analysis (not architecture — Morpheus handles the architecture decision in parallel):**
-
-The real question: "What's the right friction level for Shape A private sharing, given that every book starts with `license.status = rights-unknown`?"
-
-**Three options and their product costs:**
-
-1. **Public GitHub repo (raw file links)**
-   - Friction: zero
-   - Product cost: Makes every untranslated book world-readable + indexed by Google + archived by Wayback Machine before Manish verifies rights. Creates a de facto "public archive" by accident, contradicting his own "rights-unknown" caution. Cannot retract easily.
-
-2. **Private GitHub repo + invite friends**
-   - Friction: moderate-high
-   - Product cost: Friends need GitHub accounts + accept invites. Shape A audience is "people with a link," not "GitHub collaborators."
-
-3. **Azure Blob signed URLs (controlled access)**
-   - Friction: low
-   - Product benefit: Anyone with the link downloads; no account needed; URL can expire or be revoked. Preserves "rights-unknown" posture (not world-readable). Explicit opt-in path to Shape B later.
-
-**Product recommendation: Use Blob signed URLs for Shape A; keep GitHub repo for code + metadata only.**
-
-Why: Shape A is "private share with friends," not "public archive by accident." Starting with `license.status = rights-unknown` in a public GitHub repo collapses his Shape A → Shape B decision tree. Blob signed URLs give him control: translate → verify rights per-book → promote to Shape B archive when ready. This aligns with Morpheus's architecture (blob canonical, repo for code/metadata) and protects his own legal optionality.
-
-**Summary:** Don't put untranslated books (license.status = rights-unknown) in public GitHub. Use blob signed URLs for Shape A private sharing; preserves his per-book public/private decision and prevents accidental public archive.
-
-### 2026-05-21T12:17:57-04:00: Issue #91 — Dead download links on existing landing pages (Product-facing)
-
-**Scope:** Product experience blocker
-
-**Problem:** Existing landing pages (e.g., `$web/shiv-sutra--ee92a4/`) have blank download buttons because SAS generation failed during workspace publish. When Niobe runs Stage 8, if SAS generation fails silently, the published landing page becomes unusable.
-
-**Decision:** Pipeline must validate SAS generation before publishing landing page with download buttons. If SAS generation fails, either:
-1. Fail Stage 8 with clear error, or
-2. Publish landing page with disabled/disabled download buttons + error message
-
-**Ticket:** https://github.com/marora/transpose/issues/91
-
-**Owner:** Trinity (pipeline fix)
-
-### 2026-05-21T17:45:28Z: Shiv Sutra landing — both download buttons now visible
-
-**Status:** Fixed
-
-Tank diagnosed: Pipeline `source_url` threading is correct; manual republish in prior session omitted it from rendered HTML. Tank re-rendered landing.html with source_url properly threaded and copied source PDF to web root. Both buttons (translation + original scan) now showing on https://transposebooks.z14.web.core.windows.net/shiv-sutra/.
-
-**Product impact:** Shape A private URL sharing now shows complete book packaging (both PDFs) as designed. Readers can access source + translation.
-
-### 2026-05-21T14:41:45Z: Performance Optimization Backlog — Trinity's Telemetry Summary
-
-**For roadmap planning:** Trinity analyzed Shiv Sutra e2e wall time (10h 32m) and cost ($12.13 total) and filed two LOW-PRIORITY backlog issues:
-
-- **#94 (Wall-time):** 250-page book currently 10h 32m; target <2h (parallelization, prompt caching, chunk tuning avenues)
-- **#95 (Cost):** 250-page book currently $12.13; target <$5 (model downgrade, prompt overhead reduction, caching strategies)
-
-**Product relevance:** 
-- If Manish's roadmap includes volume scale-up (3–5 books/month), wall time and cost become operational constraints. Current metrics establish baseline for future optimization priority.
-- Both issues LOW-PRIORITY by design — Shiv Sutra e2e is stable; focus should remain on pipeline hardening, not optimization, while single-book runs are the shape.
-- No product decisions required at this time.
-
-**Implication for Shape B (public archive):** If future roadmap includes public archive + large corpus, cost per book will influence monetization model (free vs. donation vs. subscription). Baseline cost is now documented; future optimization work will improve unit economics.
+**Key learning:** Observability is not about dashboards; it's about *operator decision-making velocity*. Manish needs answers in under 1 minute, not pretty graphs. Option B (simple Postgres query page) solves his problem without over-engineering. Start simple, upgrade to streaming/projections only if 3+ books prove the need.
 
 ---
 
