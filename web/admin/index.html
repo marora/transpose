@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Transpose Admin — Operations Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <h1>Transpose <span class="muted">Admin</span></h1>
+        <p class="tag">Per-book operations dashboard · v1 (Phase 1a)</p>
+      </div>
+      <div class="auth" id="auth-controls">
+        <button id="signin-btn" class="btn primary">Sign in with Microsoft</button>
+        <button id="signout-btn" class="btn ghost hidden">Sign out</button>
+        <span id="auth-user" class="muted small"></span>
+      </div>
+    </header>
+
+    <main>
+      <section id="signed-out" class="signed-out">
+        <h2>Sign in to view book runs.</h2>
+        <p class="muted">
+          You'll need an account in the Transpose Entra tenant with the
+          <code>Dashboard.Read</code> scope on <code>api://transpose-admin</code>.
+        </p>
+      </section>
+
+      <section id="signed-in" class="hidden">
+        <div class="toolbar">
+          <button id="refresh-btn" class="btn">Refresh</button>
+          <span id="status-msg" class="muted small"></span>
+        </div>
+
+        <table id="books-table" class="books">
+          <thead>
+            <tr>
+              <th data-sort="title">Title</th>
+              <th data-sort="created_at">Started</th>
+              <th data-sort="status">Status</th>
+              <th data-sort="page_count" class="num">Pages</th>
+              <th data-sort="cost" class="num">Cost</th>
+              <th data-sort="wall_time" class="num">Wall-time</th>
+              <th data-sort="validation">Validation</th>
+              <th data-sort="quality" id="quality-header" class="quality-col hidden">Quality</th>
+            </tr>
+          </thead>
+          <tbody id="books-tbody">
+            <tr class="placeholder"><td colspan="8">Loading…</td></tr>
+          </tbody>
+        </table>
+
+        <div id="empty-state" class="empty hidden">
+          No books yet. Run the pipeline to see results here.
+        </div>
+      </section>
+
+      <!-- Drill-down overlay -->
+      <aside id="drilldown" class="drilldown hidden" aria-hidden="true">
+        <div class="drilldown-card">
+          <header>
+            <h2 id="dd-title"></h2>
+            <button id="dd-close" class="btn ghost" aria-label="Close">✕</button>
+          </header>
+          <div id="dd-body">
+            <p class="muted">Loading…</p>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <footer>
+      <small class="muted">
+        Issue #99 / #100 · Entra-protected API · Postgres-backed ·
+        <span id="api-base">/admin/api</span>
+      </small>
+    </footer>
+
+    <script src="https://alcdn.msauth.net/browser/2.38.4/js/msal-browser.min.js" integrity="sha384-2lF2H68bWnMRGZdhc5pzDXJVrjJiZRZ40zr6kIVAS8+v0e4LFzLT4VAg/Mh/Av7N" crossorigin="anonymous"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
+
