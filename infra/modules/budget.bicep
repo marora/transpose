@@ -7,7 +7,7 @@ targetScope = 'resourceGroup'
 param namePrefix string
 
 @description('Monthly budget amount in USD')
-param monthlyBudgetAmount int = 100
+param monthlyBudgetAmount int = 25
 
 @description('Email address for budget notifications')
 param alertEmail string
@@ -25,6 +25,15 @@ resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
       startDate: startDate
     }
     notifications: {
+      atFiftyPercent: {
+        enabled: true
+        operator: 'GreaterThanOrEqualTo'
+        threshold: 50
+        contactEmails: [
+          alertEmail
+        ]
+        thresholdType: 'Actual'
+      }
       atEightyPercent: {
         enabled: true
         operator: 'GreaterThanOrEqualTo'

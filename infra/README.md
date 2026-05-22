@@ -12,7 +12,7 @@ The infrastructure provisions the following Azure services:
 | **Azure OpenAI** | Literary translation (GPT-4o) | S0, 30K TPM | Managed Identity |
 | **Azure Blob Storage** | Source PDFs + output files | Standard_LRS | Managed Identity |
 | **Azure Key Vault** | Future secret storage | Standard | RBAC (Managed Identity) |
-| **Azure Container Apps** | Compute runtime | 1 core, 2Gi, 0-3 replicas | User-Assigned MI |
+| **Azure Container Apps** | Compute runtime | 1 core, 2Gi, 0-5 replicas | User-Assigned MI |
 | **Application Insights** | Traces, metrics, logs | — | Connection string |
 | **PostgreSQL Flexible Server** | Persistent state + pipeline tracking | Burstable B1ms | Entra auth only |
 | **Log Analytics Workspace** | Backend for App Insights | PerGB2018 | — |
@@ -242,7 +242,7 @@ Approximate monthly costs for the Phase 1 dev environment (US East region):
 | PostgreSQL Flexible Server | B1ms (with auto-pause) | ~$0-12 (near-zero when idle) |
 | Storage Account | Standard_LRS | ~$1-5 (usage-based) |
 | Log Analytics + App Insights | PerGB2018 | ~$5-20 (usage-based) |
-| Container Apps | 1 core, 2Gi, 0-3 replicas | ~$10-30 (usage-based) |
+| Container Apps | 1 core, 2Gi, 0-5 replicas | ~$0 when idle; usage-based when active |
 | Azure OpenAI | GPT-4o, 30K TPM | Usage-based (see below) |
 | Document Intelligence | S0 | Usage-based (see below) |
 | Key Vault | Standard | ~$0.03/10K ops |
@@ -255,7 +255,44 @@ Approximate monthly costs for the Phase 1 dev environment (US East region):
 
 **Total estimated dev environment cost**: ~$20-70/month + per-book processing costs
 
-**Serverless savings:** Redis removed (~$16/mo savings). PostgreSQL auto-pause reduces idle cost to near-zero.
+**Serverless savings:** Redis removed (~$16/mo savings). PostgreSQL auto-pause reduces idle cost to near-zero. Container Apps default to `minReplicas=0` so dev scales to zero after the idle window; Application Insights telemetry remains app-level instrumentation and resumes on cold start.
+
+**Cost guardrail:** The dev Bicep parameters provision a $25/month resource-group budget alert with notifications at 50%, 80%, and 100%. This intentionally catches dormant-cost regressions early after the prior dormant environment burned hundreds of dollars.
+
+```bash
+# Recreate or update the RG budget alert with the current deployed image preserved
+CURRENT_IMAGE=$(az containerapp show --resource-group transpose-sc --name transpose-dev-app --query properties.template.containers[0].image -o tsv)
+REGISTRY_SERVER=$(az containerapp show --resource-group transpose-sc --name transpose-dev-app --query properties.configuration.registries[0].server -o tsv)
+az deployment group create \
+  --resource-group transpose-sc \
+  --template-file infra/main.bicep \
+  --parameters infra/main.bicepparam \
+  --parameters containerImage="$CURRENT_IMAGE" containerRegistryServer="$REGISTRY_SERVER"
+
+az consumption budget list --resource-group transpose-sc -o table
+```
+
+### Manual idle / scale-to-zero checks
+
+```bash
+# Force the dev app floor to zero if emergency manual remediation is needed
+az containerapp update \
+  --resource-group transpose-sc \
+  --name transpose-dev-app \
+  --min-replicas 0
+
+# Verify the configured floor and active revision
+az containerapp show \
+  --resource-group transpose-sc \
+  --name transpose-dev-app \
+  --query '{minReplicas:properties.template.scale.minReplicas, revision:properties.latestRevisionName}'
+
+# After 10-15 minutes idle, this should return []
+az containerapp replica list \
+  --resource-group transpose-sc \
+  --name transpose-dev-app \
+  --revision $(az containerapp revision list --resource-group transpose-sc --name transpose-dev-app --query "[?properties.active].name | [0]" -o tsv)
+```
 
 **Production recommendations:**
 - Scale PostgreSQL to General Purpose
@@ -365,7 +402,7 @@ az role assignment list \
 To delete all resources:
 
 ```bash
-az group delete --name transpose-dev --yes --no-wait
+az group delete --name transpose-sc --yes --no-wait
 ```
 
 **Warning:** This is irreversible. All data will be lost.

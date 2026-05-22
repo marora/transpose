@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "9281870029593086367"
+      "templateHash": "3093252760502855718"
     }
   },
   "parameters": {
@@ -61,12 +61,19 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Email address for alert and budget notifications"
+        "description": "Email address for Azure Monitor alert notifications"
+      }
+    },
+    "budgetAlertEmail": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Email address for budget notifications"
       }
     },
     "monthlyBudgetAmount": {
       "type": "int",
-      "defaultValue": 100,
+      "defaultValue": 25,
       "metadata": {
         "description": "Monthly budget amount in USD"
       }
@@ -1389,7 +1396,7 @@
       ]
     },
     {
-      "condition": "[not(empty(parameters('alertEmail')))]",
+      "condition": "[not(empty(parameters('budgetAlertEmail')))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "budget-deployment",
@@ -1406,7 +1413,7 @@
             "value": "[parameters('monthlyBudgetAmount')]"
           },
           "alertEmail": {
-            "value": "[parameters('alertEmail')]"
+            "value": "[parameters('budgetAlertEmail')]"
           }
         },
         "template": {
@@ -1416,7 +1423,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "14278168731578930371"
+              "templateHash": "18246556768061003908"
             }
           },
           "parameters": {
@@ -1428,7 +1435,7 @@
             },
             "monthlyBudgetAmount": {
               "type": "int",
-              "defaultValue": 100,
+              "defaultValue": 25,
               "metadata": {
                 "description": "Monthly budget amount in USD"
               }
@@ -1460,6 +1467,15 @@
                   "startDate": "[parameters('startDate')]"
                 },
                 "notifications": {
+                  "atFiftyPercent": {
+                    "enabled": true,
+                    "operator": "GreaterThanOrEqualTo",
+                    "threshold": 50,
+                    "contactEmails": [
+                      "[parameters('alertEmail')]"
+                    ],
+                    "thresholdType": "Actual"
+                  },
                   "atEightyPercent": {
                     "enabled": true,
                     "operator": "GreaterThanOrEqualTo",
@@ -1560,7 +1576,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "13115919138540383204"
+              "templateHash": "104336669793386607"
             }
           },
           "parameters": {
@@ -1664,7 +1680,7 @@
             },
             "minReplicas": {
               "type": "int",
-              "defaultValue": 1,
+              "defaultValue": 0,
               "metadata": {
                 "description": "Minimum number of replicas (0 = scale to zero)"
               }
