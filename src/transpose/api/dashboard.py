@@ -448,6 +448,276 @@ async def get_book_detail(request: web.Request) -> web.Response:
     return web.json_response(detail)
 
 
+# ---------------------------------------------------------------------------
+# #99 endpoints backed by book_cost_events (#97)
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_cost_events(db, book_id: UUID) -> list[dict]:
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, book_id, run_id, stage_name, started_at, ended_at,
+                   input_tokens, output_tokens, ocr_pages,
+                   blob_read_ops, blob_write_ops, estimated_cost_usd,
+                   retries, status, error_message
+            FROM book_cost_events
+            WHERE book_id = $1
+            ORDER BY started_at ASC
+            """,
+            book_id,
+        )
+    return [dict(r) for r in rows]
+
+
+def _event_to_dict(ev: dict) -> dict[str, Any]:
+    started = ev.get("started_at")
+    ended = ev.get("ended_at")
+    duration = (
+        (ended - started).total_seconds()
+        if (started and ended) else None
+    )
+    return {
+        "id": str(ev["id"]),
+        "book_id": str(ev["book_id"]),
+        "run_id": str(ev["run_id"]),
+        "stage_name": ev["stage_name"],
+        "started_at": started.isoformat() if started else None,
+        "ended_at": ended.isoformat() if ended else None,
+        "duration_seconds": round(duration, 3) if duration is not None else None,
+        "input_tokens": int(ev["input_tokens"]),
+        "output_tokens": int(ev["output_tokens"]),
+        "ocr_pages": int(ev["ocr_pages"]),
+        "blob_read_ops": int(ev["blob_read_ops"]),
+        "blob_write_ops": int(ev["blob_write_ops"]),
+        "estimated_cost_usd": float(ev["estimated_cost_usd"]),
+        "retries": int(ev["retries"]),
+        "status": ev["status"],
+        "error_message": ev.get("error_message"),
+    }
+
+
+def _rollup_stage_events(events: list[dict]) -> list[dict[str, Any]]:
+    """Collapse all events for a book into one row per stage (sum across runs)."""
+    by_stage: dict[str, dict[str, Any]] = {}
+    for ev in events:
+        bucket = by_stage.setdefault(
+            ev["stage_name"],
+            {
+                "stage_name": ev["stage_name"],
+                "run_count": 0,
+                "completed_count": 0,
+                "failed_count": 0,
+                "started_count": 0,
+                "duration_seconds": 0.0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "ocr_pages": 0,
+                "blob_read_ops": 0,
+                "blob_write_ops": 0,
+                "estimated_cost_usd": 0.0,
+                "retries": 0,
+                "last_status": None,
+                "last_started_at": None,
+                "last_ended_at": None,
+                "last_error_message": None,
+            },
+        )
+        bucket["run_count"] += 1
+        status = ev["status"]
+        if status == "completed":
+            bucket["completed_count"] += 1
+        elif status == "failed":
+            bucket["failed_count"] += 1
+        else:
+            bucket["started_count"] += 1
+        started = ev.get("started_at")
+        ended = ev.get("ended_at")
+        if started and ended:
+            bucket["duration_seconds"] += (ended - started).total_seconds()
+        bucket["input_tokens"] += int(ev["input_tokens"])
+        bucket["output_tokens"] += int(ev["output_tokens"])
+        bucket["ocr_pages"] += int(ev["ocr_pages"])
+        bucket["blob_read_ops"] += int(ev["blob_read_ops"])
+        bucket["blob_write_ops"] += int(ev["blob_write_ops"])
+        bucket["estimated_cost_usd"] += float(ev["estimated_cost_usd"])
+        bucket["retries"] += int(ev["retries"])
+        bucket["last_status"] = status
+        bucket["last_started_at"] = started.isoformat() if started else None
+        bucket["last_ended_at"] = ended.isoformat() if ended else None
+        bucket["last_error_message"] = ev.get("error_message")
+
+    # Preserve canonical stage ordering, then append any unknown stage names.
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for canonical in STAGE_ORDER:
+        if canonical in by_stage:
+            row = by_stage[canonical]
+            row["duration_seconds"] = round(row["duration_seconds"], 3)
+            row["estimated_cost_usd"] = round(row["estimated_cost_usd"], 6)
+            out.append(row)
+            seen.add(canonical)
+    for stage_name, row in by_stage.items():
+        if stage_name in seen:
+            continue
+        row["duration_seconds"] = round(row["duration_seconds"], 3)
+        row["estimated_cost_usd"] = round(row["estimated_cost_usd"], 6)
+        out.append(row)
+    return out
+
+
+async def get_book_stages(request: web.Request) -> web.Response:
+    """GET /admin/api/books/{book_id}/stages — per-stage rollup from book_cost_events."""
+    raw_id = request.match_info["book_id"]
+    try:
+        bid = UUID(raw_id)
+    except ValueError:
+        return web.json_response(
+            {"error": {"code": "INVALID_BOOK_ID", "message": "book_id must be a UUID"}},
+            status=400,
+        )
+    db = await _db_required(request)
+    try:
+        events = await _fetch_cost_events(db, bid)
+    except Exception as exc:
+        logger.warning("Failed to fetch cost events for %s: %s", bid, exc)
+        events = []
+    return web.json_response({
+        "book_id": str(bid),
+        "stages": _rollup_stage_events(events),
+        "event_count": len(events),
+    })
+
+
+async def get_book_events(request: web.Request) -> web.Response:
+    """GET /admin/api/books/{book_id}/events — raw cost event audit trail."""
+    raw_id = request.match_info["book_id"]
+    try:
+        bid = UUID(raw_id)
+    except ValueError:
+        return web.json_response(
+            {"error": {"code": "INVALID_BOOK_ID", "message": "book_id must be a UUID"}},
+            status=400,
+        )
+    db = await _db_required(request)
+    try:
+        events = await _fetch_cost_events(db, bid)
+    except Exception as exc:
+        logger.warning("Failed to fetch cost events for %s: %s", bid, exc)
+        events = []
+    return web.json_response({
+        "book_id": str(bid),
+        "events": [_event_to_dict(ev) for ev in events],
+        "count": len(events),
+    })
+
+
+async def _fetch_recent_completed_book_pages(
+    db, *, limit: int
+) -> dict[str, int]:
+    """Return {book_id: page_count} for the N most recent EXPORTED books."""
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, page_count
+            FROM books
+            WHERE status = 'EXPORTED' AND page_count IS NOT NULL AND page_count > 0
+            ORDER BY updated_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return {str(r["id"]): int(r["page_count"]) for r in rows}
+
+
+async def _fetch_stage_totals_for_books(
+    db, book_ids: list[UUID]
+) -> dict[tuple[str, str], dict[str, float]]:
+    """Return {(book_id_str, stage): {cost_usd, duration_seconds}} from book_cost_events."""
+    if not book_ids:
+        return {}
+    async with db.pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT book_id, stage_name,
+                   SUM(estimated_cost_usd) AS cost_usd,
+                   SUM(
+                       EXTRACT(EPOCH FROM (ended_at - started_at))
+                   ) AS duration_seconds
+            FROM book_cost_events
+            WHERE book_id = ANY($1::uuid[])
+              AND status = 'completed'
+              AND ended_at IS NOT NULL
+            GROUP BY book_id, stage_name
+            """,
+            book_ids,
+        )
+    return {
+        (str(r["book_id"]), r["stage_name"]): {
+            "cost_usd": float(r["cost_usd"] or 0.0),
+            "duration_seconds": float(r["duration_seconds"] or 0.0),
+        }
+        for r in rows
+    }
+
+
+async def get_projection(request: web.Request) -> web.Response:
+    """GET /admin/api/projection?pages=N — estimate cost + time for an N-page book."""
+    from transpose.observability.projector import StagePerBookSample, estimate
+
+    raw_pages = request.query.get("pages", "")
+    try:
+        pages = int(raw_pages)
+        if pages <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return web.json_response(
+            {"error": {"code": "INVALID_PAGES", "message": "pages must be a positive integer"}},
+            status=400,
+        )
+
+    db = await _db_required(request)
+    rolling_window = 3
+    try:
+        pages_by_book = await _fetch_recent_completed_book_pages(db, limit=rolling_window)
+        book_uuids = [UUID(b) for b in pages_by_book]
+        totals = await _fetch_stage_totals_for_books(db, book_uuids)
+    except Exception as exc:
+        logger.warning("Failed to gather projection inputs: %s", exc)
+        pages_by_book = {}
+        totals = {}
+
+    samples = [
+        StagePerBookSample(
+            book_id=book_id,
+            stage_name=stage,
+            cost_usd=vals["cost_usd"],
+            duration_seconds=vals["duration_seconds"],
+            pages=pages_by_book[book_id],
+        )
+        for (book_id, stage), vals in totals.items()
+        if book_id in pages_by_book
+    ]
+
+    result = estimate(samples, pages=pages, rolling_window=rolling_window)
+    return web.json_response({
+        "pages": result.pages,
+        "confidence": result.confidence,
+        "sample_book_count": result.sample_book_count,
+        "total_cost_usd": result.total_cost_usd,
+        "total_duration_seconds": result.total_duration_seconds,
+        "stages": [
+            {
+                "stage_name": s.stage_name,
+                "estimated_cost_usd": s.estimated_cost_usd,
+                "estimated_duration_seconds": s.estimated_duration_seconds,
+                "sample_size": s.sample_size,
+            }
+            for s in result.stages
+        ],
+    })
+
+
 def register_dashboard_routes(app: web.Application) -> None:
     """Attach `/admin/api/*` dashboard routes to an aiohttp app.
 
@@ -455,4 +725,7 @@ def register_dashboard_routes(app: web.Application) -> None:
     protects every `/admin/*` path, so no extra auth wiring is required here.
     """
     app.router.add_get("/admin/api/books", list_books)
+    app.router.add_get("/admin/api/projection", get_projection)
     app.router.add_get("/admin/api/books/{book_id}", get_book_detail)
+    app.router.add_get("/admin/api/books/{book_id}/stages", get_book_stages)
+    app.router.add_get("/admin/api/books/{book_id}/events", get_book_events)
