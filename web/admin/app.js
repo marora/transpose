@@ -390,6 +390,58 @@
     );
   }
 
+  // ── Projection ──────────────────────────────────────────────
+  async function runProjection(pages) {
+    var status = $("projection-status");
+    var result = $("projection-result");
+    if (status) status.textContent = "Projecting…";
+    if (result) {
+      result.classList.add("hidden");
+      result.innerHTML = "";
+    }
+    try {
+      var data = await apiFetch("/projection?pages=" + encodeURIComponent(pages));
+      if (status) status.textContent = "";
+      renderProjection(data);
+    } catch (e) {
+      console.error("projection failed", e);
+      if (status) status.textContent = "Failed: " + (e && e.message ? e.message : "unknown");
+    }
+  }
+
+  function renderProjection(data) {
+    var container = $("projection-result");
+    if (!container) return;
+    var stages = (data.stages || []).slice().sort(function (a, b) {
+      return (b.estimated_cost_usd || 0) - (a.estimated_cost_usd || 0);
+    });
+    var rows = stages.map(function (s) {
+      return (
+        "<tr><td>" + s.stage_name +
+        "</td><td class=\"num\">$" + (s.estimated_cost_usd || 0).toFixed(4) +
+        "</td><td class=\"num\">" + Math.round(s.estimated_duration_seconds || 0) +
+        "s</td><td class=\"num\">" + (s.sample_size || 0) + "</td></tr>"
+      );
+    }).join("");
+    container.innerHTML = (
+      "<div class=\"projection-summary\">" +
+        "<span class=\"projection-pill projection-" + (data.confidence || "none") + "\">" +
+          (data.confidence || "none") + " confidence" +
+        "</span>" +
+        " · " + (data.sample_book_count || 0) + " book(s) sampled · " +
+        "<strong>$" + (data.total_cost_usd || 0).toFixed(4) + "</strong> · " +
+        "<strong>" + Math.round(data.total_duration_seconds || 0) + "s</strong>" +
+      "</div>" +
+      (rows ?
+        "<table class=\"projection-table\"><thead><tr>" +
+          "<th>Stage</th><th class=\"num\">Cost</th>" +
+          "<th class=\"num\">Time</th><th class=\"num\">Sample n</th>" +
+        "</tr></thead><tbody>" + rows + "</tbody></table>"
+        : "<p class=\"muted small\">No historical book data yet.</p>")
+    );
+    container.classList.remove("hidden");
+  }
+
   // ── Wiring ──────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", function () {
     if (!initMsal()) return;
@@ -397,6 +449,16 @@
     $("signout-btn").addEventListener("click", signOut);
     $("refresh-btn").addEventListener("click", function () { loadBooks(); });
     $("dd-close").addEventListener("click", closeDrilldown);
+    var projForm = $("projection-form");
+    if (projForm) {
+      projForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var input = $("projection-pages");
+        var pages = parseInt(input && input.value, 10);
+        if (!pages || pages <= 0) return;
+        runProjection(pages);
+      });
+    }
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") closeDrilldown();
     });

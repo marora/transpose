@@ -35,6 +35,18 @@
           <span id="status-msg" class="muted small"></span>
         </div>
 
+        <section id="projection-panel" class="projection-panel">
+          <h3>Cost &amp; time projection</h3>
+          <form id="projection-form" class="projection-form" autocomplete="off">
+            <label for="projection-pages">Pages</label>
+            <input id="projection-pages" name="pages" type="number" min="1"
+                   step="1" value="250" required>
+            <button type="submit" class="btn">Project</button>
+            <span id="projection-status" class="muted small"></span>
+          </form>
+          <div id="projection-result" class="projection-result hidden"></div>
+        </section>
+
         <table id="books-table" class="books">
           <thead>
             <tr>
