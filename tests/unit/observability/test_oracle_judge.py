@@ -32,7 +32,7 @@ class TestSelectStratifiedSample:
             token_count=10,
             page_start=1,
             page_end=1,
-            section_type=SectionType.BODY,
+            section_type=SectionType.PROSE,
             chapter_ref=None,
         )
         result = select_stratified_sample([chunk])
@@ -51,7 +51,7 @@ class TestSelectStratifiedSample:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
             for i in range(30)
@@ -82,7 +82,7 @@ class TestSelectStratifiedSample:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
             for i in range(300)
@@ -107,7 +107,7 @@ class TestSelectStratifiedSample:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
         ]
@@ -133,7 +133,7 @@ class TestJudgeTranslationQuality:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
         ]
@@ -173,7 +173,7 @@ class TestJudgeTranslationQuality:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
         ]
@@ -200,7 +200,7 @@ class TestJudgeTranslationQuality:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
         ]
@@ -248,7 +248,7 @@ class TestJudgeTranslationQuality:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
         ]
@@ -310,7 +310,7 @@ class TestJudgeTranslationQuality:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
         ]
@@ -358,7 +358,7 @@ class TestJudgeTranslationQuality:
                 token_count=10,
                 page_start=1,
                 page_end=1,
-                section_type=SectionType.BODY,
+                section_type=SectionType.PROSE,
                 chapter_ref=None,
             )
         ]

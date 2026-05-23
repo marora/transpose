@@ -58,6 +58,15 @@ def select_stratified_sample(
     total = len(chunks)
     target_count = max(1, int(total * sample_fraction))
 
+    # For very small chunk lists, just sample directly
+    if total <= 3:
+        import random
+
+        # Return all chunks if target >= total, else sample randomly
+        if target_count >= total:
+            return chunks
+        return random.sample(chunks, target_count)
+
     # Split into three bins: early, mid, late
     third = total // 3
     early = chunks[:third]
@@ -73,9 +82,16 @@ def select_stratified_sample(
     sample = []
 
     # Early bin gets the remainder
-    sample.extend(random.sample(early, min(per_bin + remainder, len(early))))
-    sample.extend(random.sample(mid, min(per_bin, len(mid))))
-    sample.extend(random.sample(late, min(per_bin, len(late))))
+    if early:
+        sample.extend(random.sample(early, min(per_bin + remainder, len(early))))
+    if mid:
+        sample.extend(random.sample(mid, min(per_bin, len(mid))))
+    if late:
+        sample.extend(random.sample(late, min(per_bin, len(late))))
+
+    # Ensure we got at least 1 chunk
+    if not sample and chunks:
+        sample = [random.choice(chunks)]
 
     # Sort by sequence to maintain document order
     sample.sort(key=lambda c: c.sequence)
