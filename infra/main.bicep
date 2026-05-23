@@ -27,6 +27,9 @@ param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-hellowo
 @description('Container registry server (leave empty for public registries)')
 param containerRegistryServer string = ''
 
+@description('LaBSE sidecar image for Oracle Layer A embeddings (leave empty for placeholder)')
+param labseImage string = ''
+
 @description('Email address for Azure Monitor alert notifications')
 param alertEmail string = ''
 
@@ -196,6 +199,7 @@ module containerApp './modules/container-app.bicep' = {
     keyVaultUri: keyVault.outputs.keyVaultUri
     containerImage: containerImage
     containerRegistryServer: containerRegistryServer
+    labseImage: labseImage
   }
 }
 
