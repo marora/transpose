@@ -148,3 +148,27 @@ table.gates td.fail { color: #cf222e; }
 table.gates td.notrun { color: #57606a; }
 table.gates td.note { color: #57606a; font-size: 12px; }
 .stage-note { color: #8b949e; font-style: italic; font-size: 12px; }
+
+/* Issue #109 — Oracle Translation Quality Score (Phase 1b) */
+.quality-score { white-space: nowrap; }
+.quality-score.band-green  { color: #1a7f37; }
+.quality-score.band-amber  { color: #9a6700; }
+.quality-score.band-red    { color: #cf222e; }
+.quality-tier {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(127, 127, 127, 0.12);
+  vertical-align: middle;
+}
+.quality-score.band-green .quality-tier { background: #dafbe1; }
+.quality-score.band-amber .quality-tier { background: #fff8c5; }
+.quality-score.band-red   .quality-tier { background: #ffebe9; }
+.quality-headline { margin: 0 0 8px 0; font-size: 16px; }
+table.quality-decomp { margin-top: 6px; border-collapse: collapse; }
+table.quality-decomp th, table.quality-decomp td {
+  padding: 4px 12px 4px 0; text-align: left; font-size: 13px;
+}
+table.quality-decomp th { color: #57606a; font-weight: 500; }
