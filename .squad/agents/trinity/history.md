@@ -100,6 +100,25 @@ See `.squad/agents/trinity/history-archive.md` for pre-2026-05-22 learnings, inv
 - Gate heuristic calibration (FFFD scrub strategy, export rendering threshold)
 - Phase 1 workspace integration (TR-1 through TR-4)
 
+### 2026-05-23T07:45:00Z: Oracle Layer C Anthropic judge integration (#104, PR #116)
+
+**Scope:** Post-export, non-blocking translation quality assessment using Anthropic Claude Sonnet 4.5 on stratified 5% chunk sample.
+
+**Key Implementation Decisions:**
+- **Stratified sampling algorithm:** Early/mid/late document bins (3-way split) with proportional sample allocation. Edge case handling for very small books (≤3 chunks) — direct sampling without stratification.
+- **Anthropic SDK integration:** asyncio-native client wrapper (`anthropic>=0.39.0`), 120s timeout, single API call per book with batched sample payload. Judge prompt optimized for scholarly/spiritual text quality dimensions (fluency, cultural register, terminology nuance, composite).
+- **oracle_score schema:** JSONB column in `book_validation_reports` (migration `4b7d8e92f5a2`). Contains: composite_score, fluency, cultural_register, terminology_nuance (all 0–100), sampled_chunk_ids (array of UUIDs), raw_judge_response (full JSON from Anthropic).
+- **Non-blocking error path:** try/except wrapper in runner.py post-export hook. Errors logged, never raised. Pipeline continues with oracle_score=NULL in DB.
+- **Key Vault secret name:** `anthropic-api-key` (assumed per Tank's naming convention from #103; documented in decision drop for Scribe to reconcile).
+
+**Dashboard surfacing:** get_latest_validation_report() includes oracle_score in response payload. Admin dashboard API returns it as-is; frontend rendering is read-only JSON display in Phase 1a (rich rendering deferred to Phase 1b/#109).
+
+**Test coverage:** 12 unit tests (all passing) — stratified sampling edge cases (empty, single chunk, tiny fractions), Anthropic client mocking (success + error paths), JSON parsing validation.
+
+**Cost model:** ~$0.16–$0.50/book (15 chunks × $0.003/1K input + $0.015/1K output, ~1.5K tokens/sample × 2 round-trip).
+
+**Learning:** Stratified sampling requires careful edge case handling — bins can be empty when total chunks < 3 × target_per_bin. Always ensure minimum 1 chunk sampled (`if not sample and chunks: sample = [random.choice(chunks)]`).
+
 ---
 
 **Tests updated:** 2 tests in `test_gates.py :: TestExportRenderingGate` — both passing.
