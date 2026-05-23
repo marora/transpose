@@ -195,3 +195,15 @@ Both reference book_id `723477a9-7ca4-4ba6-944c-3abef1ee92a4` and include invest
 
 ---
 
+
+---
+
+### 2026-05-22T16:01:10-04:00: Drifted feature code committed for issue #106
+
+**Intent:** Close the working-tree/codebase drift around the Stage 8 workspace surface by shipping the real pipeline modules separately from CI/squad scaffolding.
+
+**Shipped in PR 1:** Azure RBAC propagation retry helper, BookWorkspace/metadata/landing-page modules, Stage 8 backfill CLI, canonical landing template, golden fixture, and targeted unit coverage.
+
+**Data-integrity note:** Workspace metadata still defaults to `license.status = rights-unknown`; the backfill path validates metadata before writing and avoids translating or altering cultural/source terms.
+
+**Coverage gap flagged:** There is no dedicated unit test for live Azure Blob upload/user-delegation SAS behavior in `BookWorkspace`; existing tests cover retry classification, metadata validation, landing rendering, backfill planning, and dry-run behavior with external I/O avoided.
