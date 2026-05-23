@@ -173,3 +173,54 @@ Full context in `.squad/decisions.md` (Tank-oracle-infra-brief, niobe-priority-l
 - App ingress is **internal** (not external). FQDN not reachable from outside the Container Apps environment. All external probing must go through `az containerapp exec` or an internal consumer.
 - No `.dockerignore` in repo — build context was 12.246 MiB. Uncommitted drift in `.squad/` etc. is uploaded but never COPYed into the image (Dockerfile is explicit). Low-risk but wasteful. Consider adding `.dockerignore` in a future housekeeping PR.
 - `az acr repository show-manifests` is deprecated. Use `az acr manifest list-metadata` for future digest lookups.
+
+---
+
+### 2026-05-22T22:35:00-04:00 — Issue #103: LaBSE sidecar for Oracle Layer A
+
+**Outcome:** DONE  
+**PR:** https://github.com/marora/transpose/pull/115  
+**Status:** Bicep verified, not deployed yet (image build required)
+
+**What shipped:**
+
+- **LaBSE sidecar container** added to Container App bicep (1 vCPU, 4 GiB)
+  - Multi-container revision: main (1 vCPU/2Gi) + LaBSE (1 vCPU/4Gi)
+  - Total: 2 vCPU / 6 GiB per replica — no SKU upgrade (Consumption supports 4 vCPU/8 GiB)
+- **Dockerfile** (`infra/labse/Dockerfile`): multi-stage build, weights baked in at build time
+  - Model: `sentence-transformers/LaBSE` (109 languages, 768-dim, ~1.8 GB)
+  - Runtime: Python 3.12-slim, Flask + gunicorn, 1 worker (memory-constrained)
+  - Endpoint: `POST /embed`, `GET /health` on :8500
+- **Flask app** (`infra/labse/app.py`): HTTP API for embeddings with proper error handling
+- **docker-compose stub** (`infra/labse/docker-compose.yml`): local dev on port 8765 for Trinity
+- **Bicep updates:**
+  - `infra/main.bicep`: new `labseImage` parameter (optional, defaults to placeholder)
+  - `infra/modules/container-app.bicep`: second container with startup probe (60s initial + 12 retries = 2 min allowance)
+  - Main app env var: `TRANSPOSE_LABSE_ENDPOINT=http://localhost:8500`
+- **README docs:** build/deploy instructions, local dev usage, failure modes, cost impact
+
+**Learnings:**
+
+- **Multi-container Container Apps pattern:** Add second container to `template.containers[]` array. Each container gets its own resources, probes, env. Total resources per replica = sum of all containers. Localhost loopback works for inter-container communication.
+- **Startup probe vs. Liveness probe:** Use startup probe with generous `failureThreshold` (12 × 10s = 2 min) for slow model loading. Liveness probe kicks in only after startup succeeds. This prevents the sidecar from being killed during model load.
+- **Endpoint convention:** Picked port 8500 for LaBSE sidecar (internal), 8765 for local dev (docker-compose). Main app accesses via `http://localhost:8500` (loopback in the same pod).
+- **KV secret name for Trinity:** `anthropic-api-key` (documented in README and decision drop). This is the secret name Trinity #104 should hardcode.
+- **No deployment in this PR:** Bicep builds clean, but the LaBSE image needs to be built first (`az acr build`). Deployment is a follow-up or azd cycle.
+
+**Cost model recap:**
+
+- Idle: ~$60/mo (sidecar reservation with `minReplicas=1`)
+- Per-book: ~$0 (self-hosted, ~6s CPU per 300-page book)
+- Total fits in Consumption (no upgrade)
+
+**Gotchas:**
+
+- `create` tool failed for files in `infra/labse/` even after `mkdir -p`. Used `cat > file` via bash instead. Root cause unclear — possibly a tool bug or permission issue.
+- Main JSON (`infra/main.json`) auto-regenerates on bicep build. Committed the updated JSON to match bicep.
+
+**Next steps (for future sessions or Trinity):**
+
+1. Build LaBSE image: `az acr build --registry <acr-name> --image labse:latest --file infra/labse/Dockerfile .`
+2. Deploy with labseImage param: `az deployment group create ... --parameters labseImage="<acr>.azurecr.io/labse:latest"`
+3. Test sidecar: `az containerapp exec` → `curl http://localhost:8500/health`
+
