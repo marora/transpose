@@ -214,10 +214,16 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
         pdf_doc.close()
     else:
         logger.info("PDF is scanned, using Document Intelligence OCR")
+        total_pages = pdf_doc.page_count
         pdf_doc.close()
 
-        # Use Document Intelligence for scanned PDFs
-        ocr_pages = await ctx.ocr.extract_pages(book.source_blob_uri, input.book_id)
+        # Use Document Intelligence for scanned PDFs.
+        # Passing total_pages enables batched page-range jobs (#96): the client
+        # fans out concurrent begin_analyze_document calls (gated by
+        # ocr_concurrency) instead of running one job for the whole PDF.
+        ocr_pages = await ctx.ocr.extract_pages(
+            book.source_blob_uri, input.book_id, total_pages=total_pages,
+        )
 
         # Filter out already-processed pages and validate each
         for page in ocr_pages:
