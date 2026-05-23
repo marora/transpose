@@ -12,7 +12,7 @@ The infrastructure provisions the following Azure services:
 | **Azure OpenAI** | Literary translation (GPT-4o) | S0, 30K TPM | Managed Identity |
 | **Azure Blob Storage** | Source PDFs + output files | Standard_LRS | Managed Identity |
 | **Azure Key Vault** | Future secret storage | Standard | RBAC (Managed Identity) |
-| **Azure Container Apps** | Compute runtime | 1 core, 2Gi, 0-5 replicas | User-Assigned MI |
+| **Azure Container Apps** | Compute runtime (main app + LaBSE sidecar) | 2 vCPU, 6Gi per replica (main: 1 vCPU/2Gi, LaBSE: 1 vCPU/4Gi) | User-Assigned MI |
 | **Application Insights** | Traces, metrics, logs | — | Connection string |
 | **PostgreSQL Flexible Server** | Persistent state + pipeline tracking | Burstable B1ms | Entra auth only |
 | **Log Analytics Workspace** | Backend for App Insights | PerGB2018 | — |
@@ -35,8 +35,12 @@ infra/
 │   ├── database.bicep            # PostgreSQL Flexible Server (Entra auth, auto-pause)
 │   ├── cognitive-services.bicep  # Document Intelligence + OpenAI + GPT-4o deployment
 │   ├── identity.bicep            # User-Assigned Managed Identity + RBAC roles
-│   ├── container-app.bicep       # Container Apps Environment + Container App
+│   ├── container-app.bicep       # Container Apps Environment + Container App (main + LaBSE sidecar)
 │   └── acr.bicep                 # Azure Container Registry module
+├── labse/
+│   ├── Dockerfile                # LaBSE embedding sidecar image (weights baked in)
+│   ├── app.py                    # Flask service for embeddings (POST /embed, GET /health)
+│   └── docker-compose.yml        # Local dev stub for Trinity's Layer A work
 ├── scripts/
 │   └── init-db.sql         # PostgreSQL schema initialization (includes pipeline_state)
 └── README.md               # This file
@@ -419,3 +423,116 @@ For issues or questions:
 **Infrastructure Owner:** Idaho (Cloud/Infrastructure Developer)  
 **Last Updated:** 2026  
 **Version:** 1.0.0
+
+---
+
+## LaBSE Sidecar (Oracle Translation Quality Score Layer A)
+
+The Container App includes a **LaBSE sidecar container** for multilingual embedding similarity scoring (Oracle Layer A).
+
+### Configuration
+
+- **Image:** Built from `infra/labse/Dockerfile` (weights baked in at build time)
+- **Resources:** 1 vCPU, 4 GiB memory
+- **Endpoint:** `http://localhost:8500` (internal loopback — main container accesses via localhost)
+- **Model:** `sentence-transformers/LaBSE` (109 languages, 768-dim embeddings, ~1.8 GB)
+- **API:**
+  - `POST /embed` — Generate embeddings for text list
+  - `GET /health` — Readiness check (returns 200 once model loaded)
+
+### Building and Deploying the Sidecar
+
+```bash
+# 1. Build the LaBSE image (from repo root)
+az acr build \
+  --registry <your-acr-name> \
+  --image labse:latest \
+  --file infra/labse/Dockerfile \
+  .
+
+# 2. Deploy infrastructure with LaBSE image
+az deployment group create \
+  --resource-group transpose-dev \
+  --template-file infra/main.bicep \
+  --parameters infra/main.bicepparam \
+  --parameters labseImage="<your-acr-name>.azurecr.io/labse:latest" \
+  --parameters containerRegistryServer="<your-acr-name>.azurecr.io"
+```
+
+**Note:** If `labseImage` parameter is empty, the sidecar deploys with a placeholder image. The main app container will still boot but Layer A scoring will be unavailable.
+
+### Local Development (Trinity)
+
+Run the LaBSE sidecar locally for Layer A development:
+
+```bash
+# From repo root
+docker compose -f infra/labse/docker-compose.yml up
+
+# Test the endpoint
+curl -X POST http://localhost:8765/embed \
+  -H "Content-Type: application/json" \
+  -d '{"texts": ["शांति", "peace"]}'
+
+# Returns:
+# {
+#   "embeddings": [[0.123, -0.456, ...], [0.789, -0.234, ...]],
+#   "count": 2,
+#   "dimensions": 768
+# }
+```
+
+The local service listens on **port 8765** (matches the Container App internal :8500 convention).
+
+### Failure Modes
+
+Per Oracle spec (`.squad/decisions-archive.md`), Layer A failures degrade gracefully:
+
+| Failure | Detection | Pipeline Behavior |
+|---------|-----------|-------------------|
+| **Sidecar OOM** | Container restart event, HTTP 502 from :8500 | Skip Layer A for the book; mark `quality.layer_a.available = false` |
+| **Sidecar not ready** | `/health` returns non-200 | Same as OOM; should be rare with `minReplicas=1` |
+
+Trinity's quality scoring client should always check `/health` before calling `/embed`, and surface Layer A unavailability to the dashboard (Tier 1 + Layer C composite only).
+
+### Cost Impact
+
+- **Idle cost:** ~$60/month (sidecar memory + CPU reservation with `minReplicas=1`)
+- **Per-book cost:** ~$0 (self-hosted, ~6s CPU per 300-page book)
+- **Total Container App per replica:** 2 vCPU / 6 GiB (main: 1 vCPU/2Gi, LaBSE: 1 vCPU/4Gi)
+- **SKU:** No upgrade required — Container Apps Consumption supports up to 4 vCPU / 8 GiB per replica
+
+### Endpoint Convention for Trinity
+
+**Main app accesses LaBSE sidecar via:** `TRANSPOSE_LABSE_ENDPOINT=http://localhost:8500`
+
+This environment variable is pre-configured in the Container App bicep (`infra/modules/container-app.bicep`). Trinity's `src/transpose/config/settings.py` should define:
+
+```python
+labse_endpoint: str = "http://localhost:8500"
+```
+
+Local dev overrides via `.env`:
+
+```bash
+TRANSPOSE_LABSE_ENDPOINT=http://localhost:8765
+```
+
+---
+
+## Key Vault Secret: `anthropic-api-key`
+
+For Oracle Layer C (Claude Sonnet 4.5 judge), the Anthropic API key is stored in Key Vault as:
+
+**Secret name:** `anthropic-api-key`
+
+Trinity's #104 (Anthropic Sonnet judge) should reference this secret name when implementing the Layer C client. The Container App will expose it via `TRANSPOSE_ANTHROPIC_API_KEY` environment variable (to be wired in a follow-up infra PR).
+
+**Local dev:** Add to `.env`:
+
+```bash
+TRANSPOSE_ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**Security:** Never log or commit this key. Use `pydantic.SecretStr` for automatic repr-masking.
+

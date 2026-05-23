@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "3093252760502855718"
+      "templateHash": "14262850906585936294"
     }
   },
   "parameters": {
@@ -55,6 +55,13 @@
       "defaultValue": "",
       "metadata": {
         "description": "Container registry server (leave empty for public registries)"
+      }
+    },
+    "labseImage": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "LaBSE sidecar image for Oracle Layer A embeddings (leave empty for placeholder)"
       }
     },
     "alertEmail": {
@@ -1567,6 +1574,9 @@
           },
           "containerRegistryServer": {
             "value": "[parameters('containerRegistryServer')]"
+          },
+          "labseImage": {
+            "value": "[parameters('labseImage')]"
           }
         },
         "template": {
@@ -1576,7 +1586,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.39.26.7824",
-              "templateHash": "104336669793386607"
+              "templateHash": "2753693976225086362"
             }
           },
           "parameters": {
@@ -1705,6 +1715,13 @@
               "metadata": {
                 "description": "Container registry server (leave empty for public registries)"
               }
+            },
+            "labseImage": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "LaBSE sidecar image for Oracle Layer A embeddings"
+              }
             }
           },
           "resources": [
@@ -1808,6 +1825,10 @@
                         {
                           "name": "TRANSPOSE_APPLICATIONINSIGHTS_CONNECTION_STRING",
                           "secretRef": "appinsights-connection-string"
+                        },
+                        {
+                          "name": "TRANSPOSE_LABSE_ENDPOINT",
+                          "value": "http://localhost:8500"
                         }
                       ],
                       "probes": [
@@ -1833,6 +1854,45 @@
                           "initialDelaySeconds": 15,
                           "periodSeconds": 10,
                           "timeoutSeconds": 5,
+                          "failureThreshold": 3
+                        }
+                      ]
+                    },
+                    {
+                      "name": "labse-sidecar",
+                      "image": "[if(not(empty(parameters('labseImage'))), parameters('labseImage'), 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest')]",
+                      "resources": {
+                        "cpu": "[json('1.0')]",
+                        "memory": "4Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "PYTHONUNBUFFERED",
+                          "value": "1"
+                        }
+                      ],
+                      "probes": [
+                        {
+                          "type": "Startup",
+                          "httpGet": {
+                            "path": "/health",
+                            "port": 8500,
+                            "scheme": "HTTP"
+                          },
+                          "initialDelaySeconds": 60,
+                          "periodSeconds": 10,
+                          "timeoutSeconds": 5,
+                          "failureThreshold": 12
+                        },
+                        {
+                          "type": "Liveness",
+                          "httpGet": {
+                            "path": "/health",
+                            "port": 8500,
+                            "scheme": "HTTP"
+                          },
+                          "periodSeconds": 30,
+                          "timeoutSeconds": 10,
                           "failureThreshold": 3
                         }
                       ]

@@ -60,6 +60,9 @@ param httpScaleConcurrency int = 10
 
 @description('Container registry server (leave empty for public registries)')
 param containerRegistryServer string = ''
+
+@description('LaBSE sidecar image for Oracle Layer A embeddings')
+param labseImage string = ''
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' existing = {
   name: last(split(logAnalyticsWorkspaceId, '/'))
 }
@@ -172,6 +175,11 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
               name: 'TRANSPOSE_APPLICATIONINSIGHTS_CONNECTION_STRING'
               secretRef: 'appinsights-connection-string'
             }
+            // LaBSE sidecar endpoint (localhost loopback in multi-container pod)
+            {
+              name: 'TRANSPOSE_LABSE_ENDPOINT'
+              value: 'http://localhost:8500'
+            }
           ]
           probes: [
             {
@@ -196,6 +204,48 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
               initialDelaySeconds: 15
               periodSeconds: 10
               timeoutSeconds: 5
+              failureThreshold: 3
+            }
+          ]
+        }
+        {
+          // LaBSE sidecar — Oracle Translation Quality Score Layer A
+          // Provides multilingual embedding similarity (100% of chunks)
+          // Model: sentence-transformers/LaBSE, 109 languages, 768-dim, ~1.8 GB weights baked in
+          name: 'labse-sidecar'
+          image: !empty(labseImage) ? labseImage : 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          resources: {
+            cpu: json('1.0')
+            memory: '4Gi'
+          }
+          env: [
+            {
+              name: 'PYTHONUNBUFFERED'
+              value: '1'
+            }
+          ]
+          probes: [
+            {
+              type: 'Startup'
+              httpGet: {
+                path: '/health'
+                port: 8500
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: 60
+              periodSeconds: 10
+              timeoutSeconds: 5
+              failureThreshold: 12
+            }
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/health'
+                port: 8500
+                scheme: 'HTTP'
+              }
+              periodSeconds: 30
+              timeoutSeconds: 10
               failureThreshold: 3
             }
           ]

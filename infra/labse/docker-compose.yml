@@ -1,0 +1,33 @@
+# LaBSE Sidecar — Local Development Stub
+# Purpose: Run the LaBSE embedding service locally for Trinity's Layer A development
+# Usage: docker compose -f infra/labse/docker-compose.yml up
+
+version: '3.8'
+
+services:
+  labse:
+    build:
+      context: ../..
+      dockerfile: infra/labse/Dockerfile
+    container_name: transpose-labse-local
+    ports:
+      - "8765:8500"  # Expose on localhost:8765 for local dev (internal container port is 8500)
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8500/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    restart: unless-stopped
+    mem_limit: 4g
+    cpus: 1.0
+
+# Notes for Trinity:
+# - Service listens on localhost:8765 (mapped from internal :8500)
+# - POST http://localhost:8765/embed with JSON: {"texts": ["text1", "text2"]}
+# - Returns: {"embeddings": [[...], [...]], "count": 2, "dimensions": 768}
+# - Health check: GET http://localhost:8765/health (returns 200 when ready)
+# - Model loads at startup (~20-40s on local machine)
+# - Memory: 4 GiB (matches Container App sidecar allocation)
