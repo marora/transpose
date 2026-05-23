@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     openai_api_version: str = "2024-10-21"
     openai_timeout_seconds: float = 120.0
 
+    # Anthropic API (for Oracle Layer C quality judge)
+    # Pulled from Key Vault in production; .env file in local dev
+    anthropic_api_key: str = ""
+
     # Azure Blob Storage
     blob_storage_account_url: str = ""
     blob_container_source: str = "source-pdfs"
