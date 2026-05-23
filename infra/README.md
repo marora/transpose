@@ -36,6 +36,7 @@ infra/
 │   ├── cognitive-services.bicep  # Document Intelligence + OpenAI + GPT-4o deployment
 │   ├── identity.bicep            # User-Assigned Managed Identity + RBAC roles
 │   ├── container-app.bicep       # Container Apps Environment + Container App (main + LaBSE sidecar)
+│   ├── sre-agent.bicep           # Azure SRE Agent + dedicated UAMI (gated by deployAgent param)
 │   └── acr.bicep                 # Azure Container Registry module
 ├── labse/
 │   ├── Dockerfile                # LaBSE embedding sidecar image (weights baked in)
@@ -275,6 +276,34 @@ az deployment group create \
 
 az consumption budget list --resource-group transpose-sc -o table
 ```
+
+### Azure SRE Agent lifecycle (cost-aware up/down)
+
+The Azure SRE Agent (`Microsoft.App/agents`) is the largest single contributor to dormant cost (~$10/day idle, ~$300/month). It is now declared in `modules/sre-agent.bicep` and gated by the `deployAgent` parameter so it can be torn down between active translation runs without losing the rest of the IaC.
+
+**Provision (default):** `deployAgent=true` in `main.bicepparam`. The standard `az deployment group create` flow creates (or adopts, idempotently) the agent and its dedicated UAMI. Re-up from a torn-down state takes <5 minutes; the knowledge graph then rebuilds in the background (`runningState: BuildingKnowledgeGraph`) while the agent is otherwise usable.
+
+**Tear down:** Bicep incremental deployments do **not** delete resources by omission. Use the explicit `az resource delete` form:
+
+```bash
+RG=transpose-sc
+AGENT_NAME=transpose-sc-agent
+AGENT_UAMI=transpose-sc-agent-5h56rfksrqb24
+
+# 1) Delete the agent (stops billing immediately)
+az resource delete -g "$RG" -n "$AGENT_NAME" \
+  --resource-type Microsoft.App/agents --api-version 2025-05-01-preview
+
+# 2) Delete the dedicated UAMI (UAMIs are free but tidy up)
+az identity delete -g "$RG" -n "$AGENT_UAMI"
+
+# 3) Flip the bicep parameter so future deployments don't recreate it
+sed -i 's/^param deployAgent = true$/param deployAgent = false/' infra/main.bicepparam
+```
+
+**Re-up after teardown:** set `deployAgent = true` in `main.bicepparam` and redeploy. If you tore down without preserving the original randomly-suffixed UAMI name (`transpose-sc-agent-5h56rfksrqb24`), also clear `agentName` and `agentIdentityName` so the bicep falls back to the deterministic `${namePrefix}-agent` / `${namePrefix}-agent-identity` defaults.
+
+**Future work (issue #102 policy layer):** dormancy-signal-driven auto-teardown via GitHub Action, activity-protection check against `book_validation_reports`. Blocked until this IaC adoption ships; tracked in [#102](https://github.com/marora/transpose/issues/102).
 
 ### Manual idle / scale-to-zero checks
 
