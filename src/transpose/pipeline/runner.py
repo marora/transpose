@@ -11,8 +11,11 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
 
 from transpose.models.enums import BookStatus, SourceLanguage
+from transpose.observability import cost_events
 from transpose.pipeline.gates import (
     GateResult,
     QualityGateError,
@@ -222,6 +225,44 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
     pipeline_start_time = datetime.now()
 
+    # Append-only stage-level cost telemetry (#97). One run_id per invocation
+    # so resumes show up as fresh rows in book_cost_events.
+    run_id = uuid4()
+    _active_event: dict[str, Any] = {
+        "id": None,
+        "stage": None,
+        "before": cost_events.snapshot_tracker(None),
+    }
+
+    async def _begin_stage_event(stage: str, start: datetime) -> None:
+        """Record stage-start event. Safe to call before book_id is known."""
+        if not book_id:
+            return
+        _active_event["before"] = cost_events.snapshot_tracker(cost_tracker)
+        _active_event["id"] = await cost_events.record_stage_start(
+            ctx.db,
+            book_id=book_id,
+            run_id=run_id,
+            stage_name=stage,
+            started_at=start,
+        )
+        _active_event["stage"] = stage
+
+    async def _end_stage_event(
+        status: str = "completed", error: str | None = None
+    ) -> None:
+        """Finalize the in-flight stage event with metrics delta."""
+        eid = _active_event["id"]
+        if eid is None:
+            return
+        after = cost_events.snapshot_tracker(cost_tracker)
+        metrics = cost_events.delta(_active_event["before"], after)
+        await cost_events.record_stage_end(
+            ctx.db, eid, status=status, metrics=metrics, error_message=error
+        )
+        _active_event["id"] = None
+        _active_event["stage"] = None
+
     stages_completed: list[str] = []
     errors: list[dict] = []
     gate_results: list[GateResult] = []
@@ -330,6 +371,9 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             if not ingest_output.already_existed:
                 cost_tracker.record_blob_operation("write")
 
+            # cost_events: ingest started before book_id existed; record now
+            await _begin_stage_event("ingest", start_time)
+
             # Acquire distributed lock before proceeding to expensive stages
             lock_acquired = await ctx.state.acquire_lock(str(book_id))
             if not lock_acquired:
@@ -357,6 +401,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "ingest", "book_id": str(book_id)})
             stages_completed.append("ingest")
+            await _end_stage_event()
             elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
             logger.info(
                 "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
@@ -373,6 +418,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         if start_index <= STAGE_ORDER.index("ocr"):
             logger.info("=== Stage 2: OCR ===")
             start_time = datetime.now()
+            await _begin_stage_event("ocr", start_time)
 
             # Need book_id from previous stage or resume
             if not book_id and input.resume_from:
@@ -394,6 +440,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "ocr", "book_id": str(book_id)})
             stages_completed.append("ocr")
+            await _end_stage_event()
             elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
             logger.info(
                 "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
@@ -420,6 +467,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         if start_index <= STAGE_ORDER.index("chunk"):
             logger.info("=== Stage 3: Chunk ===")
             start_time = datetime.now()
+            await _begin_stage_event("chunk", start_time)
 
             chunk_output = await chunk.run(
                 chunk.ChunkInput(
@@ -436,6 +484,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "chunk", "book_id": str(book_id)})
             stages_completed.append("chunk")
+            await _end_stage_event()
             elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
             logger.info(
                 "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
@@ -448,6 +497,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         if start_index <= STAGE_ORDER.index("translate"):
             logger.info("=== Stage 4: Translate ===")
             start_time = datetime.now()
+            await _begin_stage_event("translate", start_time)
 
             translate_output = await translate.run(
                 translate.TranslateInput(
@@ -463,6 +513,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "translate", "book_id": str(book_id)})
             stages_completed.append("translate")
+            await _end_stage_event()
             elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
             logger.info(
                 "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
@@ -492,6 +543,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         if start_index <= STAGE_ORDER.index("glossary"):
             logger.info("=== Stage 5: Glossary ===")
             start_time = datetime.now()
+            await _begin_stage_event("glossary", start_time)
 
             glossary_output = await glossary.run(
                 glossary.GlossaryInput(book_id=book_id),
@@ -503,6 +555,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "glossary", "book_id": str(book_id)})
             stages_completed.append("glossary")
+            await _end_stage_event()
             elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
             logger.info(
                 "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
@@ -523,6 +576,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         if start_index <= STAGE_ORDER.index("assemble"):
             logger.info("=== Stage 6: Assemble ===")
             start_time = datetime.now()
+            await _begin_stage_event("assemble", start_time)
 
             assemble_output = await assemble.run(
                 assemble.AssembleInput(book_id=book_id),
@@ -534,6 +588,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "assemble", "book_id": str(book_id)})
             stages_completed.append("assemble")
+            await _end_stage_event()
             elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
             logger.info(
                 "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
@@ -550,6 +605,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         if start_index <= STAGE_ORDER.index("export"):
             logger.info("=== Stage 7: Export ===")
             start_time = datetime.now()
+            await _begin_stage_event("export", start_time)
 
             export_output = await export.run(
                 export.ExportInput(book_id=book_id, formats=input.output_formats),
@@ -562,6 +618,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "export", "book_id": str(book_id)})
             stages_completed.append("export")
+            await _end_stage_event()
             elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
             logger.info(
                 "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
@@ -644,6 +701,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
         if start_index <= STAGE_ORDER.index("workspace"):
             logger.info("=== Stage 8: Workspace ===")
             start_time = datetime.now()
+            await _begin_stage_event("workspace", start_time)
 
             static_website_url = ctx.settings.blob_static_website_url
             if not static_website_url:
@@ -680,6 +738,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             duration = (datetime.now() - start_time).total_seconds()
             stage_duration.record(duration, {"stage": "workspace", "book_id": str(book_id)})
             stages_completed.append("workspace")
+            await _end_stage_event()
             elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
             logger.info(
                 "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
@@ -755,6 +814,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
     except QualityGateError as e:
         logger.error("Pipeline halted by quality gate: %s", e)
+        await _end_stage_event(status="failed", error=str(e))
 
         error_data = {
             "stage": stages_completed[-1] if stages_completed else "unknown",
@@ -791,6 +851,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
 
     except Exception as e:
         logger.exception(f"Pipeline failed: {e}")
+        await _end_stage_event(status="failed", error=str(e))
 
         # Record error
         error_data = {
