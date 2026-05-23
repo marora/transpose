@@ -39,6 +39,7 @@ class ServiceContext:
             self.settings.doc_intelligence_endpoint,
             low_confidence_threshold=self.settings.low_confidence_threshold,
             ocr_concurrency=self.settings.ocr_concurrency,
+            ocr_batch_size=self.settings.ocr_batch_size,
         )
         self.llm = LlmClient(
             endpoint=self.settings.openai_endpoint,

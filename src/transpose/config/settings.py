@@ -85,6 +85,7 @@ class Settings(BaseSettings):
 
     # Pipeline tuning
     ocr_concurrency: int = 5
+    ocr_batch_size: int = 10
     translate_concurrency: int = 5
     chunk_target_tokens: int = 1500
     chunk_overlap_tokens: int = 150
