@@ -206,19 +206,65 @@ def _summarize_gates(report: dict | None) -> dict[str, Any]:
     }
 
 
-def _quality_stub(book_id: str) -> dict[str, Any]:
-    """Quality score stub — Phase 1b, blocked on Oracle's spec.
+_QUALITY_DECOMP_KEYS: tuple[tuple[str, str], ...] = (
+    ("fluency", "Fluency"),
+    ("cultural_register", "Cultural register"),
+    ("terminology_nuance", "Terminology nuance"),
+)
 
-    The frontend hides the column when `available=false`. When Oracle ships,
-    swap this stub for the real implementation; the response key stays the same.
+
+def _quality_band(score: int) -> str:
+    """Map a 0–100 composite score to a green/amber/red tier (issue #109)."""
+    if score >= 85:
+        return "green"
+    if score >= 65:
+        return "amber"
+    return "red"
+
+
+def _build_quality(report: dict | None, book_id: str) -> dict[str, Any]:
+    """Build the dashboard quality payload from a validation report.
+
+    Reads `report["oracle_score"]` (populated by Trinity's Layer C judge, #104)
+    and renders composite score + color band + decomposition. Null-safe: when
+    `oracle_score` is missing, returns `available=False` so the frontend hides
+    the column without breaking older runs.
     """
+    oracle = report.get("oracle_score") if report else None
+    if not oracle:
+        return {
+            "available": False,
+            "score": None,
+            "band": None,
+            "reason": "Oracle Layer C has not run for this book yet.",
+            "decomposition": [],
+            "sampled_chunk_ids": [],
+            "book_id": book_id,
+        }
+    score = oracle.get("composite_score")
+    if not isinstance(score, (int, float)):
+        return {
+            "available": False,
+            "score": None,
+            "band": None,
+            "reason": "Oracle score payload missing composite_score.",
+            "decomposition": [],
+            "sampled_chunk_ids": [],
+            "book_id": book_id,
+        }
+    score = int(score)
+    decomposition = [
+        {"key": key, "label": label, "score": int(oracle[key])}
+        for key, label in _QUALITY_DECOMP_KEYS
+        if isinstance(oracle.get(key), (int, float))
+    ]
     return {
-        "available": False,
-        "score": None,
-        "band": None,
-        "reason": "Awaiting Oracle's translation quality score spec "
-                  "(oracle-translation-quality-score-v1.md).",
-        "decomposition": [],
+        "available": True,
+        "score": score,
+        "band": _quality_band(score),
+        "reason": None,
+        "decomposition": decomposition,
+        "sampled_chunk_ids": list(oracle.get("sampled_chunk_ids") or []),
         "book_id": book_id,
     }
 
@@ -308,7 +354,7 @@ async def list_books(request: web.Request) -> web.Response:
                 "total": validation["total"],
                 "label": _validation_summary_label(validation),
             },
-            "quality": _quality_stub(book["id"]),
+            "quality": _build_quality(report, book["id"]),
         })
     return web.json_response({"books": out, "count": len(out)})
 
@@ -397,7 +443,7 @@ async def get_book_detail(request: web.Request) -> web.Response:
             **validation,
             "label": _validation_summary_label(validation),
         },
-        "quality": _quality_stub(book["id"]),
+        "quality": _build_quality(report, book["id"]),
     }
     return web.json_response(detail)
 

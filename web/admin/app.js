@@ -245,7 +245,13 @@
 
   function qualityCell(q) {
     if (!q || !q.available || q.score == null) return '<span class="muted">—</span>';
-    return '<strong>' + q.score + '</strong>' + (q.band ? ' <span class="muted">(' + escapeHtml(q.band) + ')</span>' : "");
+    var band = q.band || "";
+    return (
+      '<span class="quality-score band-' + escapeHtml(band) + '">' +
+      '<strong>' + q.score + '</strong>' +
+      (band ? ' <span class="quality-tier">' + escapeHtml(band) + '</span>' : "") +
+      '</span>'
+    );
   }
 
   function renderTable(books) {
@@ -337,9 +343,33 @@
     }).join("");
 
     var q = d.quality || {};
-    var qualityHtml = q.available && q.score != null
-      ? '<p><strong>' + q.score + '</strong> ' + escapeHtml(q.band || "") + '</p>'
-      : '<p class="muted">Quality scoring not yet available. ' + escapeHtml(q.reason || "") + '</p>';
+    var qualityHtml;
+    if (q.available && q.score != null) {
+      var band = q.band || "";
+      var decompRows = (q.decomposition || []).map(function (item) {
+        return (
+          '<tr>' +
+          '<td>' + escapeHtml(item.label || item.key || "") + '</td>' +
+          '<td class="num">' + (item.score != null ? item.score : "—") + '</td>' +
+          '</tr>'
+        );
+      }).join("");
+      var sampled = (q.sampled_chunk_ids || []).length;
+      qualityHtml = (
+        '<p class="quality-headline">' +
+        '<span class="quality-score band-' + escapeHtml(band) + '">' +
+        '<strong>' + q.score + '</strong> / 100 ' +
+        '<span class="quality-tier">' + escapeHtml(band) + '</span>' +
+        '</span>' +
+        (sampled ? ' <span class="muted small">(Layer C sampled ' + sampled + ' chunks)</span>' : "") +
+        '</p>' +
+        (decompRows
+          ? '<table class="quality-decomp"><thead><tr><th>Sub-score</th><th class="num">0–100</th></tr></thead><tbody>' + decompRows + '</tbody></table>'
+          : "")
+      );
+    } else {
+      qualityHtml = '<p class="muted">Quality scoring not yet available. ' + escapeHtml(q.reason || "") + '</p>';
+    }
 
     return (
       '<div class="dd-section">' +

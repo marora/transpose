@@ -17,6 +17,8 @@ import pytest
 from transpose.api.dashboard import (
     GATE_CATALOG,
     STAGE_ORDER,
+    _build_quality,
+    _quality_band,
     _rollup_costs,
     _summarize_gates,
     _validation_summary_label,
@@ -438,3 +440,135 @@ async def test_get_book_detail_not_found(admin_env, aiohttp_client) -> None:
     )
 
     assert res.status == 404
+
+
+# ── Issue #109: Phase 1b quality column tests ───────────────────────
+
+
+def test_quality_band_thresholds():
+    """Bands per issue #109: ≥85 green / 65–84 amber / <65 red."""
+    assert _quality_band(100) == "green"
+    assert _quality_band(85) == "green"
+    assert _quality_band(84) == "amber"
+    assert _quality_band(65) == "amber"
+    assert _quality_band(64) == "red"
+    assert _quality_band(0) == "red"
+
+
+def test_build_quality_none_report():
+    """No report at all → available=False, score=None, no JS-breaking nulls."""
+    q = _build_quality(None, "book-1")
+    assert q["available"] is False
+    assert q["score"] is None
+    assert q["band"] is None
+    assert q["decomposition"] == []
+    assert q["sampled_chunk_ids"] == []
+    assert q["book_id"] == "book-1"
+    assert q["reason"]  # non-empty explanation
+
+
+def test_build_quality_report_without_oracle_score():
+    """Report exists but no oracle_score (pre-#104 run) → available=False."""
+    q = _build_quality({"overall": "PASS", "gates": []}, "book-2")
+    assert q["available"] is False
+    assert q["score"] is None
+
+
+def test_build_quality_green_score():
+    """Composite ≥85 → band=green, full decomposition surfaced."""
+    report = {
+        "oracle_score": {
+            "composite_score": 92,
+            "fluency": 95,
+            "cultural_register": 88,
+            "terminology_nuance": 93,
+            "sampled_chunk_ids": ["c1", "c2", "c3"],
+            "raw_judge_response": "{...}",
+        }
+    }
+    q = _build_quality(report, "book-3")
+    assert q["available"] is True
+    assert q["score"] == 92
+    assert q["band"] == "green"
+    assert len(q["decomposition"]) == 3
+    by_key = {d["key"]: d["score"] for d in q["decomposition"]}
+    assert by_key == {"fluency": 95, "cultural_register": 88, "terminology_nuance": 93}
+    assert q["sampled_chunk_ids"] == ["c1", "c2", "c3"]
+
+
+def test_build_quality_amber_score():
+    """65 ≤ composite < 85 → band=amber."""
+    q = _build_quality({"oracle_score": {"composite_score": 72}}, "book-4")
+    assert q["available"] is True
+    assert q["score"] == 72
+    assert q["band"] == "amber"
+
+
+def test_build_quality_red_score():
+    """Composite < 65 → band=red."""
+    q = _build_quality({"oracle_score": {"composite_score": 40}}, "book-5")
+    assert q["available"] is True
+    assert q["score"] == 40
+    assert q["band"] == "red"
+
+
+def test_build_quality_missing_composite():
+    """Oracle payload present but composite_score missing → available=False."""
+    q = _build_quality(
+        {"oracle_score": {"fluency": 90}}, "book-6"
+    )
+    assert q["available"] is False
+    assert q["score"] is None
+
+
+def test_build_quality_partial_decomposition():
+    """Missing sub-scores are skipped — no crash, no spurious entries."""
+    q = _build_quality(
+        {"oracle_score": {"composite_score": 88, "fluency": 90}}, "book-7"
+    )
+    assert q["available"] is True
+    assert q["band"] == "green"
+    assert len(q["decomposition"]) == 1
+    assert q["decomposition"][0]["key"] == "fluency"
+    assert q["decomposition"][0]["score"] == 90
+
+
+@pytest.mark.asyncio
+async def test_list_books_surfaces_oracle_score(admin_env, aiohttp_client) -> None:
+    """End-to-end: when a report carries oracle_score, the API renders the band."""
+    token, jwk = _build_valid_token()
+    books, costs, reports, bid1, _ = _sample_dataset()
+    # Inject an Oracle Layer C score on bid1's existing report.
+    reports[bid1] = dict(reports[bid1])
+    reports[bid1]["oracle_score"] = {
+        "composite_score": 78,
+        "fluency": 82,
+        "cultural_register": 75,
+        "terminology_nuance": 77,
+        "sampled_chunk_ids": ["chunk-a", "chunk-b"],
+        "raw_judge_response": "{}",
+    }
+    fake_db = _FakeDb(books, costs, reports)
+    fetch_json = AsyncMock(
+        side_effect=[
+            {"issuer": f"https://login.microsoftonline.com/{TENANT_ID}/v2.0",
+             "jwks_uri": f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"},
+            {"keys": [jwk]},
+        ]
+    )
+    client = await _make_client(aiohttp_client, fake_db, fetch_json)
+
+    res = await client.get(
+        "/admin/api/books",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status == 200
+    body = await res.json()
+    by_id = {b["id"]: b for b in body["books"]}
+    scored = by_id[str(bid1)]["quality"]
+    assert scored["available"] is True
+    assert scored["score"] == 78
+    assert scored["band"] == "amber"
+    assert {d["key"] for d in scored["decomposition"]} == {
+        "fluency", "cultural_register", "terminology_nuance",
+    }
