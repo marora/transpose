@@ -12,4 +12,8 @@ param allowPublicPostgresAccess = true
 param containerImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 param containerRegistryServer = ''
 
+// Cost guardrails: $25/month RG budget from dormant-cost lesson
+param budgetAlertEmail = 'marora@gmail.com'
+param monthlyBudgetAmount = 25
+
 // Tags are set in main.bicep based on environmentName

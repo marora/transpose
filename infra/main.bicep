@@ -27,11 +27,14 @@ param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-hellowo
 @description('Container registry server (leave empty for public registries)')
 param containerRegistryServer string = ''
 
-@description('Email address for alert and budget notifications')
+@description('Email address for Azure Monitor alert notifications')
 param alertEmail string = ''
 
+@description('Email address for budget notifications')
+param budgetAlertEmail string = ''
+
 @description('Monthly budget amount in USD')
-param monthlyBudgetAmount int = 100
+param monthlyBudgetAmount int = 25
 
 @description('SKU for Azure Container Registry')
 @allowed(['Basic', 'Standard', 'Premium'])
@@ -161,12 +164,12 @@ module alerts './modules/alerts.bicep' = if (!empty(alertEmail)) {
 // ============================================================================
 // MODULE 10: Budget Alerts
 // ============================================================================
-module budget './modules/budget.bicep' = if (!empty(alertEmail)) {
+module budget './modules/budget.bicep' = if (!empty(budgetAlertEmail)) {
   name: 'budget-deployment'
   params: {
     namePrefix: namePrefix
     monthlyBudgetAmount: monthlyBudgetAmount
-    alertEmail: alertEmail
+    alertEmail: budgetAlertEmail
   }
 }
 

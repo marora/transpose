@@ -89,6 +89,13 @@ Full spec: `.squad/decisions.md` — Oracle Translation Quality Score v1 entry (
 
 ## Learnings and Historical Context
 
+### 2026-05-22T16:01:10-04:00 — Issue #105 cost guardrails
+
+- Container Apps Consumption `minReplicas=0` is the IaC floor for scale-to-zero; Azure treats template scale as revision-scoped, so applying the floor created revision `transpose-dev-app--0000009` even though the image digest stayed unchanged.
+- Application Insights remains app-level instrumentation through the existing connection-string secret/env var; cold-start telemetry resumes when the app starts and is not tied to platform replica floor.
+- RG budget alerts are `Microsoft.Consumption/budgets` at resource-group scope. The dev guardrail is `$25/month` with 50%, 80%, and 100% actual-cost notifications to `marora@gmail.com`, matching the dormant-cost lesson that alerts must catch structural drift early.
+- Foundry teardown was not folded into #105. The live `Microsoft.App/agents/transpose-sc-agent` resource is adjacent but #102 requires IaC lifecycle + dormancy policy, not a safe 10-minute flag flip.
+
 See `.squad/agents/tank/history-archive.md` for pre-2026-05-22 dated learnings, investigations, and archived sessions. Includes:
 - Static website patterns and blob container organization
 - Cost forensics from Shiv Sutra ($12.13, $0 → trace through DB sources)

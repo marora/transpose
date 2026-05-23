@@ -50,7 +50,7 @@ param keyVaultUri string
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
 @description('Minimum number of replicas (0 = scale to zero)')
-param minReplicas int = 1
+param minReplicas int = 0
 
 @description('Maximum number of replicas')
 param maxReplicas int = 5
