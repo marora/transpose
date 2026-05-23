@@ -894,3 +894,100 @@ Schema at `3a9e1b27c4f1` (Step 6 DONE-IDEMPOTENT). New code (`4e2d527`) expects 
 ---
 
 *Handoff note per Niobe's spec:* ✅ Tank: revision `transpose-dev-app--0000008` active. Health green. `/admin/api/books` returns 401 to unauthenticated. Ready for run #3.
+
+---
+
+## 2026-05-22T20:27:14Z: User directive — auth.md posture
+
+**By:** Manish (via Copilot)
+
+**What:** For #107 / docs/auth.md, use option (b) — commit as a template with `${ENTRA_TENANT_ID}` / `${ENTRA_CLIENT_ID}` placeholders, and add the variables to .env.example. Real tenant/client IDs do NOT go in committed source. Rationale: clean precedent for multi-env growth; PKCE IDs are not secrets but committing env-specific identifiers is avoided as policy.
+
+**Why:** User request — captured for team memory
+
+---
+
+## 2026-05-22T16:01:10-04:00: Tank — Issue #105 Cost Guardrails
+
+**Timestamp:** 2026-05-22T16:01:10-04:00  
+**Author:** Tank  
+**Status:** Implemented in PR #114 (merged to master `45b28eb`)
+
+### Change
+
+- Set Container Apps dev floor to `minReplicas=0` in `infra/modules/container-app.bicep` so the app can scale to zero when idle.
+- Added budget-specific parameter plumbing in `infra/main.bicep` (`budgetAlertEmail`) so RG budget alerts can be provisioned without also enabling unrelated Azure Monitor alert rules.
+- Set the dev budget default to `$25/month` and wired `infra/main.bicepparam` to notify Manish at `marora@gmail.com`.
+- Updated `infra/modules/budget.bicep` notifications to 50%, 80%, and 100% actual cost.
+- Documented budget recreation and manual scale-to-zero verification commands in `infra/README.md`.
+
+### Dormant-cost lesson framing
+
+The threshold is intentionally low. The dormant-cost lesson showed idle infrastructure can burn hundreds of dollars when provisioned capacity stays alive; a $25/month RG alert catches that class of drift within days rather than weeks.
+
+### Deployment notes
+
+- Existing dev resource group is `transpose-sc` (not `transpose-dev-rg` in the ticket text); deployment and verification targeted the live `transpose-dev-app` there.
+- Targeted module what-if was used to avoid unrelated full-stack drift from the root template.
+- Applying `minReplicas=0` created revision `transpose-dev-app--0000009`; Container Apps treats template scale as revision-scoped. Image digest stayed unchanged from Step 7.
+- Budget `transpose-dev-monthly-budget` is visible via `az consumption budget list --resource-group transpose-sc`.
+
+### Foundry #102
+
+Not folded in. The live Foundry Agent is present (`Microsoft.App/agents/transpose-sc-agent`), but #102 requires bringing the agent under IaC lifecycle plus dormancy policy. There is no safe single `provisioned=false` toggle in current infra.
+
+### Post-merge verification plan
+
+- After the app is idle for 10–15 minutes, run `az containerapp replica list --resource-group transpose-sc --name transpose-dev-app --revision <active-revision>` and expect `[]`.
+- Confirm App Insights receives telemetry after the next cold start / health probe.
+- Confirm Manish receives budget email when actual cost crosses 50%, 80%, and 100% of $25.
+
+---
+
+## 2026-05-22T16:01:10-04:00: Trinity drifted-code commit split — Issue #106
+
+**Timestamp:** 2026-05-22T16:01:10-04:00  
+**Author:** Trinity  
+**Related:** #106  
+**Status:** Implemented in PRs #111 + #112 (merged to master `65f01f8` + `094689d`)
+
+### PR 1 — feature code (PR #111)
+
+Shipped modules:
+- `src/transpose/services/azure_rbac_retry.py`
+- `src/transpose/pipeline/workspace.py`
+- `src/transpose/workspace/` (module)
+- `src/transpose/backfill_workspace.py`
+- `src/transpose/templates/landing.html.j2`
+- `scripts/backfill_workspace.py`
+- `tests/golden/landing_page_fixture.html`
+- `tests/unit/services/test_azure_rbac_retry.py`
+- `tests/unit/workspace/` (module tests)
+- `tests/unit/pipeline/test_landing_page.py`
+- `tests/unit/test_backfill_workspace.py`
+
+Verification:
+- `python -m ruff check` on PR 1 paths: passed
+- `pytest tests/unit/services -q`: passed
+- `pytest tests/unit/workspace -q`: passed
+- `pytest tests/unit/pipeline -q`: passed
+
+Coverage gap flagged: no dedicated unit test for live Azure Blob upload/user-delegation SAS behavior in `BookWorkspace`; current coverage avoids external I/O.
+
+### PR 2 — CI/squad scaffolding drift (PR #112)
+
+Shipped files:
+- new squad workflow YAML files under `.github/workflows/squad-*.yml`
+- new Copilot error-recovery skill under `.copilot/skills/error-recovery/`
+- new squad Azure auth/dashboard skills under `.squad/skills/`
+- `uv.lock`
+- PR handoff note and Trinity history update
+
+### Deferred / deliberately excluded
+
+- `output/` — build artifacts
+- `osho-validation-report.json` — one-off output
+- `*.Zone.Identifier` / endpoint DLP metadata — Windows/download metadata
+- `docs/auth.md` — waiting on Manish posture decision in #107 (now shipped in #113)
+- `infra/` — Tank-owned parallel work
+- unrelated scripts/tests not listed in #106 PR scopes — left for owner triage

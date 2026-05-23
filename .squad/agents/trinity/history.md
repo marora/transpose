@@ -104,6 +104,26 @@ See `.squad/agents/trinity/history-archive.md` for pre-2026-05-22 learnings, inv
 
 **Tests updated:** 2 tests in `test_gates.py :: TestExportRenderingGate` — both passing.
 
+### 2026-05-22T22:36Z: 🔔 CROSS-AGENT: Ralph Round 1 Complete — Wave 1 Closed + Round 2 In Flight
+
+**From:** Scribe (on behalf of Ralph/Coordinator)  
+**Status:** Round 1 PRs merged (5 of 5); Round 2 agents spawned
+
+**Summary:**
+- **PRs merged:** #110 (lessons), #111 (drifted code p1), #112 (squad scaffolding), #113 (auth.md), #114 (cost guardrails)
+- **Master:** now at `45b28eb` (post-cost-guardrails)
+- **Decisions inbox:** drained (auth-posture + cost-guardrails + drifted-code merged into decisions.md)
+- **Round 2 in flight:** Tank #103 (LaBSE sidecar), Trinity #104 (Oracle Sonnet judge) — running in parallel as worktrees from 45b28eb
+
+**Your next phase:**
+- Your worktree is `../transpose-104` (squad/104-oracle-sonnet-judge)
+- Primary focus: Oracle integration infra + Phase 1b quality column wiring
+- Depends on Tank completing Layer A (LaBSE sidecar) setup
+- #97 (cost events table) is unblocked; can proceed in parallel if Tank's auth middleware (#98) is ready
+- Full priority ladder and oracle spec in `/squad/decisions.md`
+
+### 2026-05-21T11:40:56-04:00: Azure blob containers provision timing
+
 ### 2026-05-21T11:40:56-04:00: Azure blob containers provision timing
 
 - Storage account had `$web`, `book-workspaces` but NOT `output` or `source-pdfs` (used by export stage)
