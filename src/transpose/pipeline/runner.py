@@ -157,11 +157,17 @@ def _build_validation_report(
     }
 
 
-async def _persist_validation_report(ctx, book_id, report: dict) -> None:
+async def _persist_validation_report(ctx, book_id, report: dict, oracle_score: dict | None = None) -> None:
     """Best-effort: write the validation report to Postgres for the dashboard.
 
     Never raises — observability must not block the pipeline. Called from
     every terminal branch in run_pipeline (success + both error paths).
+
+    Args:
+        ctx: Service context.
+        book_id: Book UUID.
+        report: Validation report payload.
+        oracle_score: Optional Layer C quality score from oracle judge.
     """
     if not book_id or not ctx or not getattr(ctx, "db", None):
         return
@@ -169,7 +175,7 @@ async def _persist_validation_report(ctx, book_id, report: dict) -> None:
         import uuid as _uuid
         bid = book_id if isinstance(book_id, _uuid.UUID) else _uuid.UUID(str(book_id))
         await ctx.db.ensure_validation_reports_table()
-        await ctx.db.save_validation_report(bid, report)
+        await ctx.db.save_validation_report(bid, report, oracle_score)
     except Exception as exc:
         logger.warning("Failed to persist validation report: %s", exc)
 
@@ -680,6 +686,50 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                 len(stages_completed), 8, "workspace", duration, elapsed_total, str(book_id),
             )
 
+        # Oracle Layer C — post-export quality assessment (non-blocking)
+        oracle_score_payload = None
+        if book_id and ctx.settings.anthropic_api_key:
+            try:
+                from transpose.observability.oracle_judge import judge_translation_quality
+
+                logger.info("=== Oracle Layer C: Translation Quality Assessment ===")
+                chunks = await ctx.db.get_chunks_for_book(book_id)
+                translations = await ctx.db.get_translations_for_book(book_id)
+
+                oracle_score = await judge_translation_quality(
+                    book_id=book_id,
+                    chunks=chunks,
+                    translations=translations,
+                    anthropic_api_key=ctx.settings.anthropic_api_key,
+                )
+
+                if oracle_score:
+                    oracle_score_payload = {
+                        "composite_score": oracle_score.composite_score,
+                        "fluency": oracle_score.fluency,
+                        "cultural_register": oracle_score.cultural_register,
+                        "terminology_nuance": oracle_score.terminology_nuance,
+                        "sampled_chunk_ids": oracle_score.sampled_chunk_ids,
+                        "raw_judge_response": oracle_score.raw_judge_response,
+                    }
+                    logger.info(
+                        "✅ Oracle Layer C: composite_score=%d, fluency=%d, "
+                        "cultural_register=%d, terminology_nuance=%d (sampled %d chunks)",
+                        oracle_score.composite_score,
+                        oracle_score.fluency,
+                        oracle_score.cultural_register,
+                        oracle_score.terminology_nuance,
+                        len(oracle_score.sampled_chunk_ids),
+                    )
+                else:
+                    logger.warning("Oracle Layer C returned no score (check logs for details)")
+            except Exception as exc:
+                logger.error(
+                    "Oracle Layer C failed (non-blocking): %s",
+                    exc,
+                    exc_info=True,
+                )
+
         # Write validation report
         report = _build_validation_report(book_id, gate_results, artifacts)
         if input.output_dir:
@@ -687,7 +737,7 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps(report, indent=2, default=str))
             logger.info("Validation report written to %s", report_path)
-        await _persist_validation_report(ctx, book_id, report)
+        await _persist_validation_report(ctx, book_id, report, oracle_score_payload)
 
         # Persist cost tracking
         if cost_tracker:
@@ -721,7 +771,8 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             report_path = Path(input.output_dir) / "validation-report.json"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps(report, indent=2, default=str))
-        await _persist_validation_report(ctx, book_id, report)
+        # No oracle_score on gate failures (never reached post-export)
+        await _persist_validation_report(ctx, book_id, report, None)
 
         if book_id:
             await ctx.db.update_book_status(book_id, BookStatus.FAILED)
@@ -755,7 +806,8 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
             report_path = Path(input.output_dir) / "validation-report.json"
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps(report, indent=2, default=str))
-        await _persist_validation_report(ctx, book_id, report)
+        # No oracle_score on generic errors (pipeline may not have reached export)
+        await _persist_validation_report(ctx, book_id, report, None)
 
         # Update book status to FAILED
         if book_id:

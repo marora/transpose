@@ -19,6 +19,8 @@ dependencies = [
     "azure-keyvault-secrets>=4.8.0",
     # OpenAI (Azure-compatible)
     "openai>=1.40.0",
+    # Anthropic (for Oracle Layer C quality judge)
+    "anthropic>=0.39.0",
     # Database
     "asyncpg>=0.30.0",
     # PDF processing

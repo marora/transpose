@@ -712,6 +712,7 @@ class Database:
                 book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
                 overall TEXT NOT NULL CHECK (overall IN ('PASS', 'FAIL')),
                 report JSONB NOT NULL,
+                oracle_score JSONB,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
@@ -722,22 +723,36 @@ class Database:
             ON book_validation_reports (book_id, created_at DESC)
             """
         )
+        # Add oracle_score column if it doesn't exist (for existing tables)
+        await self.execute(
+            """
+            ALTER TABLE book_validation_reports
+            ADD COLUMN IF NOT EXISTS oracle_score JSONB
+            """
+        )
 
     async def save_validation_report(
-        self, book_id: UUID, report: dict
+        self, book_id: UUID, report: dict, oracle_score: dict | None = None
     ) -> None:
-        """Persist a validation report (one row per run, append-only)."""
+        """Persist a validation report (one row per run, append-only).
+
+        Args:
+            book_id: Book UUID.
+            report: Validation report payload (gates, overall, artifacts).
+            oracle_score: Optional Layer C quality score from oracle judge.
+        """
         import json
 
         overall = report.get("overall", "FAIL")
         await self.execute(
             """
-            INSERT INTO book_validation_reports (book_id, overall, report)
-            VALUES ($1, $2, $3::jsonb)
+            INSERT INTO book_validation_reports (book_id, overall, report, oracle_score)
+            VALUES ($1, $2, $3::jsonb, $4::jsonb)
             """,
             book_id,
             overall,
             json.dumps(report, default=str),
+            json.dumps(oracle_score, default=str) if oracle_score else None,
         )
 
     async def get_latest_validation_report(self, book_id: UUID) -> dict | None:
@@ -747,7 +762,7 @@ class Database:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT report, overall, created_at
+                SELECT report, overall, oracle_score, created_at
                 FROM book_validation_reports
                 WHERE book_id = $1
                 ORDER BY created_at DESC
@@ -763,5 +778,13 @@ class Database:
             # Surface DB metadata alongside the embedded report payload
             report.setdefault("overall", row["overall"])
             report["_persisted_at"] = row["created_at"].isoformat() if row["created_at"] else None
+
+            # Add oracle_score if present
+            if row["oracle_score"]:
+                oracle = row["oracle_score"]
+                if isinstance(oracle, str):
+                    oracle = json.loads(oracle)
+                report["oracle_score"] = oracle
+
             return report
 
