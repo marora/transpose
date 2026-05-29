@@ -47,6 +47,9 @@ dependencies = [
     "aiohttp>=3.9.0",
     # HTTP server
     "aiohttp>=3.9.0",
+    # TTS / Audiobook
+    "azure-cognitiveservices-speech>=1.40.0",
+    "mutagen>=1.47.0",
 ]
 
 [project.optional-dependencies]

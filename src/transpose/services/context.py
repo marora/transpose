@@ -8,6 +8,7 @@ from transpose.services.cache import PipelineState
 from transpose.services.database import Database
 from transpose.services.llm_client import LlmClient
 from transpose.services.ocr_client import OcrClient
+from transpose.services.tts_provider import TTSProvider, get_tts_provider
 
 
 class ServiceContext:
@@ -48,6 +49,13 @@ class ServiceContext:
             timeout_seconds=self.settings.openai_timeout_seconds,
             max_retries=self.settings.max_retries,
             retry_base_delay=self.settings.retry_base_delay,
+        )
+        self.tts: TTSProvider = get_tts_provider(
+            provider_type=self.settings.tts_provider,
+            speech_key=self.settings.tts_speech_key,
+            speech_region=self.settings.tts_speech_region,
+            speech_endpoint=self.settings.tts_speech_endpoint,
+            default_voice=self.settings.tts_voice,
         )
 
     def _build_dsn(self) -> str:
