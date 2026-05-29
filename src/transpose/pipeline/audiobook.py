@@ -198,6 +198,23 @@ async def run(input: AudiobookInput, ctx) -> AudiobookOutput:
                 chapter_title=chapter_title,
             )
 
+            # Master audio (loudness normalization, compression, fades)
+            from transpose.pipeline.mastering import master_chapter_audio
+
+            try:
+                mastered = await master_chapter_audio(result.audio_bytes)
+                final_audio = mastered.audio_bytes
+                final_duration = mastered.duration_ms
+                logger.info(
+                    f"  Mastered: {mastered.lufs:.1f} LUFS, "
+                    f"peak {mastered.peak_dbfs:.1f} dBFS"
+                )
+            except RuntimeError as e:
+                # ffmpeg not available — use raw TTS output with warning
+                logger.warning(f"  Mastering skipped (ffmpeg unavailable): {e}")
+                final_audio = result.audio_bytes
+                final_duration = result.duration_ms
+
             # Upload to blob storage
             blob_name = (
                 f"audiobooks/{input.book_id}/"
@@ -205,7 +222,7 @@ async def run(input: AudiobookInput, ctx) -> AudiobookOutput:
                 f"{f'-part-{part_idx + 1:02d}' if part_suffix else ''}.mp3"
             )
             blob_uri = await ctx.blob.upload_bytes(
-                result.audio_bytes,
+                final_audio,
                 blob_name,
                 content_type="audio/mpeg",
             )
@@ -230,8 +247,8 @@ async def run(input: AudiobookInput, ctx) -> AudiobookOutput:
                 chapter_number=chapter.number,
                 title=f"{chapter.title}{part_label}",
                 blob_uri=blob_uri,
-                duration_ms=result.duration_ms,
-                file_size_bytes=len(result.audio_bytes),
+                duration_ms=final_duration if final_duration else result.duration_ms,
+                file_size_bytes=len(final_audio),
                 word_boundaries_uri=wb_uri,
             )
             chapters_audio.append(chapter_audio)
