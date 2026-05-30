@@ -14,6 +14,7 @@ from transpose.pipeline.mastering import (
 )
 from transpose.pipeline.audio_quality_gate import (
     AudioQualityReport,
+    audio_quality_gate,
     measure_audio,
     validate_audiobook,
     LUFS_MIN,
@@ -222,3 +223,103 @@ class TestAudioQualityGate:
 
         assert passed is True
         assert len(reports) == 3
+
+
+# --- audio_quality_gate (GateResult adapter) tests ---
+
+
+class TestAudioQualityGateAdapter:
+    """Tests for the audio_quality_gate function that integrates with the runner."""
+
+    def test_gate_passes_with_valid_chapters(self):
+        from transpose.pipeline.audiobook import AudiobookOutput, ChapterAudio
+        from uuid import uuid4
+
+        output = AudiobookOutput(
+            book_id=uuid4(),
+            chapters=[
+                ChapterAudio(
+                    chapter_number=1, title="Intro",
+                    blob_uri="https://blob/ch1.mp3",
+                    duration_ms=120000, file_size_bytes=500_000,
+                ),
+                ChapterAudio(
+                    chapter_number=2, title="The Path",
+                    blob_uri="https://blob/ch2.mp3",
+                    duration_ms=600000, file_size_bytes=2_000_000,
+                ),
+            ],
+            total_duration_ms=720000,
+            total_cost=0.50,
+        )
+        result = audio_quality_gate(output)
+        assert result.passed is True
+        assert result.gate_name == "audio_quality"
+        assert result.details["chapter_count"] == 2
+
+    def test_gate_fails_empty_chapters(self):
+        from transpose.pipeline.audiobook import AudiobookOutput
+        from uuid import uuid4
+
+        output = AudiobookOutput(book_id=uuid4(), chapters=[], total_duration_ms=0)
+        result = audio_quality_gate(output)
+        assert result.passed is False
+        assert "No audio chapters produced" in result.failures[0]
+
+    def test_gate_fails_too_small_file(self):
+        from transpose.pipeline.audiobook import AudiobookOutput, ChapterAudio
+        from uuid import uuid4
+
+        output = AudiobookOutput(
+            book_id=uuid4(),
+            chapters=[
+                ChapterAudio(
+                    chapter_number=1, title="Empty",
+                    blob_uri="https://blob/ch1.mp3",
+                    duration_ms=60000, file_size_bytes=100,  # < 1024
+                ),
+            ],
+            total_duration_ms=60000,
+        )
+        result = audio_quality_gate(output)
+        assert result.passed is False
+        assert "too small" in result.failures[0]
+
+    def test_gate_fails_too_short_chapter(self):
+        from transpose.pipeline.audiobook import AudiobookOutput, ChapterAudio
+        from uuid import uuid4
+
+        output = AudiobookOutput(
+            book_id=uuid4(),
+            chapters=[
+                ChapterAudio(
+                    chapter_number=1, title="Tiny",
+                    blob_uri="https://blob/ch1.mp3",
+                    duration_ms=2000, file_size_bytes=50_000,  # 2s < 5s min
+                ),
+            ],
+            total_duration_ms=2000,
+        )
+        result = audio_quality_gate(output)
+        assert result.passed is False
+        assert "too short" in result.failures[0]
+
+    def test_gate_fails_too_long_chapter(self):
+        from transpose.pipeline.audiobook import AudiobookOutput, ChapterAudio
+        from uuid import uuid4
+
+        output = AudiobookOutput(
+            book_id=uuid4(),
+            chapters=[
+                ChapterAudio(
+                    chapter_number=1, title="Epic",
+                    blob_uri="https://blob/ch1.mp3",
+                    duration_ms=35 * 60 * 1000,  # 35 min > 30 max
+                    file_size_bytes=10_000_000,
+                ),
+            ],
+            total_duration_ms=35 * 60 * 1000,
+        )
+        result = audio_quality_gate(output)
+        assert result.passed is False
+        assert "too long" in result.failures[0]

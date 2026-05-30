@@ -176,3 +176,61 @@ async def validate_audiobook(
             )
 
     return all_passed, reports
+
+
+def audio_quality_gate(audiobook_output) -> "GateResult":
+    """Quality gate adapter — validates AudiobookOutput meets broadcast standards.
+
+    Checks:
+    - All chapters have non-zero file size (not empty/truncated)
+    - Duration sanity: each chapter between 5s and 30 min
+    - Chapter completeness: at least one chapter produced
+
+    Note: Full LUFS/peak measurement requires downloading audio from blob storage,
+    which is done during mastering. This gate validates the metadata recorded
+    during the mastering pass (duration, file size) and structural completeness.
+    """
+    from transpose.pipeline.gates import GateResult
+
+    failures: list[str] = []
+    details: dict = {}
+
+    chapters = audiobook_output.chapters
+    if not chapters:
+        failures.append("No audio chapters produced")
+        return GateResult(
+            gate_name="audio_quality",
+            passed=False,
+            failures=failures,
+            details=details,
+        )
+
+    details["chapter_count"] = len(chapters)
+    details["total_duration_min"] = audiobook_output.total_duration_ms / 60000
+
+    for ch in chapters:
+        # File size check (empty = failed TTS)
+        if ch.file_size_bytes < 1024:
+            failures.append(
+                f"Chapter {ch.chapter_number} ({ch.title}): "
+                f"file too small ({ch.file_size_bytes} bytes) — likely empty/corrupted"
+            )
+
+        # Duration sanity
+        if ch.duration_ms < MIN_DURATION_MS:
+            failures.append(
+                f"Chapter {ch.chapter_number} ({ch.title}): "
+                f"too short ({ch.duration_ms}ms, min {MIN_DURATION_MS}ms)"
+            )
+        elif ch.duration_ms > 30 * 60 * 1000:  # 30 min hard cap
+            failures.append(
+                f"Chapter {ch.chapter_number} ({ch.title}): "
+                f"too long ({ch.duration_ms / 60000:.1f} min, max 30 min)"
+            )
+
+    return GateResult(
+        gate_name="audio_quality",
+        passed=len(failures) == 0,
+        failures=failures,
+        details=details,
+    )

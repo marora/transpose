@@ -727,6 +727,13 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                     f"Audiobook complete: {len(audiobook_output.chapters)} chapters, "
                     f"{audiobook_output.total_duration_ms / 1000 / 60:.1f} min"
                 )
+
+                # Audio quality gate — validate mastered output meets broadcast standards
+                from transpose.pipeline.audio_quality_gate import (
+                    audio_quality_gate,
+                )
+
+                _run_gate(audio_quality_gate, audiobook_output, gate_results)
             else:
                 logger.info("=== Stage 8: Audiobook (skipped — not in output_formats) ===")
 
