@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.39.26.7824",
-      "templateHash": "14262850906585936294"
+      "templateHash": "1448947479479242659"
     }
   },
   "parameters": {
@@ -95,6 +95,34 @@
       ],
       "metadata": {
         "description": "SKU for Azure Container Registry"
+      }
+    },
+    "deployAgent": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Deploy the Azure SRE Agent. Set to false to tear down the agent for cost control (see dormant-cost lesson). Default true."
+      }
+    },
+    "agentLocation": {
+      "type": "string",
+      "defaultValue": "swedencentral",
+      "metadata": {
+        "description": "Azure region for the SRE Agent (region-restricted; do not change without verifying availability)."
+      }
+    },
+    "agentName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Agent resource name override. Leave empty to use <namePrefix>-agent; set to adopt a pre-existing hand-provisioned agent into IaC."
+      }
+    },
+    "agentIdentityName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Agent UAMI name override. Leave empty for <namePrefix>-agent-identity."
       }
     }
   },
@@ -1951,6 +1979,236 @@
         "[resourceId('Microsoft.Resources/deployments', 'monitoring-deployment')]",
         "[resourceId('Microsoft.Resources/deployments', 'storage-deployment')]"
       ]
+    },
+    {
+      "condition": "[parameters('deployAgent')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "sre-agent-deployment",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[variables('namePrefix')]"
+          },
+          "agentName": {
+            "value": "[parameters('agentName')]"
+          },
+          "agentIdentityName": {
+            "value": "[parameters('agentIdentityName')]"
+          },
+          "location": {
+            "value": "[parameters('agentLocation')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "appInsightsId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring-deployment'), '2025-04-01').outputs.appInsightsId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "1878488967788820586"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Name prefix for agent and its dedicated managed identity"
+              }
+            },
+            "agentName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Override the agent resource name. Defaults to <namePrefix>-agent; set to adopt a pre-existing hand-provisioned agent into IaC without recreating it."
+              }
+            },
+            "agentIdentityName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Override the agent UAMI resource name. Defaults to <namePrefix>-agent-identity; set to adopt a pre-existing UAMI alongside the agent."
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "swedencentral",
+              "metadata": {
+                "description": "Azure region for resource deployment (Azure SRE Agent is region-restricted)"
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Resource tags"
+              }
+            },
+            "appInsightsId": {
+              "type": "string",
+              "metadata": {
+                "description": "Application Insights resource ID for log forwarding"
+              }
+            },
+            "managedResourceId": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().id]",
+              "metadata": {
+                "description": "Resource group ID the agent should reason over (knowledge graph scope)"
+              }
+            },
+            "monthlyAgentUnitLimit": {
+              "type": "int",
+              "defaultValue": 10000,
+              "metadata": {
+                "description": "Monthly cap on agent units (cost guardrail)"
+              }
+            },
+            "upgradeChannel": {
+              "type": "string",
+              "defaultValue": "Stable",
+              "allowedValues": [
+                "Stable",
+                "Preview"
+              ],
+              "metadata": {
+                "description": "Upgrade channel for the agent runtime"
+              }
+            },
+            "defaultModelProvider": {
+              "type": "string",
+              "defaultValue": "Anthropic",
+              "metadata": {
+                "description": "Default model provider"
+              }
+            },
+            "defaultModelName": {
+              "type": "string",
+              "defaultValue": "Automatic",
+              "metadata": {
+                "description": "Default model name (Automatic lets the platform pick the best fit)"
+              }
+            },
+            "actionAccessLevel": {
+              "type": "string",
+              "defaultValue": "Low",
+              "allowedValues": [
+                "Low",
+                "Medium",
+                "High"
+              ],
+              "metadata": {
+                "description": "Action-execution access level"
+              }
+            },
+            "actionMode": {
+              "type": "string",
+              "defaultValue": "review",
+              "allowedValues": [
+                "review",
+                "autoApprove"
+              ],
+              "metadata": {
+                "description": "Action execution mode (review = human-in-the-loop)"
+              }
+            }
+          },
+          "variables": {
+            "resolvedAgentName": "[if(empty(parameters('agentName')), format('{0}-agent', parameters('namePrefix')), parameters('agentName'))]",
+            "resolvedIdentityName": "[if(empty(parameters('agentIdentityName')), format('{0}-agent-identity', parameters('namePrefix')), parameters('agentIdentityName'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2023-01-31",
+              "name": "[variables('resolvedIdentityName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]"
+            },
+            {
+              "type": "Microsoft.App/agents",
+              "apiVersion": "2025-05-01-preview",
+              "name": "[variables('resolvedAgentName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned, UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('resolvedIdentityName')))]": {}
+                }
+              },
+              "properties": {
+                "actionConfiguration": {
+                  "accessLevel": "[parameters('actionAccessLevel')]",
+                  "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('resolvedIdentityName'))]",
+                  "mode": "[parameters('actionMode')]"
+                },
+                "defaultModel": {
+                  "name": "[parameters('defaultModelName')]",
+                  "provider": "[parameters('defaultModelProvider')]"
+                },
+                "experimentalSettings": {
+                  "EnableV2AgentLoop": true,
+                  "EnableWorkspaceTools": true
+                },
+                "knowledgeGraphConfiguration": {
+                  "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('resolvedIdentityName'))]",
+                  "managedResources": [
+                    "[parameters('managedResourceId')]"
+                  ]
+                },
+                "logConfiguration": {
+                  "applicationInsightsConfiguration": {
+                    "applicationInsightsResourceId": "[parameters('appInsightsId')]"
+                  }
+                },
+                "mcpServers": [],
+                "monthlyAgentUnitLimit": "[parameters('monthlyAgentUnitLimit')]",
+                "upgradeChannel": "[parameters('upgradeChannel')]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('resolvedIdentityName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "agentName": {
+              "type": "string",
+              "value": "[variables('resolvedAgentName')]"
+            },
+            "agentId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.App/agents', variables('resolvedAgentName'))]"
+            },
+            "agentEndpoint": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.App/agents', variables('resolvedAgentName')), '2025-05-01-preview').agentEndpoint]"
+            },
+            "agentIdentityName": {
+              "type": "string",
+              "value": "[variables('resolvedIdentityName')]"
+            },
+            "agentIdentityPrincipalId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('resolvedIdentityName')), '2023-01-31').principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'monitoring-deployment')]"
+      ]
     }
   ],
   "outputs": {
@@ -2061,6 +2319,18 @@
     "containerAppFqdn": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Resources/deployments', 'container-app-deployment'), '2025-04-01').outputs.containerAppFqdn.value]"
+    },
+    "sreAgentDeployed": {
+      "type": "bool",
+      "value": "[parameters('deployAgent')]"
+    },
+    "sreAgentName": {
+      "type": "string",
+      "value": "[if(parameters('deployAgent'), reference(resourceId('Microsoft.Resources/deployments', 'sre-agent-deployment'), '2025-04-01').outputs.agentName.value, '')]"
+    },
+    "sreAgentEndpoint": {
+      "type": "string",
+      "value": "[if(parameters('deployAgent'), reference(resourceId('Microsoft.Resources/deployments', 'sre-agent-deployment'), '2025-04-01').outputs.agentEndpoint.value, '')]"
     }
   }
 }
