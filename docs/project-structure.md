@@ -21,6 +21,8 @@ transpose/
 │   └── transpose/
 │       ├── __init__.py             # Package root, version
 │       ├── api.py                  # HTTP API endpoint (aiohttp, port 8000)
+│       ├── api/
+│       │   └── audiobook_routes.py # Audiobook consumer endpoints (meta, feed, listen)
 │       ├── cli.py                  # CLI entry point (run pipeline, check status)
 │       ├── pipeline/
 │       │   ├── __init__.py
@@ -32,7 +34,12 @@ transpose/
 │       │   ├── translate.py        # Stage 4: LLM translation with term preservation
 │       │   ├── glossary.py         # Stage 5: Cultural term aggregation
 │       │   ├── assemble.py         # Stage 6: Document reassembly (foreword, dedup titles)
-│       │   └── export.py           # Stage 7: ePub/PDF rendering
+│       │   ├── export.py           # Stage 7: ePub/PDF rendering
+│       │   ├── audiobook.py        # Stage 8: Chapter-aware TTS generation (optional)
+│       │   ├── mastering.py        # Audio mastering: LUFS normalization, compression, fades
+│       │   ├── audio_quality_gate.py # Audio quality gate: validates mastered output
+│       │   ├── rss_feed.py         # Podcast 2.0 RSS feed generation
+│       │   └── transcript.py       # VTT/SRT read-along transcript from word boundaries
 │       ├── models/
 │       │   ├── __init__.py
 │       │   ├── book.py             # Book, Page data models
@@ -50,7 +57,8 @@ transpose/
 │       │   ├── ocr_client.py       # Azure AI Document Intelligence wrapper
 │       │   ├── llm_client.py       # Azure OpenAI wrapper (translation calls)
 │       │   ├── blob_client.py      # Azure Blob Storage wrapper
-│       │   ├── database.py         # PostgreSQL connection and query helpers
+│       │   ├── database.py         # PostgreSQL connection and query
+│       │   ├── tts_provider.py     # TTS provider abstraction (Azure, ElevenLabs, OpenAI)
 │       │   └── cache.py            # PostgreSQL-backed pipeline state tracking
 │       ├── utils/
 │       │   ├── __init__.py

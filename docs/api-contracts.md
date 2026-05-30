@@ -523,3 +523,46 @@ class ArtifactEntry:
 5. **All timestamps are UTC.**
 6. **Stages are idempotent.** Re-running with the same input produces the same output (or skips already-done work).
 7. **Quality gates block stage transitions.** A gate failure halts the pipeline — the next stage does not run.
+
+---
+
+## Audiobook API Contracts
+
+### `GET /audiobook/{book_id}`
+
+Returns audiobook metadata:
+
+```json
+{
+  "book_id": "uuid",
+  "title": "Book Title",
+  "chapters": [
+    {
+      "number": 1,
+      "title": "Chapter Title",
+      "duration_ms": 120000,
+      "file_size_bytes": 500000,
+      "blob_uri": "https://...",
+      "word_boundaries_uri": "https://..."
+    }
+  ],
+  "total_duration_ms": 720000,
+  "feed_url": "/audiobook/{book_id}/feed.xml"
+}
+```
+
+### `GET /audiobook/{book_id}/feed.xml`
+
+Podcast 2.0 RSS feed. Includes:
+- `<itunes:*>` tags (author, summary, image, category, explicit)
+- `<enclosure>` per chapter (MP3 URL, type, length)
+- `<podcast:transcript>` per episode (VTT URL)
+- Chapter markers in `<psc:chapters>`
+
+### `GET /audiobook/{book_id}/chapter/{n}`
+
+302 redirect to the chapter MP3 blob (with SAS token for time-limited access).
+
+### `GET /audiobook/{book_id}/listen`
+
+HTML listen page with embedded audio player, chapter navigation, and share links. Returns 404 if audiobook not generated.

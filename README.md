@@ -11,7 +11,8 @@ Agentic pipeline for translating scanned or digital PDF books from Hindi/Punjabi
 5. **Builds a glossary** of preserved cultural terms with definitions
 6. **Assembles** a structured manuscript with chapters and glossary
 7. **Exports** publication-ready ePub and PDF
-8. **Quality Gates** — 10 blocking checks across the pipeline validate OCR sanity, translation completeness, glossary integrity, document structure, artifact availability, golden-target QA, production readiness, source-output structural parity, and operational readiness. See [docs/architecture.md](docs/architecture.md#quality-gates-pipelinegatespy) for the full catalog.
+8. **Audiobook** (optional) — generates podcast-quality audio with neural TTS, LUFS-mastered MP3s, Podcast 2.0 RSS feed, read-along transcripts, and a consumer listen page
+9. **Quality Gates** — 11 blocking checks across the pipeline validate OCR sanity, translation completeness, glossary integrity, document structure, artifact availability, golden-target QA, production readiness, source-output structural parity, audio quality, and operational readiness. See [docs/architecture.md](docs/architecture.md#quality-gates-pipelinegatespy) for the full catalog.
 
 ## Architecture
 
@@ -23,6 +24,8 @@ Admin dashboard auth is documented in [docs/auth.md](docs/auth.md).
 - **Runtime:** Python 3.12+
 - **OCR:** Azure AI Document Intelligence
 - **Translation:** Azure OpenAI GPT-4o
+- **TTS:** Azure Speech Neural HD (configurable: ElevenLabs, OpenAI)
+- **Audio mastering:** ffmpeg (LUFS normalization, compression)
 - **Database:** PostgreSQL (persistent state + pipeline orchestration)
 - **Compute:** Azure Container Apps
 - **Auth:** Managed Identity + Key Vault

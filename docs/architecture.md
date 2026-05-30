@@ -187,7 +187,59 @@ State: PostgreSQL                                       Observability: App Insig
 - PDF generation: use `weasyprint` — CSS-based PDF rendering from the same semantic HTML
 - Both formats include: cover page, title page, table of contents, translated chapters, glossary, colophon
 - Store outputs in Azure Blob Storage
-- Update book status to `completed`
+- Update book status to `exported`
+
+---
+
+### Stage 8: Audiobook (optional)
+
+**Purpose:** Generate a podcast-quality audiobook from the translated manuscript using neural TTS, with mastering, RSS distribution, and read-along transcripts.
+
+| Property | Value |
+|----------|-------|
+| **Input** | `Manuscript`, glossary (for pronunciation lexicon) |
+| **Output** | Mastered MP3 per chapter (Azure Blob), RSS feed XML, VTT/SRT transcripts, consumer listen page |
+| **Idempotent** | Yes — re-run overwrites existing audio artifacts |
+| **Opt-in** | Only runs when `audiobook` is in `output_formats` (`--format audiobook`) |
+
+**Behavior:**
+- Extract plain text from chapter HTML, split long chapters at paragraph boundaries (~25 min target)
+- Build pronunciation lexicon from glossary (IPA for cultural terms: dharma, sangat, waheguru, etc.)
+- Synthesize via configurable TTS provider (default: Azure Speech Neural HD) with SSML prosody:
+  - Rate: -10%, paragraph pauses: 500ms, chapter intro pause: 2s
+  - Chapter title spoken as intro
+- **Mastering** (ffmpeg, two-pass):
+  - EBU R128 loudness normalization to -16 LUFS (Spotify/podcast standard)
+  - Dynamic range compression (threshold -20dB, ratio 3:1)
+  - Silence trimming (max 300ms gaps)
+  - Fade-in (100ms), 44.1kHz / 192kbps MP3 output
+- Upload mastered MP3 + word boundary JSON to blob storage
+- Generate Podcast 2.0 RSS feed (iTunes tags, `<podcast:transcript>` tags, enclosures)
+- Generate VTT/SRT transcripts (paragraph-level from word boundaries)
+- Serve consumer listen page with chapter navigation and share links
+
+**Quality gate** (`audio_quality_gate`): validates after audiobook stage:
+- At least one chapter audio produced
+- All files > 1KB (not empty/corrupted)
+- Duration: each chapter between 5s and 30 min
+- Chapter completeness matches manuscript
+
+**TTS provider abstraction:**
+- `TTSProvider` ABC (`synthesize`, `get_available_voices`, `estimate_cost`, `supports_ssml`)
+- Azure implementation: full SSML, word boundary events, HD Neural voices
+- ElevenLabs / OpenAI: stubs for future swap (`TRANSPOSE_TTS_PROVIDER` config)
+
+---
+
+### Stage 9: Workspace
+
+**Purpose:** Upload final artifacts, write metadata, publish per-book landing page to Azure Static Website.
+
+| Property | Value |
+|----------|-------|
+| **Input** | All prior stage outputs |
+| **Output** | Public landing page URL, metadata.json |
+| **Non-fatal** | Warns and skips if static website URL not configured |
 
 ---
 
@@ -477,6 +529,7 @@ Blocking checks that run between pipeline stages. If a gate fails, the pipeline 
 | `validate_production_readiness` | Post-export | Rendered output inspection — Devanagari rendering integrity (no IPA/digit substitutions), ToC page-number verification (present, monotonic, not all "1"), per-chapter word counts, cover-page validation, no empty pages |
 | `export_rendering_gate` | Post-export (on produced PDF) | Verifies the exported PDF renders correctly: fonts embed, pages are countable, the document opens without errors |
 | `source_output_comparison_gate` | Post-export (source vs. output) | Compares source PDF against translated PDF: page-count ratio (within `_STRUCTURAL_PAGE_RATIO_MIN` / `_STRUCTURAL_PAGE_RATIO_MAX`), text density, structural consistency |
+| `audio_quality_gate` | After Audiobook | Chapter completeness (≥1 produced), file integrity (>1 KB), duration bounds (5s–30 min per chapter) |
 
 Each gate returns a `GateResult` with `gate_name`, `passed`, `failures[]`, `details{}`, and a UTC timestamp (`operational_readiness_gate` returns the richer `OperationalReadinessResult`). All gate executions are wrapped in a `quality_gate` OTel span and emit the `gate_executions` / `gate_duration_seconds` metrics — see [observability.md](observability.md) for the telemetry contract. The aggregated per-run validation report shape is documented in [api-contracts.md](api-contracts.md).
 
@@ -491,6 +544,10 @@ Lightweight aiohttp-based API for triggering the pipeline remotely (designed for
 | `/health` | GET | Health probe — returns `{"status": "healthy"}` |
 | `/translate` | POST | Accepts `{blob_uri, title, language?, author?, formats?}`, returns `{book_id, status: "accepted"}`, runs pipeline in background |
 | `/status/{book_id}` | GET | Returns pipeline status (in-memory tracker first, falls back to DB) |
+| `/audiobook/{book_id}` | GET | Audiobook metadata JSON (chapters, durations, feed URL) |
+| `/audiobook/{book_id}/feed.xml` | GET | Podcast 2.0 RSS feed (subscribable in podcast apps) |
+| `/audiobook/{book_id}/chapter/{n}` | GET | Redirect to chapter MP3 blob (SAS-signed URL) |
+| `/audiobook/{book_id}/listen` | GET | Consumer HTML listen page with chapter player and share links |
 
 ---
 
@@ -498,7 +555,7 @@ Lightweight aiohttp-based API for triggering the pipeline remotely (designed for
 
 Dependency-injection container that holds all initialized service clients. Pipeline stages receive a `ctx: ServiceContext` parameter — they never construct clients directly.
 
-Holds: `Database`, `PipelineState`, `BlobClient`, `OcrClient`, `LlmClient`. Call `ctx.connect()` to initialize, `ctx.close()` to tear down.
+Holds: `Database`, `PipelineState`, `BlobClient`, `OcrClient`, `LlmClient`, `TTSProvider`. Call `ctx.connect()` to initialize, `ctx.close()` to tear down.
 
 ---
 
