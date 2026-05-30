@@ -73,7 +73,7 @@ class PipelineOutput:
     landing_page_url: str | None = None  # Set after workspace stage completes
 
 
-STAGE_ORDER = ["ingest", "ocr", "chunk", "translate", "glossary", "assemble", "export", "workspace"]
+STAGE_ORDER = ["ingest", "ocr", "chunk", "translate", "glossary", "assemble", "export", "audiobook", "workspace"]
 
 
 def _run_gate(gate_fn, gate_input, gate_results: list[GateResult]) -> GateResult:
@@ -695,7 +695,49 @@ async def run_pipeline(input: PipelineInput, ctx=None) -> PipelineOutput:  # typ
                     gate_results,
                 )
 
-        # Stage 8: Workspace — upload artifacts, write metadata.json, publish landing page
+        # Stage 8: Audiobook — TTS generation (optional, only if 'audiobook' in formats)
+        # Runs after export. Produces chapter-wise MP3 files for podcast distribution.
+        if start_index <= STAGE_ORDER.index("audiobook"):
+            if "audiobook" in input.output_formats:
+                logger.info("=== Stage 8: Audiobook ===")
+                start_time = datetime.now()
+                await _begin_stage_event("audiobook", start_time)
+
+                from transpose.pipeline import audiobook
+                from uuid import UUID as _UUID
+
+                audiobook_output = await audiobook.run(
+                    audiobook.AudiobookInput(book_id=_UUID(str(book_id))),
+                    ctx,
+                )
+
+                await ctx.state.set_pipeline_status(str(book_id), "audiobook")
+
+                duration = (datetime.now() - start_time).total_seconds()
+                stage_duration.record(duration, {"stage": "audiobook", "book_id": str(book_id)})
+                stages_completed.append("audiobook")
+                await _end_stage_event()
+                elapsed_total = (datetime.now() - pipeline_start_time).total_seconds()
+                logger.info(
+                    "📊 Progress: [%d/%d] %s completed in %.1fs (total: %.1fs) | book_id=%s",
+                    len(stages_completed), 8, "audiobook", duration, elapsed_total, str(book_id),
+                )
+
+                logger.info(
+                    f"Audiobook complete: {len(audiobook_output.chapters)} chapters, "
+                    f"{audiobook_output.total_duration_ms / 1000 / 60:.1f} min"
+                )
+
+                # Audio quality gate — validate mastered output meets broadcast standards
+                from transpose.pipeline.audio_quality_gate import (
+                    audio_quality_gate,
+                )
+
+                _run_gate(audio_quality_gate, audiobook_output, gate_results)
+            else:
+                logger.info("=== Stage 8: Audiobook (skipped — not in output_formats) ===")
+
+        # Stage 9: Workspace — upload artifacts, write metadata.json, publish landing page
         # Runs after export. Non-fatal if static website URL is not configured
         # (will warn and skip rather than blocking the pipeline).
         if start_index <= STAGE_ORDER.index("workspace"):

@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     max_retries: int = 3
     retry_base_delay: float = 1.0
 
+    # TTS / Audiobook
+    tts_provider: str = "azure"  # azure | elevenlabs | openai
+    tts_voice: str = "en-US-AndrewMultilingualNeural"
+    tts_speech_key: str = ""
+    tts_speech_region: str = ""
+    tts_speech_endpoint: str = ""  # Alternative to region-based auth
+
     # API authentication (empty = permissive mode for local dev)
     api_key: str = ""
 
