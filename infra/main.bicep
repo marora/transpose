@@ -43,6 +43,18 @@ param monthlyBudgetAmount int = 25
 @allowed(['Basic', 'Standard', 'Premium'])
 param acrSku string = 'Basic'
 
+@description('Deploy the Azure SRE Agent. Set to false to tear down the agent for cost control (see dormant-cost lesson). Default true.')
+param deployAgent bool = true
+
+@description('Azure region for the SRE Agent (region-restricted; do not change without verifying availability).')
+param agentLocation string = 'swedencentral'
+
+@description('Agent resource name override. Leave empty to use <namePrefix>-agent; set to adopt a pre-existing hand-provisioned agent into IaC.')
+param agentName string = ''
+
+@description('Agent UAMI name override. Leave empty for <namePrefix>-agent-identity.')
+param agentIdentityName string = ''
+
 // Naming convention: transpose-{env}-{service}
 var namePrefix = 'transpose-${environmentName}'
 
@@ -250,3 +262,24 @@ output acrName string = acr.outputs.name
 // Container App
 output containerAppName string = containerApp.outputs.containerAppName
 output containerAppFqdn string = containerApp.outputs.containerAppFqdn
+
+// ============================================================================
+// MODULE 12: Azure SRE Agent (Microsoft.App/agents)
+// Gated by deployAgent so the resource can be torn down for cost control.
+// See dormant-cost lesson — idle agent ~$10/day.
+// ============================================================================
+module sreAgent './modules/sre-agent.bicep' = if (deployAgent) {
+  name: 'sre-agent-deployment'
+  params: {
+    namePrefix: namePrefix
+    agentName: agentName
+    agentIdentityName: agentIdentityName
+    location: agentLocation
+    tags: tags
+    appInsightsId: monitoring.outputs.appInsightsId
+  }
+}
+
+output sreAgentDeployed bool = deployAgent
+output sreAgentName string = deployAgent ? sreAgent!.outputs.agentName : ''
+output sreAgentEndpoint string = deployAgent ? sreAgent!.outputs.agentEndpoint : ''
