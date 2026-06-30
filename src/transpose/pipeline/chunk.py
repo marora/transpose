@@ -119,6 +119,7 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
     current_chunk_tokens = 0
     current_chapter = None
     chunk_start_pos = 0
+    overlap_reset = False  # Issue #130: flag to skip overlap after chapter boundary
 
     for para in paragraphs:
         if not para.strip():
@@ -146,6 +147,9 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
             current_chunk_text = para + "\n\n"
             current_chunk_tokens = len(encoding.encode(para))
             chunk_start_pos = full_text.find(para)
+            # Issue #130: Reset overlap at chapter boundaries so heading text
+            # doesn't carry forward into the next chunk.
+            overlap_reset = True
             continue
 
         for para_part in _split_oversized_paragraph(
@@ -172,9 +176,14 @@ async def run(input: ChunkInput, ctx) -> ChunkOutput:  # type: ignore[no-untyped
                 )
                 sequence += 1
 
-                overlap_text = _get_overlap_text(
-                    current_chunk_text, input.overlap_tokens, encoding
-                )
+                # Issue #130: Reset overlap at chapter boundaries
+                if overlap_reset:
+                    overlap_text = ""
+                    overlap_reset = False
+                else:
+                    overlap_text = _get_overlap_text(
+                        current_chunk_text, input.overlap_tokens, encoding
+                    )
                 current_chunk_text = overlap_text + para_part + "\n\n"
                 current_chunk_tokens = len(encoding.encode(current_chunk_text))
                 chunk_start_pos = full_text.find(para_part)

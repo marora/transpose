@@ -162,6 +162,8 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
 
     if has_text_layer:
         logger.info("PDF has text layers, using digital extraction")
+        # Issue #79: Deduplicate images across pages by xref
+        seen_xrefs: dict[int, str] = {}
         # Extract text from all pages using PyMuPDF
         for page_num in range(1, len(pdf_doc) + 1):
             if page_num in existing_pages:
@@ -179,6 +181,7 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
             try:
                 image_refs = await _extract_page_images(
                     page, page_num, input.book_id, pdf_doc, ctx, logger,
+                    seen_xrefs=seen_xrefs,
                 )
                 if image_refs:
                     page_metadata["images"] = image_refs
@@ -303,6 +306,7 @@ async def run(input: OcrInput, ctx) -> OcrOutput:  # type: ignore[no-untyped-def
 
 async def _extract_page_images(
     page, page_num: int, book_id: UUID, pdf_doc, ctx, logger,
+    seen_xrefs: dict[int, str] | None = None,
 ) -> list[dict]:
     """Extract images from a PDF page and upload to blob storage.
 
@@ -321,9 +325,21 @@ async def _extract_page_images(
     page_area = page_rect.width * page_rect.height
     results: list[dict] = []
 
+    if seen_xrefs is None:
+        seen_xrefs = {}
+
     for img_idx, img_info in enumerate(images):
         xref = img_info[0]
         try:
+            # Issue #79: Deduplicate images by xref across pages
+            if xref in seen_xrefs:
+                results.append({
+                    "blob_uri": seen_xrefs[xref],
+                    "width": img_info[2] if len(img_info) > 2 else 0,
+                    "height": img_info[3] if len(img_info) > 3 else 0,
+                })
+                continue
+
             import fitz
 
             pix = fitz.Pixmap(pdf_doc, xref)
@@ -350,6 +366,7 @@ async def _extract_page_images(
                 blob_name=blob_name,
                 data=png_data,
             )
+            seen_xrefs[xref] = blob_uri
             results.append({
                 "blob_uri": blob_uri,
                 "width": img_info[2] if len(img_info) > 2 else 0,

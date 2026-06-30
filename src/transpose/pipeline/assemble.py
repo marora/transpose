@@ -179,7 +179,9 @@ async def run(input: AssembleInput, ctx) -> AssembleOutput:  # type: ignore[no-u
             # Strip duplicate chapter title from first chunk's text.
             # The LLM translation often starts with "Chapter N: Title — ..."
             # which duplicates the <h1> we already rendered above.
-            if item_idx == 0:
+            # Issue #130: Apply to the first few items (not just item_idx==0)
+            # because overlap can carry the heading into subsequent chunks.
+            if item_idx < 3:
                 text = _strip_leading_chapter_title(text)
 
             # Convert text to paragraphs, detecting sub-headings (Issue #57)
