@@ -284,13 +284,10 @@ async def _generate_epub(manuscript, glossary, book, cover_image_data: bytes | N
         ebook.add_item(foreword_chapter)
         epub_chapters.append(foreword_chapter)
 
-    # Add chapters — apply same post-processing as PDF export
-    import re as _re
+    # Add chapters
     for chapter in manuscript.chapters:
-        # Apply Vachan→Pravachan rename and untranslated marker cleanup
         html = _postprocess_chapter_html(chapter.content_html)
-        # Rename title too
-        title = _re.sub(r'(?i)(?<![A-Za-z])Vachan([\s-]*\d+)', r'Pravachan\1', chapter.title)
+        title = chapter.title
         epub_chapter = epub.EpubHtml(
             title=title,
             file_name=f"chapter_{chapter.number}.xhtml",
@@ -656,14 +653,12 @@ def _build_toc_html(table_of_contents, *, page_map):
     # Deduplicate TOC entries — L1 entries key on (chapter, title, level),
     # L2 sub-entries key on (title, level) only to prevent same discourse
     # reference appearing under multiple chapters
-    import re as _re
     seen_keys: set[tuple] = set()
     deduped_toc: list[dict] = []
     for toc_entry in table_of_contents:
         level = toc_entry.get("level", 1)
-        # Normalize title for dedup (also treat Vachan/Pravachan as same)
+        # Normalize title for dedup
         title_norm = toc_entry.get("title", "").lower().strip()
-        title_norm = _re.sub(r'vachan([\s-]*\d+)', r'pravachan\1', title_norm)
         if level == 1:
             key = (toc_entry.get("chapter"), title_norm, level)
         else:
@@ -679,9 +674,6 @@ def _build_toc_html(table_of_contents, *, page_map):
         # Use explicit anchor if provided (sub-headings), else chapter-N
         anchor = toc_entry.get("anchor", f"chapter-{chapter_num}")
         title = _escape_html(toc_entry["title"])
-        # Apply Vachan→Pravachan rename to cached TOC entries (Issue #78)
-        import re as _re
-        title = _re.sub(r'(?i)(?<![A-Za-z])Vachan([\s-]*\d+)', r'Pravachan\1', title)
 
         # Indent sub-entries
         li_class = "toc-entry" if level == 1 else "toc-entry toc-sub"
@@ -715,17 +707,7 @@ def _postprocess_chapter_html(html: str) -> str:
     """
     import re
 
-    # 1. Vachan → Pravachan in headings and text (Issue #78)
-    #    The LLM produced "Vachan-N" but the correct Hindi scholarly term
-    #    is Pravachan (प्रवचन = discourse).
-    html = re.sub(
-        r'(?<![A-Za-z])Vachan([\s\-—–]*\d+)',
-        r'Pravachan\1',
-        html,
-        flags=re.IGNORECASE,
-    )
-
-    # 2. Clean untranslated passage markers (Issue #77)
+    # Clean untranslated passage markers (Issue #77)
     #    Replace "[Original text — translation unavailable]" + raw Hindi
     #    with a clean editorial note. The raw Hindi after the marker may
     #    span multiple lines until the next English paragraph.

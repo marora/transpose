@@ -440,9 +440,6 @@ The translated text should be approximately the same length as the source — do
 7. CHAPTER MARKERS: If the text contains chapter/section markers like \
 "तं-सू —वध—03" (Tantra Sutra abbreviations), translate them as \
 "Tantra Sutra — Method N" where N is the number. Place this on its own line at the start.
-8. DISCOURSE REFERENCES: Preserve discourse reference markers like "प्रवचन-15" \
-(Pravachan-N). Translate as "Pravachan-N" (e.g., "Pravachan-15") on its own line. \
-These indicate recorded discourse references and must be retained for scholarly citation.
 
 CULTURAL TERMS:
 - Known terms that MUST be preserved (with their original script and definitions):
