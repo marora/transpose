@@ -1,11 +1,12 @@
-"""Tests for audiobook consumer routes."""
+"""Tests for audiobook consumer routes (aiohttp)."""
 
 import xml.etree.ElementTree as ET
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import AioHTTPTestCase, TestClient, TestServer
 
-from transpose.api.audiobook_routes import AudiobookMeta, create_audiobook_router
+from transpose.api.audiobook_routes import AudiobookMeta, register_audiobook_routes
 
 SAMPLE: AudiobookMeta = {
     "book_id": "book-1",
@@ -21,47 +22,58 @@ SAMPLE: AudiobookMeta = {
     ],
 }
 
-store = {"book-1": SAMPLE}
-app = FastAPI()
-app.include_router(create_audiobook_router(store))
-client = TestClient(app)
+
+@pytest.fixture
+def app():
+    """Create an aiohttp app with audiobook routes."""
+    application = web.Application()
+    register_audiobook_routes(application)
+    application["audiobook_store"]["book-1"] = SAMPLE
+    return application
 
 
-def test_get_audiobook_meta_200():
-    r = client.get("/books/book-1/audiobook")
-    assert r.status_code == 200
-    data = r.json()
+@pytest.fixture
+async def client(app, aiohttp_client):
+    return await aiohttp_client(app)
+
+
+async def test_get_audiobook_meta_200(client):
+    r = await client.get("/books/book-1/audiobook")
+    assert r.status == 200
+    data = await r.json()
     assert data["title"] == "Test Book"
     assert len(data["chapters"]) == 2
     assert data["total_duration_ms"] == 550000
 
 
-def test_get_audiobook_meta_404():
-    r = client.get("/books/unknown/audiobook")
-    assert r.status_code == 404
+async def test_get_audiobook_meta_404(client):
+    r = await client.get("/books/unknown/audiobook")
+    assert r.status == 404
 
 
-def test_feed_xml():
-    r = client.get("/books/book-1/audiobook/feed.xml")
-    assert r.status_code == 200
+async def test_feed_xml(client):
+    r = await client.get("/books/book-1/audiobook/feed.xml")
+    assert r.status == 200
     assert "application/rss+xml" in r.headers["content-type"]
-    root = ET.fromstring(r.content)
+    content = await r.read()
+    root = ET.fromstring(content)
     assert root.tag == "rss"
 
 
-def test_chapter_redirect():
-    r = client.get("/books/book-1/audiobook/chapters/1", follow_redirects=False)
-    assert r.status_code == 307
+async def test_chapter_redirect(client):
+    r = await client.get("/books/book-1/audiobook/chapters/1", allow_redirects=False)
+    assert r.status == 307
     assert r.headers["location"] == "https://blob.example.com/ch1.mp3"
 
 
-def test_listen_page_html():
-    r = client.get("/listen/book-1")
-    assert r.status_code == 200
+async def test_listen_page_html(client):
+    r = await client.get("/listen/book-1")
+    assert r.status == 200
     assert "text/html" in r.headers["content-type"]
-    assert "Test Book" in r.text
+    text = await r.text()
+    assert "Test Book" in text
 
 
-def test_listen_page_404():
-    r = client.get("/listen/unknown")
-    assert r.status_code == 404
+async def test_listen_page_404(client):
+    r = await client.get("/listen/unknown")
+    assert r.status == 404

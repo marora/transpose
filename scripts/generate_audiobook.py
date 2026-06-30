@@ -77,49 +77,154 @@ def extract_chapters_from_epub(epub_path: str) -> list[dict]:
 
 
 def synthesize_chapter(text: str, chapter_title: str, token: str) -> tuple[bytes, int]:
-    """Synthesize a chapter to MP3 using Azure Speech REST API with AAD token."""
+    """Synthesize a chapter to MP3 using Azure Speech REST API with AAD token.
+    
+    Splits text into chunks of ~4000 chars at paragraph boundaries to avoid
+    connection timeouts on long chapters.
+    """
     import requests
     
-    # Build SSML
-    ssml = f"""<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+    # Split into chunks at paragraph boundaries (~1500 chars each)
+    MAX_CHUNK_CHARS = 1500
+    chunks = _split_text_into_chunks(text, MAX_CHUNK_CHARS)
+    
+    all_audio = bytearray()
+    
+    for i, chunk in enumerate(chunks):
+        # Only add title intro on first chunk
+        title_ssml = f'{_escape_ssml(chapter_title)}<break time="2000ms"/>' if i == 0 else ""
+        
+        ssml = f"""<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
     <voice name="{VOICE}">
         <prosody rate="-5%">
             <break time="1500ms"/>
-            {_escape_ssml(chapter_title)}
-            <break time="2000ms"/>
-            {_escape_ssml(text)}
+            {title_ssml}
+            {_escape_ssml(chunk)}
         </prosody>
     </voice>
 </speak>"""
+        
+        for attempt in range(3):
+            try:
+                resp = requests.post(
+                    f"{SPEECH_ENDPOINT}tts/cognitiveservices/v1",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/ssml+xml",
+                        "X-Microsoft-OutputFormat": "audio-16khz-32kbitrate-mono-mp3",
+                    },
+                    data=ssml.encode("utf-8"),
+                    timeout=180,
+                    stream=True,
+                )
+                # Read streamed response to avoid chunked encoding errors
+                audio_chunk = b"".join(resp.iter_content(chunk_size=8192))
+                resp._content = audio_chunk
+                break
+            except (requests.exceptions.ChunkedEncodingError, requests.exceptions.ConnectionError) as e:
+                if attempt < 2:
+                    import time as t
+                    logger.warning(f"    Connection error on chunk {i+1}/{len(chunks)}, retry {attempt+1}...")
+                    t.sleep(10 * (attempt + 1))
+                    token = get_speech_token()
+                else:
+                    raise RuntimeError(f"TTS connection failed after 3 retries: {e}")
+        
+        if resp.status_code == 200:
+            all_audio.extend(resp._content)
+        elif resp.status_code == 401:
+            raise RuntimeError(f"Unauthorized (401): token may have expired")
+        elif resp.status_code == 429:
+            # Rate limited — wait and retry
+            import time as t
+            logger.warning(f"    Rate limited on chunk {i+1}/{len(chunks)}, waiting 10s...")
+            t.sleep(10)
+            token = get_speech_token()  # Refresh token
+            resp = requests.post(
+                f"{SPEECH_ENDPOINT}tts/cognitiveservices/v1",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/ssml+xml",
+                    "X-Microsoft-OutputFormat": "audio-16khz-32kbitrate-mono-mp3",
+                },
+                data=ssml.encode("utf-8"),
+                timeout=120,
+            )
+            if resp.status_code == 200:
+                all_audio.extend(resp.content)
+            else:
+                raise RuntimeError(f"TTS failed after retry ({resp.status_code}): {resp.text[:200]}")
+        else:
+            raise RuntimeError(f"TTS failed ({resp.status_code}): {resp.text[:200]}")
     
-    resp = requests.post(
-        f"{SPEECH_ENDPOINT}tts/cognitiveservices/v1",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/ssml+xml",
-            "X-Microsoft-OutputFormat": "audio-16khz-32kbitrate-mono-mp3",
-        },
-        data=ssml.encode("utf-8"),
-        timeout=120,
-    )
+    audio_data = bytes(all_audio)
+    # Estimate duration from data size (16kHz, 32kbps mono MP3)
+    duration_ms = len(audio_data) * 8 * 1000 // 32000
+    return audio_data, duration_ms
+
+
+def _split_text_into_chunks(text: str, max_chars: int) -> list[str]:
+    """Split text into chunks at paragraph boundaries.
+    If a single paragraph exceeds max_chars, split it at sentence boundaries."""
+    if len(text) <= max_chars:
+        return [text]
     
-    if resp.status_code == 200:
-        audio_data = resp.content
-        # Estimate duration from data size (16kHz, 32kbps mono MP3)
-        duration_ms = len(audio_data) * 8 * 1000 // 32000
-        return audio_data, duration_ms
-    elif resp.status_code == 401:
-        raise RuntimeError(f"Unauthorized (401): token may have expired")
-    else:
-        raise RuntimeError(f"TTS failed ({resp.status_code}): {resp.text[:200]}")
+    paragraphs = text.split("\n\n")
+    chunks = []
+    current = []
+    current_len = 0
+    
+    for para in paragraphs:
+        # If a single paragraph is too long, split at sentence boundaries
+        if len(para) > max_chars:
+            # Flush current buffer first
+            if current:
+                chunks.append("\n\n".join(current))
+                current = []
+                current_len = 0
+            # Split long paragraph into sentences
+            sentences = re.split(r'(?<=[।.!?])\s+', para)
+            sent_buf = []
+            sent_len = 0
+            for sent in sentences:
+                if sent_len + len(sent) > max_chars and sent_buf:
+                    chunks.append(" ".join(sent_buf))
+                    sent_buf = [sent]
+                    sent_len = len(sent)
+                else:
+                    sent_buf.append(sent)
+                    sent_len += len(sent) + 1
+            if sent_buf:
+                chunks.append(" ".join(sent_buf))
+        elif current_len + len(para) > max_chars and current:
+            chunks.append("\n\n".join(current))
+            current = [para]
+            current_len = len(para)
+        else:
+            current.append(para)
+            current_len += len(para) + 2
+    
+    if current:
+        chunks.append("\n\n".join(current))
+    
+    return chunks
 
 
 def _escape_ssml(text: str) -> str:
-    """Escape text for SSML (basic XML escaping + paragraph breaks)."""
+    """Escape text for SSML (basic XML escaping + paragraph breaks).
+    Wraps Devanagari (Hindi) runs in <lang xml:lang='hi-IN'> tags
+    so the multilingual voice switches correctly."""
+    # XML escape first (before adding SSML tags)
     text = text.replace("&", "&amp;")
     text = text.replace("<", "&lt;")
     text = text.replace(">", "&gt;")
     text = text.replace('"', "&quot;")
+    # Wrap Devanagari runs in Hindi language tags
+    text = re.sub(
+        r"([\u0900-\u097F][\u0900-\u097F\s\.\,\!\?\;\:\-\u0964\u0965]*[\u0900-\u097F\.\u0964\u0965])",
+        r'<lang xml:lang="hi-IN">\1</lang>',
+        text,
+    )
     # Convert paragraph breaks to SSML breaks
     text = re.sub(r"\n\n+", '\n<break time="600ms"/>\n', text)
     return text
@@ -139,6 +244,7 @@ def main():
     cred = AzureCliCredential()
     blob_client = BlobServiceClient(STORAGE_URL, credential=cred)
     output_container = blob_client.get_container_client("output")
+    audiobooks_container = blob_client.get_container_client("audiobooks")
     
     # Download epub
     logger.info(f"Downloading {epub_blob} from blob storage...")
@@ -169,7 +275,38 @@ def main():
     book_slug = book_name.lower().replace(" ", "_")
     audio_manifest = []
     
+    # Check which chapters already exist (resume support)
+    existing_chapters = set()
+    try:
+        for blob in audiobooks_container.list_blobs(name_starts_with=f"{book_slug}/chapter-"):
+            # Extract chapter number from blob name like "book_slug/chapter-001.mp3"
+            import re as _re
+            m = _re.search(r"chapter-(\d+)\.mp3", blob.name)
+            if m:
+                existing_chapters.add(int(m.group(1)))
+    except Exception:
+        pass
+    
+    if existing_chapters:
+        logger.info(f"Resuming: {len(existing_chapters)} chapters already uploaded, skipping them")
+
     for ch in chapters:
+        # Skip already uploaded chapters (resume)
+        if ch["number"] in existing_chapters:
+            logger.info(f"  Skipping Chapter {ch['number']}: {ch['title']} (already uploaded)")
+            # Still add to manifest from blob metadata
+            blob_name = f"{book_slug}/chapter-{ch['number']:03d}.mp3"
+            blob_props = audiobooks_container.get_blob_client(blob_name).get_blob_properties()
+            audio_manifest.append({
+                "number": ch["number"],
+                "title": ch["title"],
+                "blob_name": blob_name,
+                "duration_ms": blob_props.size * 8 * 1000 // 32000,
+                "file_size_bytes": blob_props.size,
+                "chars": len(ch["text"]),
+            })
+            continue
+        
         logger.info(f"  Synthesizing Chapter {ch['number']}: {ch['title']} ({len(ch['text'])} chars)...")
         
         try:
@@ -184,11 +321,10 @@ def main():
             else:
                 raise
         
-        # Upload to blob
-        blob_name = f"audiobooks/{book_slug}/chapter-{ch['number']:03d}.mp3"
-        blob_url = f"{STORAGE_URL}/output/{blob_name}"
+        # Upload to blob (dedicated audiobooks container)
+        blob_name = f"{book_slug}/chapter-{ch['number']:03d}.mp3"
         
-        output_container.upload_blob(
+        audiobooks_container.upload_blob(
             blob_name,
             audio_bytes,
             content_settings=ContentSettings(content_type="audio/mpeg"),
@@ -221,8 +357,8 @@ def main():
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     
-    manifest_blob = f"audiobooks/{book_slug}/manifest.json"
-    output_container.upload_blob(
+    manifest_blob = f"{book_slug}/manifest.json"
+    audiobooks_container.upload_blob(
         manifest_blob,
         json.dumps(manifest, indent=2).encode(),
         content_settings=ContentSettings(content_type="application/json"),

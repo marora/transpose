@@ -147,8 +147,11 @@ async def run(input: AudiobookInput, ctx) -> AudiobookOutput:
     # Get glossary for pronunciation lexicon
     glossary = await ctx.db.get_glossary_for_book(input.book_id)
     glossary_terms = []
-    if glossary and hasattr(glossary, "terms"):
-        glossary_terms = glossary.terms if isinstance(glossary.terms, list) else []
+    if glossary and hasattr(glossary, "entries"):
+        glossary_terms = [
+            {"term": e.term, "original_script": e.original_script, "definition": e.definition}
+            for e in glossary.entries
+        ] if isinstance(glossary.entries, list) else []
 
     pronunciation_lexicon = _build_pronunciation_lexicon(glossary_terms)
 
@@ -216,14 +219,16 @@ async def run(input: AudiobookInput, ctx) -> AudiobookOutput:
                 final_duration = result.duration_ms
 
             # Upload to blob storage
+            _AUDIOBOOK_CONTAINER = "audiobooks"
             blob_name = (
-                f"audiobooks/{input.book_id}/"
+                f"{input.book_id}/"
                 f"chapter-{chapter.number:03d}"
                 f"{f'-part-{part_idx + 1:02d}' if part_suffix else ''}.mp3"
             )
             blob_uri = await ctx.blob.upload_bytes(
-                final_audio,
+                _AUDIOBOOK_CONTAINER,
                 blob_name,
+                final_audio,
                 content_type="audio/mpeg",
             )
 
@@ -240,7 +245,10 @@ async def run(input: AudiobookInput, ctx) -> AudiobookOutput:
                 ).encode()
                 wb_blob_name = blob_name.replace(".mp3", "-boundaries.json")
                 wb_uri = await ctx.blob.upload_bytes(
-                    wb_data, wb_blob_name, content_type="application/json"
+                    _AUDIOBOOK_CONTAINER,
+                    wb_blob_name,
+                    wb_data,
+                    content_type="application/json",
                 )
 
             chapter_audio = ChapterAudio(

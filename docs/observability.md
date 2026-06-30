@@ -23,8 +23,8 @@ The pipeline emits telemetry via [azure-monitor-opentelemetry](https://pypi.org/
 | `transpose.ocr.pages_processed` | Counter | Pages processed by Document Intelligence |
 | `transpose.ocr.low_confidence_pages` | Counter | Pages below OCR confidence threshold |
 | `transpose.errors` | Counter | Errors by `stage` and `error_type` dimensions |
-| `gate_executions` | Counter | Quality gate executions, tagged by `gate_name` and `result` (`pass`/`fail`) |
-| `gate_duration_seconds` | Histogram | Quality gate execution duration in seconds, tagged by `gate_name` |
+| `transpose.gates.executions` | Counter | Quality gate executions, tagged by `gate_name` and `result` (`pass`/`fail`) |
+| `transpose.gates.duration_seconds` | Histogram | Quality gate execution duration in seconds, tagged by `gate_name` |
 
 ---
 
@@ -213,7 +213,7 @@ requests
 
 ### Quality gates
 
-Quality gates are first-class telemetry. Every gate execution (10 total — see [architecture.md](architecture.md#quality-gates-pipelinegatespy) for the catalog) is wrapped in an OTel span and emits two metrics. The aggregate validation report consumed by downstream tooling is documented in [api-contracts.md](api-contracts.md#validation-report).
+Quality gates are first-class telemetry. Every gate execution (11 total — see [architecture.md](architecture.md#quality-gates-pipelinegatespy) for the catalog) is wrapped in an OTel span and emits two metrics. The aggregate validation report consumed by downstream tooling is documented in [api-contracts.md](api-contracts.md#validation-report).
 
 #### Span shape
 
@@ -230,8 +230,8 @@ Every gate runs inside a span named `quality_gate` with these attributes:
 
 | Metric | Type | Tags |
 |--------|------|------|
-| `gate_executions` | Counter | `gate_name`, `result` (`pass` / `fail`) |
-| `gate_duration_seconds` | Histogram | `gate_name` |
+| `transpose.gates.executions` | Counter | `gate_name`, `result` (`pass` / `fail`) |
+| `transpose.gates.duration_seconds` | Histogram | `gate_name` |
 
 #### KQL — gate failures
 
@@ -250,7 +250,7 @@ dependencies
 ```kusto
 // Gate pass/fail counts by gate name
 customMetrics
-| where name == "gate_executions"
+| where name == "transpose.gates.executions"
 | extend gate_name = tostring(customDimensions.gate_name),
          result = tostring(customDimensions.result)
 | summarize executions = sum(value) by gate_name, result
@@ -260,7 +260,7 @@ customMetrics
 ```kusto
 // Gate duration percentiles
 customMetrics
-| where name == "gate_duration_seconds"
+| where name == "transpose.gates.duration_seconds"
 | extend gate_name = tostring(customDimensions.gate_name)
 | summarize
     p50_s = round(percentile(value, 50), 3),

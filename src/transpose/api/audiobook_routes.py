@@ -1,4 +1,11 @@
-"""Consumer download/share page routes for audiobooks (GitHub issue #128)."""
+"""Consumer download/share page routes for audiobooks (GitHub issue #128).
+
+Provides:
+  GET /books/{book_id}/audiobook         — JSON metadata
+  GET /books/{book_id}/audiobook/feed.xml — Podcast 2.0 RSS feed
+  GET /books/{book_id}/audiobook/chapters/{n} — redirect to blob audio
+  GET /listen/{book_id}                  — consumer HTML listen page
+"""
 
 from __future__ import annotations
 
@@ -6,8 +13,7 @@ from typing import TypedDict
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import Element, SubElement, tostring
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from aiohttp import web
 
 
 class AudiobookMeta(TypedDict):
@@ -79,49 +85,79 @@ ul{{list-style:none;padding:0}}li{{padding:.6rem 0;border-bottom:1px solid #e5e7
 </body></html>"""
 
 
-def create_audiobook_router(audiobook_store: dict[str, AudiobookMeta]) -> APIRouter:
-    router = APIRouter()
+def _get_store(app: web.Application) -> dict[str, AudiobookMeta]:
+    """Retrieve the audiobook store from app state."""
+    return app.get("audiobook_store", {})
 
-    def _get(book_id: str) -> AudiobookMeta:
-        meta = audiobook_store.get(book_id)
-        if meta is None:
-            raise HTTPException(status_code=404, detail="Audiobook not found")
-        return meta
 
-    @router.get("/books/{book_id}/audiobook")
-    def get_audiobook_meta(book_id: str, request: Request):
-        meta = _get(book_id)
-        feed_url = str(request.url_for("get_audiobook_feed", book_id=book_id))
-        total_ms = sum(ch["duration_ms"] for ch in meta["chapters"])
-        return {
+async def get_audiobook_meta(request: web.Request) -> web.Response:
+    """GET /books/{book_id}/audiobook — JSON metadata."""
+    book_id = request.match_info["book_id"]
+    store = _get_store(request.app)
+    meta = store.get(book_id)
+    if meta is None:
+        raise web.HTTPNotFound(text="Audiobook not found")
+    feed_url = str(request.url).replace("/audiobook", "/audiobook/feed.xml")
+    total_ms = sum(ch["duration_ms"] for ch in meta["chapters"])
+    import json
+    return web.Response(
+        text=json.dumps({
             "book_id": meta["book_id"],
             "title": meta["title"],
             "author": meta["author"],
             "total_duration_ms": total_ms,
             "feed_url": feed_url,
             "chapters": meta["chapters"],
-        }
+        }),
+        content_type="application/json",
+    )
 
-    @router.get("/books/{book_id}/audiobook/feed.xml", name="get_audiobook_feed")
-    def get_audiobook_feed(book_id: str, request: Request):
-        meta = _get(book_id)
-        feed_url = str(request.url)
-        xml = _build_feed_xml(meta, feed_url)
-        return Response(content=xml, media_type="application/rss+xml")
 
-    @router.get("/books/{book_id}/audiobook/chapters/{chapter_number}")
-    def get_chapter_redirect(book_id: str, chapter_number: int):
-        meta = _get(book_id)
-        for ch in meta["chapters"]:
-            if ch["number"] == chapter_number:
-                return RedirectResponse(url=ch["audio_url"], status_code=307)
-        raise HTTPException(status_code=404, detail="Chapter not found")
+async def get_audiobook_feed(request: web.Request) -> web.Response:
+    """GET /books/{book_id}/audiobook/feed.xml — RSS feed."""
+    book_id = request.match_info["book_id"]
+    store = _get_store(request.app)
+    meta = store.get(book_id)
+    if meta is None:
+        raise web.HTTPNotFound(text="Audiobook not found")
+    feed_url = str(request.url)
+    xml = _build_feed_xml(meta, feed_url)
+    return web.Response(body=xml, content_type="application/rss+xml")
 
-    @router.get("/listen/{book_id}")
-    def listen_page(book_id: str, request: Request):
-        meta = _get(book_id)
-        feed_url = str(request.url_for("get_audiobook_feed", book_id=book_id))
-        html = _build_html(meta, feed_url)
-        return HTMLResponse(content=html)
 
-    return router
+async def get_chapter_redirect(request: web.Request) -> web.Response:
+    """GET /books/{book_id}/audiobook/chapters/{chapter_number} — redirect to blob."""
+    book_id = request.match_info["book_id"]
+    chapter_number = int(request.match_info["chapter_number"])
+    store = _get_store(request.app)
+    meta = store.get(book_id)
+    if meta is None:
+        raise web.HTTPNotFound(text="Audiobook not found")
+    for ch in meta["chapters"]:
+        if ch["number"] == chapter_number:
+            raise web.HTTPTemporaryRedirect(location=ch["audio_url"])
+    raise web.HTTPNotFound(text="Chapter not found")
+
+
+async def listen_page(request: web.Request) -> web.Response:
+    """GET /listen/{book_id} — consumer HTML listen page."""
+    book_id = request.match_info["book_id"]
+    store = _get_store(request.app)
+    meta = store.get(book_id)
+    if meta is None:
+        raise web.HTTPNotFound(text="Audiobook not found")
+    feed_url = str(request.url).replace(f"/listen/{book_id}", f"/books/{book_id}/audiobook/feed.xml")
+    html = _build_html(meta, feed_url)
+    return web.Response(text=html, content_type="text/html")
+
+
+def register_audiobook_routes(app: web.Application) -> None:
+    """Register audiobook consumer routes on the aiohttp application."""
+    # Initialize in-memory store (populated by pipeline on audiobook completion)
+    if "audiobook_store" not in app:
+        app["audiobook_store"] = {}
+
+    app.router.add_get("/books/{book_id}/audiobook", get_audiobook_meta)
+    app.router.add_get("/books/{book_id}/audiobook/feed.xml", get_audiobook_feed)
+    app.router.add_get("/books/{book_id}/audiobook/chapters/{chapter_number}", get_chapter_redirect)
+    app.router.add_get("/listen/{book_id}", listen_page)

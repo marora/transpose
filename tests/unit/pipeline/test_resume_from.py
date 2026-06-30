@@ -29,11 +29,11 @@ class TestResumeFromStageSelection:
     @pytest.mark.parametrize(
         "resume_stage, expected_skipped, expected_run",
         [
-            ("translate", ["ingest", "ocr", "chunk"], ["translate", "glossary", "assemble", "export"]),
-            ("assemble", ["ingest", "ocr", "chunk", "translate", "glossary"], ["assemble", "export"]),
-            ("export", ["ingest", "ocr", "chunk", "translate", "glossary", "assemble"], ["export"]),
-            ("ocr", ["ingest"], ["ocr", "chunk", "translate", "glossary", "assemble", "export"]),
-            ("glossary", ["ingest", "ocr", "chunk", "translate"], ["glossary", "assemble", "export"]),
+            ("translate", ["ingest", "ocr", "chunk"], ["translate", "glossary", "assemble", "export", "audiobook", "workspace"]),
+            ("assemble", ["ingest", "ocr", "chunk", "translate", "glossary"], ["assemble", "export", "audiobook", "workspace"]),
+            ("export", ["ingest", "ocr", "chunk", "translate", "glossary", "assemble"], ["export", "audiobook", "workspace"]),
+            ("ocr", ["ingest"], ["ocr", "chunk", "translate", "glossary", "assemble", "export", "audiobook", "workspace"]),
+            ("glossary", ["ingest", "ocr", "chunk", "translate"], ["glossary", "assemble", "export", "audiobook", "workspace"]),
         ],
     )
     def test_resume_from_skips_earlier_stages(

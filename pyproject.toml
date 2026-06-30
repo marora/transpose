@@ -61,6 +61,7 @@ dev = [
 test = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-aiohttp>=1.0.0",
     "pytest-cov>=5.0.0",
     "respx>=0.21.0",
 ]
@@ -86,6 +87,7 @@ markers = [
     "integration: marks tests as integration tests (may require external services)",
     "regression: golden-reference regression tests (require pipeline output)",
     "slow: tests that are slow or need a full pipeline run",
+    "contract: contract tests for cross-module dependencies",
 ]
 
 [tool.mypy]

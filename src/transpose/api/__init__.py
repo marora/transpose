@@ -664,6 +664,8 @@ def create_app() -> web.Application:
     app.router.add_get("/admin/api/test", admin_auth_smoke)
     from transpose.api.dashboard import register_dashboard_routes
     register_dashboard_routes(app)
+    from transpose.api.audiobook_routes import register_audiobook_routes
+    register_audiobook_routes(app)
     if _ADMIN_ROOT.is_dir():
         app.router.add_static("/admin/", path=_ADMIN_ROOT, show_index=False)
     else:

@@ -502,7 +502,7 @@ Every pipeline stage execution is a span. Child spans for individual API calls (
 - `transpose.pipeline.stage_duration` — histogram per stage
 - `transpose.pipeline.chunks_translated` — counter
 - `transpose.openai.tokens_used` — counter (prompt + completion, per model)
-- `transpose.openai.cost_usd` — gauge (estimated)
+- `transpose.translation.estimated_cost_usd` — counter (estimated cost based on token pricing)
 - `transpose.ocr.pages_processed` — counter
 - `transpose.ocr.low_confidence_pages` — counter
 - `transpose.errors` — counter by stage and error type
@@ -515,11 +515,11 @@ All logs include: `book_id`, `stage`, `correlation_id`. JSON format. No PII in l
 
 ## Quality Gates (`pipeline/gates.py`)
 
-Blocking checks that run between pipeline stages. If a gate fails, the pipeline halts with a `QualityGateError` — no stage runs until the previous gate passes. Gates are addressed by name (matching the function name in `pipeline/gates.py`) — code is the source of truth. There are **10 gates** in production.
+Blocking checks that run between pipeline stages. If a gate fails, the pipeline halts with a `QualityGateError` — no stage runs until the previous gate passes. Gates are addressed by name (matching the function name in `pipeline/gates.py`) — code is the source of truth. There are **11 gates** in production.
 
 | Gate | Stage | Checks |
 |------|-------|--------|
-| `operational_readiness_gate` | Preflight (before Stage 1: Ingest) | Azure / DB / Redis / model-endpoint reachability checks. Returns `OperationalReadinessResult`. Halts the run early if infrastructure dependencies are unavailable. |
+| `operational_readiness_gate` | Preflight (before Stage 1: Ingest) | Azure / DB / model-endpoint reachability checks. Returns `OperationalReadinessResult`. Halts the run early if infrastructure dependencies are unavailable. |
 | `ocr_sanity_gate` | After OCR (before Chunk) | Garbled Unicode (U+FFFD ratio), Devanagari codepoint density (≥5%), per-page confidence (≥0.6) |
 | `translation_completeness_gate` | After Translate (before Glossary) | Every chunk has a translation, failed-chunk ratio ≤10%, no raw Devanagari passthrough (>30% threshold) |
 | `glossary_integrity_gate` | After Glossary (before Assemble) | Non-empty glossary, NFC-normalized `original_script`, no U+FFFD in any field, no Latin chars in Devanagari fields |

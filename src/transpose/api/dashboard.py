@@ -41,6 +41,7 @@ STAGE_ORDER: list[str] = [
     "glossary",
     "assemble",
     "export",
+    "audiobook",
     "workspace",
 ]
 
@@ -57,6 +58,7 @@ GATE_CATALOG: list[dict[str, str]] = [
     {"name": "golden_targeted_qa", "surfaces_after": "export"},
     {"name": "production_readiness", "surfaces_after": "export"},
     {"name": "source_output_comparison", "surfaces_after": "export"},
+    {"name": "audio_quality", "surfaces_after": "audiobook"},
 ]
 
 # Map cost rows (service, metric) → pipeline stage. Until #97 lands we cannot
