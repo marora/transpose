@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # Set TRANSPOSE_BLOB_STATIC_WEBSITE_URL after running Tank's T-1 setup.
     blob_static_website_url: str = ""
 
+    # Published site URL — Azure Static Web App for consumer-facing content.
+    # This is policy-immune (not subject to storage account publicNetworkAccess).
+    # Example: https://mango-forest-0563d4203.7.azurestaticapps.net
+    # Falls back to blob_static_website_url if not set.
+    published_site_url: str = ""
+
     # Workspace settings
     # Translator note prepended to all landing pages when not specified per-book.
     # Set TRANSPOSE_WORKSPACE_TRANSLATOR_NOTE in environment or .env.

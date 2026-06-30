@@ -149,7 +149,12 @@ class BookWorkspace:
 
     @property
     def landing_page_url(self) -> str:
-        """Landing page URL served by Azure Static Website or local fallback."""
+        """Landing page URL served by Azure Static Web App (preferred) or legacy static website."""
+        from transpose.config.settings import get_settings
+        settings = get_settings()
+        published_url = settings.published_site_url.rstrip("/")
+        if published_url:
+            return f"{published_url}/{self.blob_prefix}/"
         if self._static_website_url:
             return f"{self._static_website_url}/{self.blob_prefix}/"
         return self._blob.blob_uri(STATIC_WEBSITE_CONTAINER, f"{self.blob_prefix}/index.html")
@@ -261,15 +266,27 @@ class BookWorkspace:
     # ── SAS URL generation ───────────────────────────────
 
     async def generate_sas_url(self, blob_name: str, expiry_days: int = 30) -> str:
-        """Generate a read-only per-file SAS URL for ``blob_name``.
+        """Generate a public download URL for ``blob_name``.
 
-        Scope: per-file (not per-prefix). Permissions: read only.
-        Uses user delegation key (no storage account key required).
+        Strategy (in priority order):
+        1. If published_site_url is configured (Azure Static Web App), return
+           a direct URL there. No SAS token needed — the SWA is public by design
+           and not subject to storage account publicNetworkAccess policies.
+        2. Fall back to the legacy SAS token approach (blob.core.windows.net).
+
+        See GitHub issue #132 for why the SAS approach breaks under MCAPSGov policies.
         """
         if self._blob.uses_local_storage:
             return self._blob.blob_uri(WORKSPACE_CONTAINER, blob_name)
 
+        # Prefer Static Web App URL (policy-immune)
+        from transpose.config.settings import get_settings
+        settings = get_settings()
+        published_url = settings.published_site_url.rstrip("/")
+        if published_url:
+            return f"{published_url}/{blob_name}"
 
+        # Legacy fallback: SAS token on blob endpoint (breaks when publicNetworkAccess=Disabled)
         from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 
         now = datetime.now(UTC)
